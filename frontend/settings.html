@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>设置 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/settings.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+<main class="container settings-page" id="app" v-cloak>
+    <div class="page-head">
+        <div>
+            <h1 class="page-title">设置</h1>
+            <p class="page-sub" style="margin-bottom:0">访问密码与收件箱扫描</p>
+        </div>
+    </div>
+
+    <div class="card settings-card">
+        <div class="card-title">修改访问密码</div>
+        <p class="settings-note">修改后所有已登录设备（含当前这台）都需要用新密码重新登录。</p>
+
+        <label class="field-label">当前密码</label>
+        <input class="input" type="password" v-model="current" autocomplete="current-password" spellcheck="false">
+
+        <label class="field-label">新密码（至少 6 位）</label>
+        <input class="input" type="password" v-model="next" autocomplete="new-password" spellcheck="false">
+
+        <label class="field-label">再输一次新密码</label>
+        <input class="input" type="password" v-model="confirm" autocomplete="new-password" spellcheck="false"
+               @keyup.enter="submit">
+
+        <p v-if="error" class="load-error" style="margin-top:12px">{{ error }}</p>
+        <p v-if="ok" class="settings-ok">{{ ok }}</p>
+
+        <button class="btn btn-primary settings-submit" @click="submit" :disabled="busy">
+            {{ busy ? '保存中…' : '保存新密码' }}
+        </button>
+    </div>
+
+    <div class="card settings-card">
+        <div class="card-title">收件箱扫描</div>
+        <p class="settings-note">默认关闭。开启后「文件 → 收件箱」会扫描下列目录；目录留空则自动探测微信/QQ/下载/桌面。</p>
+
+        <label class="settings-toggle">
+            <input type="checkbox" v-model="inboxEnabled">
+            <span>启用收件箱扫描</span>
+        </label>
+
+        <div v-if="inboxEnabled" class="settings-inbox">
+            <div class="settings-dir" v-for="(d, i) in inboxDirs" :key="d">
+                <code>{{ prettyPath(d) }}</code>
+                <button type="button" class="btn btn-ghost settings-dir-remove" @click="removeInboxDir(i)">移除</button>
+            </div>
+            <div class="settings-dir-add">
+                <input class="input" v-model.trim="newInboxDir" placeholder="~\Downloads"
+                       @keyup.enter="addInboxDir" spellcheck="false">
+                <button type="button" class="btn btn-secondary" @click="addInboxDir">添加</button>
+            </div>
+            <button type="button" class="btn btn-ghost" v-if="defaultDirs.length" @click="useDefaultDirs">
+                使用默认目录（{{ defaultDirs.length }}）
+            </button>
+        </div>
+
+        <p v-if="inboxError" class="load-error" style="margin-top:12px">{{ inboxError }}</p>
+        <p v-if="inboxOk" class="settings-ok">{{ inboxOk }}</p>
+
+        <button class="btn btn-primary settings-submit" @click="saveInbox" :disabled="inboxBusy">
+            {{ inboxBusy ? '保存中…' : '保存收件箱设置' }}
+        </button>
+    </div>
+
+    <div class="card settings-card">
+        <div class="card-title">备份</div>
+        <p class="settings-note">打包 config.json 与状态目录（SSH 主机、审计、令牌等），不含缩略图缓存。</p>
+        <a class="btn btn-secondary settings-submit settings-download" href="/api/backup">导出备份</a>
+    </div>
+
+    <div class="card settings-card">
+        <div class="card-title">说明</div>
+        <ul class="settings-list">
+            <li>密码保存在目标机的 <code>config.json</code> 里，不经过任何第三方服务。</li>
+            <li>修改成功后旧会话立即失效，页面会跳到登录页。</li>
+            <li>忘记密码时，需要在电脑上直接编辑 <code>config.json</code> 的 <code>password</code> 字段并重启服务。</li>
+        </ul>
+    </div>
+</main>
+
+<script src="/assets/js/icons.js?v=__BUILD__"></script>
+<script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+<script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+<script src="/assets/js/settings.js?v=__BUILD__"></script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+/* 登录页 — 独立样式 (免认证白名单内) */
+/* 本页不加载 app.css, border-box reset 需自带, 否则 width:100%+padding 的输入框比按钮宽 30px */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: var(--font);
+    background: var(--bg);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    color: var(--text-1);
+}
+.login-card {
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-float);
+    padding: 40px 36px;
+}
+.login-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--brand-deep);
+    text-align: center;
+}
+.login-sub {
+    font-size: 13px;
+    color: var(--text-3);
+    text-align: center;
+    margin: 6px 0 24px;
+}
+.login-error {
+    background: var(--err-bg);
+    color: var(--err);
+    font-size: 13px;
+    border-radius: var(--radius-s);
+    padding: 8px 12px;
+    margin-bottom: var(--sp-4);
+    text-align: center;
+}
+.field-label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: var(--sp-1); }
+.login-input {
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-m);
+    font-size: 15px;
+    outline: none;
+    margin-bottom: var(--sp-4);
+    transition: border-color .15s ease;
+}
+.login-input:focus { border-color: var(--brand); }
+.login-btn {
+    width: 100%;
+    height: 44px;
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-m);
+    font-size: 15px;
+    font-weight: 600;
+}
+.login-btn:hover { background: var(--brand-hover); }

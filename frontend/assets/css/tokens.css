@@ -1,0 +1,46 @@
+/* ============================================================
+   设计令牌 — 来源《给ChatGPT的网站平台视觉规范》
+   全站唯一颜色/字体/间距/圆角/阴影来源, 页面 CSS 只消费变量
+   ============================================================ */
+:root {
+    /* 配色 */
+    --bg: #F4F7FB;              /* 页面背景 */
+    --bg-2: #EDF2F8;            /* 次级背景 */
+    --surface: #FFFFFF;         /* 内容表面 */
+    --text-1: #1D1D1F;          /* 主要文字 */
+    --text-2: #374151;          /* 次级文字 */
+    --text-3: #6B7280;          /* 辅助文字 */
+    --brand-deep: #003C88;      /* 品牌深蓝 */
+    --brand: #0050B5;           /* 交互蓝 */
+    --brand-hover: #00459C;
+    --brand-bg: #EFF6FF;        /* 浅蓝底 */
+    --border: rgba(15, 23, 42, .08);
+    --border-ctrl: #CBD5E1;     /* 控件边框 */
+    --ok: #16A34A;
+    --warn: #D97706;
+    --err: #DC2626;
+    --err-bg: #FEF2F2;
+
+    /* 圆角 */
+    --radius-s: 8px;
+    --radius-m: 12px;
+    --radius-l: 16px;
+    --radius-xl: 20px;
+
+    /* 阴影 */
+    --shadow-card: 0 1px 2px rgba(15, 23, 42, .02);
+    --shadow-float: 0 10px 24px rgba(15, 23, 42, .05), 0 2px 5px rgba(15, 23, 42, .025);
+
+    /* 字体 */
+    --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+            "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+
+    /* 间距 (4px 基) */
+    --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+    --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px;
+
+    /* 布局 */
+    --container: 1200px;
+    --header-h: 56px;
+}

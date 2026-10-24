@@ -1,0 +1,132 @@
+/* ====== 移动端: 终端工作区页隐藏底部 tabbar (控制键占底部, 避免遮挡) ====== */
+@media (max-width: 640px) {
+    .tabbar { display: none !important; }
+}
+
+/* ====== 空工作区引导 (无任何会话时) ====== */
+.term-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-3);
+    color: var(--text-3);
+    font-size: 14px;
+    pointer-events: none;
+}
+.term-empty svg { width: 28px; height: 28px; opacity: .55; }
+.term-empty[hidden] { display: none; }
+@media (hover: none) and (pointer: coarse) {
+    #split-toggle { display: none; }   /* 触屏无双栏空间, 分屏无意义 */
+}
+
+/* ====== TER-01: 移动端终端单行化 — 应用头隐藏, 顶栏塌成 [☰][状态] 细条 ====== */
+.sidebar-foot { display: none; }   /* 仅移动端终端页显示 (桌面工具栏已含全部工具) */
+@media (hover: none) and (pointer: coarse) {
+    body.term-focus #app-shell { display: none; }   /* 应用头(远控平台/退出)隐藏, 退出走侧栏脚部 */
+    #bar { min-height: 44px; }
+    /* 单行只留 侧栏开关 与 状态, 其余全部收进侧栏/选择器 */
+    #bar > *:not(#sidebar-toggle):not(#status):not(#session-switch) { display: none !important; }
+    #bar #sidebar-toggle { width: 40px; height: 40px; }
+    #status { margin-left: auto; padding-right: 12px; font-size: 12px; }
+    /* 侧栏脚部: 工具 + 站内导航 + 退出 */
+    .sidebar-foot {
+        display: block;
+        margin-top: auto;
+        padding: var(--sp-3);
+        border-top: 1px solid var(--border);
+    }
+    .foot-row { display: flex; gap: var(--sp-2); }
+    .foot-btn {
+        flex: 1; height: 36px; font-size: 13px;
+        background: var(--surface); color: var(--text-2);
+        border: 1px solid var(--border-ctrl); border-radius: var(--radius-s);
+        cursor: pointer;
+    }
+    .foot-btn:active { border-color: var(--brand); color: var(--brand); }
+    .foot-nav { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .foot-nav a {
+        font-size: 12px; color: var(--text-2); text-decoration: none;
+        padding: 4px 10px; background: var(--bg-2); border-radius: 6px;
+    }
+    .foot-logout { display: inline-block; margin-top: var(--sp-3); font-size: 12px; color: var(--text-3); }
+    /* 程序选择弹窗 */
+    .picker-list { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .picker-item {
+        height: 44px; text-align: left; padding: 0 var(--sp-4); font-size: 15px;
+        background: var(--surface); color: var(--text-1);
+        border: 1px solid var(--border-ctrl); border-radius: var(--radius-m);
+        cursor: pointer;
+    }
+    .picker-item:active { border-color: var(--brand); color: var(--brand); }
+    .picker-custom { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .picker-custom .input { flex: 1; }
+    #sidebar { justify-content: space-between; }   /* 脚部沉底 */
+}
+
+@media (hover: none) and (pointer: coarse) {
+    #bar #session-switch a { padding: 8px 12px; font-size: 13px; }
+}
+
+/* 会话侧栏顶部快捷返回：移动端抽屉是覆盖层，必须在首屏给出口 */
+.sidebar-quicknav {
+    display: flex; gap: 6px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+}
+.sidebar-quicknav a {
+    flex: 1; text-align: center; font-size: 12px; padding: 7px 6px;
+    border-radius: 8px; background: var(--bg-2); color: var(--text-2);
+    text-decoration: none;
+}
+.sidebar-quicknav a:active { background: var(--brand-bg); color: var(--brand); }
+/* 深色细滚动条：原生白条在深色终端里像一条"缝隙"，且会盖住内容 */
+#terminal .xterm-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: #30363d #0d1117;
+}
+#terminal .xterm-viewport::-webkit-scrollbar { width: 10px; }
+#terminal .xterm-viewport::-webkit-scrollbar-track { background: #0d1117; }
+#terminal .xterm-viewport::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 5px;
+    border: 2px solid #0d1117;
+}
+#terminal .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* 回放期间先隐藏终端：收齐后一次性写入并跳到底部，避免用户看到从头顶滚到底 */
+.session-terminal.is-replaying { visibility: hidden; }/* SFTP 快速访问：固定路径横向排列 */
+.sftp-quick {
+    display: flex; gap: 6px; overflow-x: auto; flex-shrink: 0;
+    padding: 6px var(--sp-3); border-bottom: 1px solid var(--border);
+    scrollbar-width: thin;
+}
+.sftp-quick-chip {
+    flex: 0 0 auto; padding: 3px 9px; border: 1px solid var(--border);
+    border-radius: 999px; background: var(--surface); color: var(--text-2);
+    font-family: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.sftp-quick-chip:hover { border-color: var(--brand); color: var(--brand); }
+.sftp-quick-chip.active {
+    border-color: var(--brand); background: var(--brand-bg); color: var(--brand);
+}
+
+/* 回到底部浮钮: 仅在当前会话滚离底部时出现 */
+.term-fab {
+    position: absolute; right: 20px; bottom: 16px; z-index: 30;
+    width: 38px; height: 38px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(33, 38, 45, .94); color: #c9d1d9;
+    border: 1px solid rgba(255, 255, 255, .18);
+    font-size: 18px; line-height: 1; cursor: pointer;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .45);
+}
+.term-fab:hover { border-color: #58a6ff; color: #58a6ff; }
+.term-fab[hidden] { display: none; }
+@media (hover: none) and (pointer: coarse) {
+    .term-fab { right: 14px; bottom: 14px; width: 42px; height: 42px; }
+}
+
+/* 方向键与翻页键之间留一个视觉间隔 */
+.control-key[data-key="pgup"] { margin-left: 10px; }

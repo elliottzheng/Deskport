@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>命令执行 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+    <main class="container" id="app" v-cloak>
+        <h1 class="page-title">命令执行</h1>
+        <p class="page-sub">在目标机上执行单条命令，输出超时上限 120 秒</p>
+
+        <div class="card">
+            <form class="cmd-row" @submit.prevent="execute">
+                <input class="input cmd-input" v-model="cmd" placeholder="输入命令，如 ipconfig /all"
+                       spellcheck="false" autocomplete="off" :disabled="running">
+                <button class="btn btn-primary" type="submit" :disabled="running || !cmd.trim()">
+                    {{ running ? '执行中…' : '执行' }}
+                </button>
+            </form>
+            <p v-if="error" class="load-error" style="margin-top:12px">{{ error }}</p>
+
+            <div v-if="result" class="output-block">
+                <div class="output-meta">exit={{ result.exitCode }}</div>
+                <pre class="output-pre"><template v-if="result.stdout">{{ result.stdout }}</template><span v-if="result.stderr" class="output-err">{{ result.stderr }}</span><span v-if="!result.stdout && !result.stderr" class="output-err">（无输出）</span></pre>
+            </div>
+            <div v-else-if="!error" class="empty-tip" style="margin-top:16px">执行结果将显示在这里</div>
+        </div>
+    </main>
+
+
+    <script src="/assets/js/icons.js?v=__BUILD__"></script>
+    <script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+    <script src="/assets/js/command.js?v=__BUILD__"></script>
+</body>
+</html>

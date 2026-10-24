@@ -1,0 +1,19 @@
+# 运行时配置（含访问密码，勿提交）
+config.json
+__pycache__/
+*.pyc
+.run/
+.pytest-tmp/
+.pytest_cache/
+run.log
+.venv/
+
+# SSH 模块运行时数据 (含加密凭据/主机密钥, 勿提交)
+ssh_hosts.json
+ssh_known_hosts.json
+logs/
+.rc.cookies
+.deploy-backup/
+
+*.log
+*.log.1

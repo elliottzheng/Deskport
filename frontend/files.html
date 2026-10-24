@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>文件管理 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/files.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+    <main class="container" id="app" v-cloak>
+        <div class="page-head">
+            <div>
+                <h1 class="page-title">文件管理</h1>
+                <p class="page-sub" style="margin-bottom:0;">桌面端资源管理器体验 · 移动端文件管理器体验</p>
+            </div>
+        </div>
+
+        <p v-if="error" class="load-error">{{ error }} <a href="#" @click.prevent="refresh">重试</a></p>
+
+        <div class="fm-layout" :class="{ 'fm-nav-collapsed': navCollapsed }">
+            <!-- 左侧导航窗格 (桌面) -->
+            <div class="fm-nav-backdrop" v-if="mobileNav" @click="mobileNav = false"></div>
+            <aside class="fm-nav" :class="{ 'm-open': mobileNav }">
+                <div class="nav-section">位置</div>
+                <button class="nav-entry" :class="{ 'is-active': loc === 'inbox' }" @click="openInbox">
+                    <i data-icon="inbox"></i>
+                    <span>收件箱</span>
+                    <span class="nav-count" v-if="inboxTotal">{{ inboxTotal }}</span>
+                </button>
+                <div class="nav-section">快速访问</div>
+                <button class="nav-entry" v-for="q in quickList" :key="q.path" @click="navigate(q.path)">
+                    <i data-icon="home"></i>
+                    <span>{{ q.label }}</span>
+                </button>
+                <div class="nav-section">此电脑</div>
+                <button class="nav-entry" v-for="d in drives" :key="d.path" @click="navigate(d.path)">
+                    <i data-icon="drives"></i>
+                    <span>{{ d.name }}</span>
+                </button>
+            </aside>
+
+            <!-- 主区 -->
+            <div class="fm-main">
+                <!-- 工具栏 -->
+                <div class="fm-toolbar">
+                    <button class="icon-btn fm-nav-toggle" title="快速访问" @click="toggleMobileNav">
+                        <i data-icon="home"></i>
+                    </button>
+                    <button class="btn btn-secondary" v-if="loc !== 'inbox'" @click="startNewFolder">
+                        <i data-icon="folderNew"></i>
+                        新建文件夹
+                    </button>
+                    <button class="btn btn-secondary" v-if="selCount" @click="openAskAI">
+                        <i data-icon="star"></i>
+                        问 AI ({{ selCount }})
+                    </button>
+                    <button class="btn btn-secondary" v-if="clipboard && loc !== 'inbox'" @click="pasteClipboard">
+                        粘贴到此处 ({{ clipboard.paths.length }})
+                    </button>
+                    <button class="btn btn-primary" v-if="loc !== 'inbox'" @click="pickLocalFile" :disabled="loading">
+                        <i data-icon="upload"></i>
+                        本地上传
+                    </button>
+                    <input type="file" ref="fileInput" style="display:none" @change="uploadLocal">
+                    <span class="sep"></span>
+                    <button class="icon-btn" :title="viewMode === 'details' ? '切换到图标视图' : '切换到详细视图'" @click="toggleView">
+                        <i data-icon="grid" v-if="viewMode === 'details'"></i>
+                        <i data-icon="menu" v-else></i>
+                    </button>
+                    <label class="fm-check-label" title="显示隐藏与系统文件">
+                        <input type="checkbox" v-model="showHidden"> 显示隐藏项
+                    </label>
+                    <span class="fm-toolbar-hint">批量操作：框选/长按选中后 右键 或 底部操作栏</span>
+                </div>
+
+                <!-- 地址栏: 后退/前进/刷新 + 面包屑 -->
+                <div class="fm-addressbar">
+                    <button class="icon-btn" title="后退" @click="goBack" :disabled="!backStack.length" v-if="loc !== 'inbox'">
+                        <i data-icon="chevronLeft"></i>
+                    </button>
+                    <button class="icon-btn" title="前进" @click="goForward" :disabled="!fwdStack.length" v-if="loc !== 'inbox'">
+                        <i data-icon="chevronRight"></i>
+                    </button>
+                    <button class="icon-btn" title="刷新 (F5)" @click="refresh" :disabled="loading">
+                        <i data-icon="refresh"></i>
+                    </button>
+                    <div class="crumb-wrap">
+                        <template v-if="!addressEditing">
+                            <button class="crumb-seg" v-for="(c, i) in crumbs" :key="c.path"
+                                    @click="navigate(c.path)">{{ c.label }}</button>
+                            <button class="crumb-seg" title="编辑路径" @click="editAddress">
+                                <i data-icon="pencil"></i>
+                            </button>
+                        </template>
+                        <input v-else ref="addressInput" class="address-input" v-model="addressInput"
+                               spellcheck="false" @keydown.enter="commitAddress" @keydown.esc="addressEditing = false"
+                               @blur="addressEditing = false">
+                    </div>
+                    <input class="input search-input" v-model="searchQuery"
+                           @keydown.enter="startSearch" placeholder="搜索…" spellcheck="false">
+                </div>
+
+                <!-- 文件列表 (支持拖入上传) -->
+                <div class="fm-list" :class="{ icons: viewMode === 'icons', 'sel-mode': selMode, 'drop-hint': dragOver, marqueeing: marquee.show }"
+                     @touchstart="listTouchStart($event)" @touchend="touchEnd" @touchmove="touchMove"
+                     @mousedown="startMarquee"
+                     @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false"
+                     @drop.prevent="dropUpload"
+                     @contextmenu.prevent="listContext($event)">
+                    <div class="fm-marquee" v-show="marquee.show" :style="{ left: marquee.left + 'px', top: marquee.top + 'px', width: marquee.width + 'px', height: marquee.height + 'px' }"></div>
+                    <div class="fm-filters" v-if="loc === 'inbox' && entries.length">
+                        <div class="fm-filter-row">
+                            <span class="fm-filter-label">来源</span>
+                            <button type="button" class="fm-filter-chip"
+                                    v-for="o in inboxSourceOptions" :key="'src-' + o.value"
+                                    :class="{ active: inboxSource === o.value }"
+                                    @click="setInboxFilter('source', o.value)">
+                                {{ o.label }}<em>{{ o.count }}</em>
+                            </button>
+                        </div>
+                        <div class="fm-filter-row">
+                            <span class="fm-filter-label">类型</span>
+                            <button type="button" class="fm-filter-chip"
+                                    v-for="o in inboxKindOptions" :key="'kind-' + o.value"
+                                    :class="{ active: inboxKind === o.value }"
+                                    @click="setInboxFilter('kind', o.value)">
+                                {{ o.label }}<em>{{ o.count }}</em>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="fm-head" v-if="viewMode === 'details' && entries.length">
+                        <span class="col"></span>
+                        <span class="col"></span>
+                        <span class="col" @click="sortBy('name')">名称 <span class="arrow" v-if="sortKey === 'name'">{{ sortDir === 1 ? '↑' : '↓' }}</span></span>
+                        <span class="col" @click="sortBy('mtime')">修改时间 <span class="arrow" v-if="sortKey === 'mtime'">{{ sortDir === 1 ? '↑' : '↓' }}</span></span>
+                        <span class="col" @click="sortBy('type')">类型 <span class="arrow" v-if="sortKey === 'type'">{{ sortDir === 1 ? '↑' : '↓' }}</span></span>
+                        <span class="col" @click="sortBy('size')" style="justify-content:flex-end">大小 <span class="arrow" v-if="sortKey === 'size'">{{ sortDir === 1 ? '↑' : '↓' }}</span></span>
+                    </div>
+                    <div class="fm-row" v-for="(e, idx) in visibleEntries" :key="e.path" :data-path="e.path"
+                         :class="{ selected: isSelected(e), 'hidden-item': e.hidden || e.system }"
+                         @click="rowClick(e, idx, $event)"
+                         @dblclick="rowDblClick(e)"
+                         @contextmenu.prevent="rowContext(e, $event)"
+                         @touchstart="touchStart(e, $event)" @touchend="touchEnd" @touchmove="touchMove">
+                        <span class="fm-check"><input type="checkbox" :checked="isSelected(e)" @click.stop @change="toggleSelect(e, idx)"></span>
+                        <span class="fm-icon">
+                            <img v-if="isImageEntry(e) && viewMode === 'icons'" class="fm-thumb" :src="thumbUrl(e)" loading="lazy" alt="">
+                            <span v-else v-html="typeIcon(e)"></span>
+                        </span>
+                        <span class="fm-name" :class="{ 'is-hidden-file': e.hidden || e.system }" :title="e.path">
+                            {{ e.name }}
+                            <span class="fm-badge" v-if="e.source">{{ e.source }}</span>
+                            <span class="fm-badge dup" v-if="e.dupes && e.dupes.length">×{{ e.dupes.length + 1 }}</span>
+                        </span>
+                        <span class="fm-mtime">{{ fmtTime(e.mtime) }}</span>
+                        <span class="fm-type">{{ typeText(e) }}</span>
+                        <span class="fm-size">{{ e.type === 'file' ? fmtSize(e.size) : '' }}</span>
+                        <span class="mobile-meta" v-if="e.type !== 'drive'">{{ fmtTime(e.mtime) }}<template v-if="e.type === 'file'"> · {{ fmtSize(e.size) }}</template></span>
+                    </div>
+                    <div v-if="!loading && !visibleEntries.length" class="empty-tip">
+                        <template v-if="loc === 'inbox' && !inboxEnabled">收件箱扫描未启用，<a href="/settings" target="_top">去设置中开启</a></template>
+                        <template v-else>{{ searchMode ? '无匹配结果' : '此文件夹为空' }}</template>
+                    </div>
+                </div>
+
+                <!-- 状态栏 -->
+                <div class="statusbar">
+                    <span>{{ visibleEntries.length }} 个项目</span>
+                    <span v-if="selCount">已选 {{ selCount }} 项 ({{ fmtSize(selectedSize) }})</span>
+                    <span v-if="searchMode">搜索: "{{ searchQuery }}"</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 重命名/新建 文件夹 弹窗 -->
+        <div class="modal-mask" v-if="nameModal" @click.self="nameModal = false">
+            <div class="modal">
+                <div class="modal-title">{{ nameMode === 'rename' ? '重命名' : '新建文件夹' }}</div>
+                <label class="field-label" for="name-input" style="margin-top:12px">名称</label>
+                <input class="input" id="name-input" v-model="nameValue" style="width:100%" spellcheck="false"
+                       @keydown.enter="submitName" @keydown.esc="nameModal = false" ref="nameInput">
+                <p v-if="nameError" class="load-error" style="margin-top:10px">{{ nameError }}</p>
+                <div class="modal-actions" style="margin-top:16px">
+                    <button class="btn btn-primary" @click="submitName">确定</button>
+                    <button class="btn btn-ghost" @click="nameModal = false">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 属性弹窗 -->
+        <div class="modal-mask" v-if="propsTarget" @click.self="propsTarget = null">
+            <div class="modal">
+                <div class="modal-title">{{ propsTarget.name }}</div>
+                <div class="modal-meta">属性</div>
+                <div class="info-grid" style="grid-template-columns:1fr">
+                    <div class="info-item"><div class="info-label">类型</div><div class="info-value">{{ typeText(propsTarget) }}</div></div>
+                    <div class="info-item"><div class="info-label">大小</div><div class="info-value">{{ propsTarget.type === 'file' ? fmtSize(propsTarget.size) : '-' }}</div></div>
+                    <div class="info-item"><div class="info-label">修改时间</div><div class="info-value">{{ fmtTime(propsTarget.mtime) }}</div></div>
+                    <div class="info-item"><div class="info-label">属性</div><div class="info-value">{{ attrText(propsTarget) }}</div></div>
+                    <div class="info-item"><div class="info-label">完整路径</div><div class="info-value" style="font-family:var(--mono); font-size:12px">{{ propsTarget.path }}</div></div>
+                </div>
+                <div class="modal-actions" style="margin-top:16px">
+                    <button class="btn btn-ghost" @click="propsTarget = null">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 桌面右键菜单 -->
+        <div v-if="ctxMenu" class="ctx-menu" ref="ctxMenu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
+            <template v-if="ctxMenu.entry.type === 'folder' || ctxMenu.entry.type === 'drive'">
+                <button class="ctx-item" @click="ctxAction('open')">打开</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('download')">下载 (ZIP)</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('compress')">压缩</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('term', 'pwsh7')">在终端中打开 (pwsh7)</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('term', 'cmd')">在终端中打开 (cmd)</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('term', 'powershell')">在终端中打开 (powershell)</button>
+                <button class="ctx-item" @click="ctxAction('ai')">问 AI</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('upload-host')">上传到服务器…</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('pin')">{{ isPinned(ctxMenu.entry.path) ? '取消固定' : '固定到快速访问' }}</button>
+                <button class="ctx-item" @click="ctxAction('copy')">复制</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('cut')">移动</button>
+                <button class="ctx-item" @click="ctxAction('copypath')">复制路径</button>
+                <button class="ctx-item" @click="ctxAction('rename')">重命名</button>
+                <button class="ctx-item" @click="ctxAction('props')">属性</button>
+                <button class="ctx-item" @click="ctxAction('delete')">删除</button>
+            </template>
+            <template v-else>
+                <button class="ctx-item" v-if="isPreviewable(ctxMenu.entry)" @click="ctxAction('preview')">预览</button>
+                <button class="ctx-item" @click="ctxAction('text')">用记事本打开</button>
+                <button class="ctx-item" @click="ctxAction('ai')">问 AI</button>
+                <button class="ctx-item" @click="ctxAction('term', 'pwsh7')">在终端中打开</button>
+                <button class="ctx-item" @click="ctxAction('upload-host')">上传到服务器…</button>
+                <div class="ctx-sep"></div>
+                <button class="ctx-item" @click="ctxAction('download')">下载</button>
+                <button class="ctx-item" v-if="isArchiveEntry(ctxMenu.entry)" @click="ctxAction('extract')">解压到此处</button>
+                <button class="ctx-item" @click="ctxAction('compress')">压缩</button>
+                <button class="ctx-item" v-if="isExeFile(ctxMenu.entry)" @click="ctxAction('start')">运行</button>
+                <div class="ctx-sep"></div>
+                <button class="ctx-item" @click="ctxAction('copy')">复制</button>
+                <button class="ctx-item" @click="ctxAction('cut')">移动</button>
+                <button class="ctx-item" @click="ctxAction('copypath')">复制路径</button>
+                <button class="ctx-item" @click="ctxAction('rename')">重命名</button>
+                <button class="ctx-item" @click="ctxAction('props')">属性</button>
+                <button class="ctx-item" @click="ctxAction('delete')">删除</button>
+            </template>
+        </div>
+
+        <!-- 文件预览弹窗 (文本可编辑 / 图片大图) -->
+        <div class="modal-mask" v-if="previewTarget" @click.self="closePreview">
+            <div class="modal preview-modal">
+                <div class="modal-title">{{ previewTarget.name }}
+                    <span class="preview-truncated" v-if="previewTruncated">（超过 2MB，仅显示前 2MB）</span>
+                </div>
+                <img v-if="previewMode === 'image'" class="preview-img" :src="previewSrc" alt="预览">
+                <textarea v-else class="preview-text" v-model="previewContent" spellcheck="false"></textarea>
+                <p class="load-error" v-if="previewError" style="margin-top:10px">{{ previewError }}</p>
+                <div class="modal-actions" style="margin-top:14px">
+                    <button class="btn btn-primary" v-if="previewMode === 'text'" @click="savePreview">保存修改</button>
+                    <button class="btn btn-ghost" @click="closePreview">关闭</button>
+                    <span class="preview-saved" v-if="previewSaved">已保存</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 移动端文件操作弹窗 -->
+        <!-- 移动端空白处长按：当前目录菜单 -->
+        <div class="modal-mask" v-if="blankSheet">
+            <div class="modal">
+                <div class="modal-title">当前目录</div>
+                <div class="modal-meta" style="word-break:break-all">{{ currentPath }}</div>
+                <div class="modal-actions" style="flex-direction:column">
+                    <button class="ctx-item" @click="blankNewFolder">新建文件夹</button>
+                    <button class="ctx-item" v-if="clipboard" @click="blankPaste">粘贴 ({{ clipboard.paths.length }})</button>
+                    <button class="ctx-item" @click="blankSelectAll">全选</button>
+                    <button class="ctx-item" @click="invertSelect(); blankSheet = false">反选</button>
+                    <button class="ctx-item" @click="blankRefresh">刷新</button>
+                    <button class="ctx-item" v-if="currentPath !== '/'" @click="blankTerminal">在终端中打开</button>
+                </div>
+                <button class="modal-close" @click="closeBlankSheet">&times;</button>
+            </div>
+        </div>
+
+        <div class="modal-mask" v-if="actionTarget" @click.self="actionTarget = null">
+            <div class="modal">
+                <div class="modal-title">{{ actionTarget.name }}</div>
+                <div class="modal-meta">{{ typeText(actionTarget) }}<template v-if="actionTarget.type === 'file'"> · {{ fmtSize(actionTarget.size) }}</template></div>
+                <div class="modal-actions" style="flex-direction:column">
+                    <button class="ctx-item" v-if="actionTarget.type === 'file' && isPreviewable(actionTarget)"
+                            @click="openPreview(actionTarget); actionTarget = null">预览</button>
+                    <button class="ctx-item" v-if="actionTarget.type === 'file'"
+                            @click="openAsText(actionTarget); actionTarget = null">用记事本打开</button>
+                    <button class="ctx-item" @click="askAIFor([actionTarget]); actionTarget = null">问 AI</button>
+                    <button class="ctx-item" @click="openUploadHost([actionTarget.path]); actionTarget = null">上传到服务器…</button>
+                    <div class="ctx-sep"></div>
+                    <button class="ctx-item" @click="doDownloadOne(actionTarget.path)">下载</button>
+                    <button class="ctx-item" @click="clipboard = { mode: 'copy', paths: [actionTarget.path] }; actionTarget = null; toastMsg('已复制，去目标目录粘贴')">复制</button>
+                    <button class="ctx-item" @click="clipboard = { mode: 'move', paths: [actionTarget.path] }; actionTarget = null; toastMsg('已标记移动，请进入目标目录粘贴')">移动</button>
+                    <button class="ctx-item" @click="copyPath(actionTarget.path)">复制路径</button>
+                    <div class="ctx-sep"></div>
+                    <button class="ctx-item" @click="openEntryInTerminal(actionTarget); actionTarget = null">在终端中打开</button>
+                    <button class="ctx-item" v-if="isArchiveEntry(actionTarget)" @click="extractEntry(actionTarget)">解压到此处</button>
+                    <button class="ctx-item" v-if="actionTarget.type === 'file'" @click="doStart(actionTarget.path)">启动</button>
+                    <div class="ctx-sep"></div>
+                    <button class="ctx-item" @click="startRenameFrom(actionTarget)">重命名</button>
+                    <button class="ctx-item" @click="propsTarget = actionTarget; actionTarget = null">属性</button>
+                    <div class="ctx-sep"></div>
+                    <button class="ctx-item danger" @click="deletePaths([actionTarget.path])">删除 (移入回收站)</button>
+                </div>
+                <button class="modal-close" @click="actionTarget = null">&times;</button>
+            </div>
+        </div>
+
+        <!-- 移动端多选底部操作栏 -->
+        <div class="bottombar" v-if="selMode && selCount">
+            <button class="btn btn-secondary" @click="downloadSelected">
+                <i data-icon="download"></i>
+                下载
+            </button>
+            <button class="btn btn-secondary" @click="startCompress">压缩</button>
+            <button class="btn btn-secondary" @click="openAskAI">问 AI</button>
+            <button class="btn btn-secondary" @click="openUploadHost(selectedPaths)">传到服务器</button>
+            <button class="btn btn-danger" @click="deleteSelected">删除</button>
+            <button class="btn btn-secondary" @click="batchCopyMove('copy')">复制</button>
+            <button class="btn btn-secondary" @click="batchCopyMove('move')">移动</button>
+            <button class="btn btn-secondary" v-if="selCount === 1" @click="openSelectedInTerminal">在终端打开</button>
+            <button class="btn btn-secondary" v-if="clipboard" @click="pasteClipboard">粘贴 ({{ clipboard.paths.length }})</button>
+            <button class="btn btn-secondary" @click="selectAll">全选</button>
+            <button class="btn btn-secondary" @click="invertSelect">反选</button>
+            <button class="btn btn-ghost" @click="exitSelMode">取消选择</button>
+        </div>
+
+        <!-- 问 AI 任务面板 -->
+        <div class="inbox-mask" v-if="aiOpen" @click.self="aiOpen = false">
+            <div class="inbox-sheet">
+                <div class="inbox-sheet-head">
+                    <span>{{ aiDirect ? '在此文件夹问 AI' : '问 AI' }}</span>
+                    <button class="inbox-x" @click="aiOpen = false">&times;</button>
+                </div>
+                <div class="inbox-files-summary">{{ aiEntries.map(e => e.name).join('、') }}</div>
+
+                <p v-if="aiDirect" class="inbox-hint">
+                    直接以 {{ aiDirectPath }} 为工作目录启动 AI，不复制任何文件。
+                </p>
+
+                <label class="field-label">{{ aiDirect ? '要对 AI 说什么（可选）' : '任务名' }}</label>
+                <input class="input" v-model.trim="aiTask"
+                       :placeholder="aiDirect ? '例如：总结这个目录里的材料' : '例如：整理这批材料'"
+                       spellcheck="false">
+
+                <template v-if="!aiDirect">
+                    <label class="field-label">补充要求（可选）</label>
+                    <textarea class="input inbox-note" v-model="aiNote" rows="3"
+                              placeholder="例如：整理成一份 PDF；重点看第 3 题…"></textarea>
+                </template>
+
+                <div class="inbox-dest" v-if="aiPlan">
+                    <div class="inbox-dest-head">
+                        <span>落点</span>
+                        <span class="inbox-badge" :class="'mode-' + aiPlan.mode">{{ modeLabel(aiPlan.mode) }}</span>
+                        <span v-if="aiPlan.confidence != null" class="inbox-conf">conf {{ aiPlan.confidence }}</span>
+                    </div>
+                    <div class="inbox-dest-path">{{ aiDestPreview }}</div>
+                    <div class="inbox-alts" v-if="aiPlan.mode === 'choose' && aiPlan.alternatives.length">
+                        <button v-for="a in aiPlan.alternatives" :key="a.path" class="inbox-alt"
+                                :class="{ 'is-active': aiDest === a.path }" @click="aiDest = a.path; aiDestMode = 'new'">
+                            <span class="inbox-alt-p">{{ Math.round((a.p || 0) * 100) }}%</span>
+                            <span class="inbox-alt-path">{{ a.path }}</span>
+                        </button>
+                    </div>
+                    <div class="inbox-dest-actions">
+                        <button class="btn btn-secondary" :class="{ 'is-on': aiDestMode === 'new' }"
+                                @click="aiDestMode = 'new'">新建子目录</button>
+                        <button class="btn btn-secondary" :class="{ 'is-on': aiDestMode === 'existing' }"
+                                @click="aiDestMode = 'existing'">就放这一层</button>
+                        <button class="btn btn-ghost" @click="openAIPicker">选择其他目录…</button>
+                    </div>
+                </div>
+                <p v-else-if="aiPlanLoading" class="inbox-hint">正在判断落点…</p>
+                <p v-if="aiError" class="load-error">{{ aiError }}</p>
+
+                <button class="btn btn-primary inbox-go" @click="createAICase"
+                        :disabled="aiCreating || (aiDirect ? false : (!aiTask || !aiDest))">
+                    {{ aiCreating ? (aiDirect ? '正在启动…' : '正在创建…') : (aiDirect ? '启动 AI' : '开始') }}
+                </button>
+            </div>
+        </div>
+
+        <div class="inbox-mask" v-if="aiPickerOpen" @click.self="aiPickerOpen = false">
+            <div class="inbox-sheet">
+                <div class="inbox-sheet-head">
+                    <span>选择目录</span>
+                    <button class="inbox-x" @click="aiPickerOpen = false">&times;</button>
+                </div>
+                <div class="inbox-picker-roots">
+                    <button v-for="r in aiPickerRoots" :key="r" class="inbox-chip"
+                            :class="{ 'is-active': aiPickerPath === r }" @click="loadAIPicker(r)">{{ r }}</button>
+                </div>
+                <div class="inbox-picker-path">{{ aiPickerPath }}</div>
+                <div class="inbox-picker-list">
+                    <button class="inbox-picker-up" @click="aiPickerUp" :disabled="!aiCanUp">.. 上一级</button>
+                    <button v-for="e in aiPickerEntries" :key="e.path" class="inbox-picker-entry"
+                            @click="loadAIPicker(e.path)">
+                        <i data-icon="folder"></i>{{ e.name }}
+                    </button>
+                    <p v-if="!aiPickerEntries.length" class="inbox-hint">（没有子目录）</p>
+                </div>
+                <button class="btn btn-primary inbox-go" @click="aiPickHere">选择此目录</button>
+            </div>
+        </div>
+
+        <div class="inbox-mask" v-if="uploadOpen" @click.self="uploadOpen = false">
+            <div class="inbox-sheet">
+                <div class="inbox-sheet-head">
+                    <span>上传到服务器</span>
+                    <button class="inbox-x" @click="uploadOpen = false">&times;</button>
+                </div>
+                <div class="inbox-files-summary">{{ uploadPaths.length }} 项</div>
+                <div class="upload-host-list" v-if="sshHosts.length">
+                    <button v-for="h in sshHosts" :key="h.id" class="upload-host-item"
+                            :class="{ 'is-active': uploadHostId === h.id }" @click="selectUploadHost(h)">
+                        <span>{{ h.name }}</span>
+                        <span class="upload-host-addr">{{ h.user }}@{{ h.host }}</span>
+                    </button>
+                </div>
+                <p v-else class="inbox-hint">还没有 SSH 主机，请先在 SSH 页添加。</p>
+                <div class="upload-quick" v-if="uploadPins.length">
+                    <button v-for="p in uploadPins" :key="p" class="upload-quick-chip"
+                            :class="{ 'active': (uploadRemoteDir || '.') === p }"
+                            :title="p"
+                            @click="uploadRemoteDir = p">
+                        {{ uploadPinLabel(p) }}
+                    </button>
+                </div>
+                <label class="field-label">远程目录（留空 = 登录目录）</label>
+                <div class="upload-path-row">
+                    <input class="input" v-model.trim="uploadRemoteDir"
+                           placeholder="例如 /home/user/materials" spellcheck="false">
+                    <button class="btn btn-secondary" @click="openUploadPicker">浏览…</button>
+                </div>
+                <p v-if="uploadError" class="load-error">{{ uploadError }}</p>
+                <button class="btn btn-primary inbox-go"
+                        :disabled="!uploadHostId || uploadBusy" @click="startUpload">
+                    {{ uploadBusy ? '上传中…' : '开始上传' }}
+                </button>
+            </div>
+        </div>
+
+        <div class="inbox-mask" v-if="uploadPickerOpen" @click.self="uploadPickerOpen = false">
+            <div class="inbox-sheet">
+                <div class="inbox-sheet-head">
+                    <span>选择远程目录</span>
+                    <button class="inbox-x" @click="uploadPickerOpen = false">&times;</button>
+                </div>
+                <div class="inbox-files-summary">{{ uploadPickerPath }}</div>
+                <div class="upload-quick" v-if="uploadPins.length">
+                    <button v-for="p in uploadPins" :key="p" class="upload-quick-chip"
+                            :title="p" @click="loadUploadPicker(p)">
+                        {{ uploadPinLabel(p) }}
+                    </button>
+                </div>
+                <div class="upload-host-list">
+                    <button v-if="uploadPickerParent" class="upload-host-item"
+                            @click="loadUploadPicker(uploadPickerParent)">
+                        <span>.. 上一级</span>
+                    </button>
+                    <button v-for="e in uploadPickerEntries" :key="e.path" class="upload-host-item"
+                            @click="loadUploadPicker(e.path)">
+                        <span>{{ e.name }}</span>
+                        <span class="upload-host-addr">目录</span>
+                    </button>
+                    <p v-if="uploadPickerError" class="load-error">{{ uploadPickerError }}</p>
+                    <p v-else-if="!uploadPickerEntries.length && !uploadPickerLoading" class="inbox-hint">（没有子目录）</p>
+                </div>
+                <button class="btn btn-primary inbox-go" @click="chooseUploadDir">选择此目录</button>
+            </div>
+        </div>
+
+        <div class="toast" :class="{ show: toast }">{{ toast }}</div>
+    </main>
+
+
+    <script src="/assets/js/icons.js?v=__BUILD__"></script>
+    <script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+    <script src="/assets/js/sftp-memory.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+    <script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/files-env.js?v=__BUILD__"></script>
+<script src="/assets/js/files-methods-core.js?v=__BUILD__"></script>
+<script src="/assets/js/files-methods-ops.js?v=__BUILD__"></script>
+<script src="/assets/js/files-methods-ui.js?v=__BUILD__"></script>
+<script src="/assets/js/files-methods-ai.js?v=__BUILD__"></script>
+<script src="/assets/js/files.js?v=__BUILD__"></script>
+</body>
+</html>

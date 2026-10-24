@@ -1,0 +1,36 @@
+.settings-page { padding-bottom: 96px; }
+.settings-card { max-width: 560px; }
+.settings-card + .settings-card { margin-top: var(--sp-4); }
+.settings-note { font-size: 13px; color: var(--text-3); margin-bottom: var(--sp-4); line-height: 1.6; }
+.settings-card .input { width: 100%; box-sizing: border-box; margin-bottom: var(--sp-3); }
+.settings-submit { width: 100%; height: 44px; margin-top: var(--sp-2); }
+.settings-ok {
+    margin-top: var(--sp-3); padding: 10px 12px; border-radius: var(--radius-s);
+    background: #ECFDF5; color: #047857; font-size: 13px;
+}
+.settings-list { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-2); line-height: 1.8; }
+.settings-list code { font-family: var(--mono); font-size: 12px; background: var(--bg-2); padding: 1px 4px; border-radius: 4px; }
+.settings-toggle {
+    display: flex; align-items: center; gap: 10px; min-height: 44px;
+    font-size: 14px; color: var(--text-2); cursor: pointer;
+}
+.settings-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.settings-inbox { margin-top: var(--sp-2); }
+.settings-dir {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px; margin-bottom: 6px; border-radius: var(--radius-s);
+    background: var(--bg-2); font-size: 12px;
+}
+.settings-dir code {
+    font-family: var(--mono); overflow-wrap: anywhere; color: var(--text-2);
+}
+.settings-dir-remove { flex: 0 0 auto; height: 32px; padding: 0 10px; font-size: 12px; }
+.settings-dir-add { display: flex; gap: 8px; margin: var(--sp-3) 0 var(--sp-2); }
+.settings-dir-add .input { margin-bottom: 0; flex: 1; min-width: 0; }
+.settings-dir-add .btn { flex: 0 0 auto; height: 44px; }
+@media (max-width: 640px) {
+    .settings-card { max-width: none; }
+}.settings-download {
+    display: flex; align-items: center; justify-content: center;
+    text-decoration: none; box-sizing: border-box;
+}

@@ -1,0 +1,402 @@
+/* 文件管理页 — 桌面资源管理器式 / 移动端列表式 */
+
+/* ====== 布局骨架 ====== */
+.fm-layout { display: flex; gap: var(--sp-4); align-items: flex-start; }
+.fm-nav {
+    flex: 0 0 200px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-l);
+    box-shadow: var(--shadow-card);
+    padding: var(--sp-3);
+    position: sticky;
+    top: calc(var(--header-h) + var(--sp-4));
+    max-height: calc(100vh - var(--header-h) - var(--sp-8));
+    overflow-y: auto;
+}
+.fm-main { flex: 1; min-width: 0; }
+.fm-nav .nav-section { font-size: 12px; color: var(--text-3); margin: var(--sp-3) 0 var(--sp-1); }
+.fm-nav .nav-section:first-child { margin-top: 0; }
+.fm-nav .nav-entry {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 6px var(--sp-2);
+    border-radius: var(--radius-s);
+    color: var(--text-2);
+    font-size: 13px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+}
+.fm-nav .nav-entry:hover { background: var(--bg-2); color: var(--text-1); }
+.fm-nav .nav-entry svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-3); }
+.fm-nav .nav-entry span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-nav-collapsed .fm-nav { display: none; }
+
+/* ====== 工具栏 ====== */
+.fm-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+    margin-bottom: var(--sp-3);
+}
+.fm-toolbar .sep { width: 1px; height: 22px; background: var(--border-ctrl); margin: 0 var(--sp-1); }
+.fm-check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+    user-select: none;
+}
+
+/* ====== 地址栏 ====== */
+.fm-addressbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    margin-bottom: var(--sp-3);
+}
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    background: var(--surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.icon-btn:hover:not(:disabled) { border-color: var(--brand); color: var(--brand); }
+.icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+.icon-btn svg { width: 16px; height: 16px; }
+.crumb-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: var(--surface);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    padding: 4px 8px;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+.crumb-seg {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 3px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.crumb-seg:hover { background: var(--brand-bg); color: var(--brand); }
+.crumb-sep { color: var(--text-3); flex-shrink: 0; }
+.address-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    font-family: var(--mono);
+    font-size: 13px;
+    background: transparent;
+    color: var(--text-1);
+}
+
+/* ====== 文件列表 (详细/图标 双视图共用行结构) ====== */
+.fm-list { border: 1px solid var(--border); border-radius: var(--radius-l); overflow: hidden auto; background: var(--surface); }
+.fm-head, .fm-row {
+    display: grid;
+    grid-template-columns: 30px 26px minmax(140px, 1fr) 130px 80px 80px;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 0 var(--sp-3);
+}
+@media (max-width: 900px) {
+    .fm-head, .fm-row {
+        grid-template-columns: 26px 22px minmax(110px, 1fr) 100px 60px 60px;
+        gap: var(--sp-1);
+        padding: 0 var(--sp-2);
+    }
+}
+.fm-head {
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-2);
+    min-height: 36px;
+}
+.fm-head .col { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; padding: 8px 0; }
+.fm-head .col:hover { color: var(--brand); }
+.fm-head .col .arrow { font-size: 10px; }
+.fm-row {
+    min-height: 40px; border-bottom: 1px solid var(--border); cursor: default;
+    /* 移动端长按不能被系统文本选择/长按菜单打断 */
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.fm-row:last-child { border-bottom: none; }
+.fm-row:hover { background: var(--bg-2); }
+.fm-row.selected { background: var(--brand-bg); }
+.fm-row.hidden-item .fm-name { color: var(--text-3); }
+.fm-check { display: flex; align-items: center; }
+.fm-check input { width: 15px; height: 15px; cursor: pointer; }
+.fm-icon { display: flex; align-items: center; }
+.fm-icon svg { width: 20px; height: 20px; color: var(--brand); }
+.fm-name {
+    min-width: 0;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fm-name.is-hidden-file { color: var(--text-3); }
+.fm-mtime, .fm-type { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fm-size { font-size: 12px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+.fm-row .mobile-meta { display: none; }   /* 移动端元信息行, 桌面隐藏 */
+.fm-row.mobile-meta { display: none; }
+
+/* 图标视图 */
+.fm-list.icons { padding: var(--sp-3); display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: var(--sp-2); align-content: start; }
+.fm-list.icons .fm-head { display: none; }
+.fm-list.icons .fm-row, .fm-list.icons .fm-head {
+    grid-template-columns: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-m);
+    padding: var(--sp-3) var(--sp-2);
+    min-height: 90px;
+}
+.fm-list.icons .fm-row { border-color: var(--border); }
+.fm-list.icons .fm-row.selected { border-color: var(--brand); background: var(--brand-bg); }
+.fm-list.icons .fm-row:hover { border-color: var(--border-ctrl); background: var(--bg-2); }
+.fm-list.icons .fm-mtime, .fm-list.icons .fm-type, .fm-list.icons .fm-size { display: none; }
+.fm-list.icons .fm-row { overflow: hidden; }
+.fm-list.icons .fm-name {
+    font-size: 12px; text-align: center; white-space: normal;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    max-width: 100%; overflow: hidden;
+    word-break: break-all;   /* 长数字/下划线串强制断行, 不再横穿相邻瓦片 (FM-11) */
+}
+
+.search-input { width: 130px; height: 34px; font-size: 13px; padding: 0 10px; }
+.fm-list.drop-hint { border-color: var(--brand); background: var(--brand-bg); }
+
+/* ====== 状态栏 ====== */
+.statusbar {
+    display: flex;
+    gap: var(--sp-6);
+    font-size: 12px;
+    color: var(--text-3);
+    padding: var(--sp-2) var(--sp-1) 0;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ====== 移动端 (≤640px) ====== */
+@media (max-width: 640px) {
+    .sep { display: none; }
+    .fm-layout { display: block; }
+    .fm-nav { display: none; }
+    .fm-head { display: none; }                 /* 详细表头隐藏, 行内自带元信息 */
+    .fm-list.icons { padding: 0; border: none; background: transparent; }
+    .fm-list.icons .fm-row { border: none; background: transparent; }
+    .fm-list.icons .fm-row.selected { background: var(--brand-bg); border: 1px solid var(--brand); }
+    .fm-row, .fm-list.icons .fm-row {
+        grid-template-columns: 28px 24px minmax(0, 1fr) auto;
+        grid-template-areas: "check icon name size" ". . meta meta";
+        row-gap: 2px;
+        padding: var(--sp-2) var(--sp-1);
+        min-height: 52px;
+    }
+    .fm-row .fm-check { grid-area: check; }
+    .fm-row .fm-icon { grid-area: icon; }
+    .fm-row .fm-name { grid-area: name; }
+    .fm-row .fm-mtime, .fm-row .fm-type { display: none; }
+    .fm-row .fm-size { grid-area: size; }
+    .fm-row .mobile-meta {
+        grid-area: meta;
+        display: block;
+        font-size: 11px;
+        color: var(--text-3);
+    }
+    .fm-list:not(.icons) .fm-row { border-radius: var(--radius-s); }
+    /* 选择模式: 复选框常显 */
+    .sel-mode .fm-check input { display: inline; }
+    .bottombar {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: calc(64px + 8px);
+        z-index: 120;
+        display: flex;
+        gap: var(--sp-2);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-l);
+        box-shadow: var(--shadow-float);
+        padding: var(--sp-2);
+    }
+    .bottombar .btn { flex: 1; }
+}
+/* 多选操作栏只在移动端出现; 桌面用工具栏/右键菜单 */
+@media (min-width: 641px) {
+    .bottombar { display: none; }
+}
+
+
+/* ====== 移动端骨架: 列表占满剩余高度并内部滚动, 空白处才能接长按 ====== */
+@media (max-width: 640px) {
+    body:has(.fm-layout) { overflow: hidden; height: 100vh; }
+    .container:has(.fm-layout) {
+        height: calc(100vh - var(--header-h) - 60px);   /* 顶栏 + 底部 tabbar */
+        max-height: none;
+        display: flex;
+        flex-direction: column;
+        padding-bottom: 0;
+    }
+    .container:has(.fm-layout) .page-head,
+    .container:has(.fm-layout) .fm-toolbar,
+    .container:has(.fm-layout) .fm-addressbar { flex-shrink: 0; }
+    .fm-layout { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .fm-main { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+    .fm-list { flex: 1; min-height: 0; }
+}
+
+/* ====== 桌面端骨架: 顶栏/工具栏/侧栏固定, 仅文件列表滚动 (FM-03) ====== */
+@media (min-width: 641px) {
+    body:has(.fm-layout) { overflow: hidden; height: 100vh; }
+    .container:has(.fm-layout) {
+        height: calc(100vh - var(--header-h));
+        max-height: none;
+        display: flex;
+        flex-direction: column;
+        padding-bottom: 0;
+    }
+    .container:has(.fm-layout) .page-head { flex-shrink: 0; }
+    .fm-layout { flex: 1; min-height: 0; align-items: stretch; }
+    .fm-nav { max-height: none; overflow-y: auto; }
+    .fm-main { display: flex; flex-direction: column; min-height: 0; }
+    .fm-list { flex: 1; min-height: 0; }
+}
+
+/* ====== 图标视图圈选 (FM-10) ====== */
+.fm-list.icons { position: relative; }
+.fm-list.icons.marqueeing { user-select: none; cursor: crosshair; }
+/* 图标视图复选框: 桌面隐藏(圈选/点击选择), 移动端长按进选择模式后显示 */
+@media (hover: hover) and (pointer: fine) {
+    .fm-list.icons .fm-check { display: none; }   /* 键鼠: 圈选/点击选择 */
+}
+@media (hover: none) and (pointer: coarse) {
+    .fm-list.icons:not(.sel-mode) .fm-check { display: none; }   /* 触屏: 长按进选择模式后显示 */
+}
+.fm-marquee {
+    position: absolute;
+    z-index: 5;
+    border: 1px solid var(--brand);
+    background: var(--brand-bg);
+    pointer-events: none;
+}
+
+/* ====== 文件预览弹窗 (FM-05 档位A) ====== */
+.preview-modal { width: min(920px, 94vw); }
+.preview-modal .modal-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.preview-truncated { font-size: 12px; font-weight: 400; color: var(--text-3); }
+.preview-img { display: block; max-width: 100%; max-height: 68vh; margin: 10px auto 0; border: 1px solid var(--border); border-radius: var(--radius-s); background: #fff; }
+.preview-text {
+    width: 100%; height: 60vh; margin-top: 10px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.55;
+    background: var(--surface); color: var(--text-1);
+    border: 1px solid var(--border-ctrl); border-radius: var(--radius-s);
+    padding: 10px 12px; resize: vertical; outline: none;
+}
+.preview-text:focus { border-color: var(--brand); }
+.preview-saved { font-size: 13px; color: var(--ok, #0a7d33); }
+
+/* ====== 行内类型图标 (FM-06, v-html 注入) ====== */
+.fm-icon svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--text-3); }
+.fm-list.icons .fm-icon svg { width: 34px; height: 34px; color: var(--brand); }
+
+/* ====== 移动端: 面包屑独立一行完整显示 (FILES-03) ====== */
+@media (max-width: 640px) {
+    .fm-addressbar { flex-wrap: wrap; row-gap: var(--sp-2); }
+    .fm-addressbar .crumb-wrap { order: 10; flex-basis: 100%; max-width: none; overflow-x: auto; }
+    .fm-addressbar .search-input { order: 11; flex-basis: 100%; max-width: none; width: auto; }
+    .fm-toolbar-hint { display: none; }
+}
+
+/* ====== FM-13 图片缩略图 / FM-14 粘贴 / MOB-04 移动端快速访问 ====== */
+.fm-thumb { display: block; object-fit: cover; border-radius: 4px; }
+.fm-list .fm-thumb { width: 20px; height: 20px; }
+.fm-list.icons .fm-thumb { width: 44px; height: 44px; border-radius: 6px; }
+.fm-list.icons .fm-row { overflow: hidden; }
+
+/* 移动端: 快速访问抽屉 */
+.fm-nav-toggle { display: none; }
+@media (max-width: 640px) {
+    .fm-nav-toggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; }
+    .fm-nav {
+        position: fixed; left: 0; top: var(--header-h); bottom: 0; width: 240px; z-index: 70;
+        display: block !important;
+        transform: translateX(-100%); transition: transform .2s ease;
+        border-radius: 0; box-shadow: 0 10px 24px rgba(15,23,42,.15);
+    }
+    .fm-nav.m-open { transform: none; }
+    .fm-nav-backdrop { position: fixed; inset: var(--header-h) 0 0 0; background: rgba(15,23,42,.35); z-index: 65; }
+}
+
+/* 收件箱虚拟位置与来源徽标 */
+.fm-nav .nav-entry.is-active { background: var(--brand-bg); color: var(--brand); }
+.fm-nav .nav-count {
+    margin-left: auto; font-size: 11px; color: var(--text-3);
+    background: var(--bg-2); border-radius: 999px; padding: 1px 7px;
+}
+.fm-badge {
+    display: inline-block; margin-left: 6px; padding: 0 6px;
+    border-radius: 6px; background: var(--bg-2); color: var(--text-3);
+    font-size: 10px; vertical-align: 1px;
+}
+.fm-badge.dup { color: var(--warn); }
+/* 上传到 SSH 服务器：主机选择 */
+.upload-host-list {
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: 220px; overflow-y: auto; margin: 8px 0;
+}
+.upload-host-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--surface); color: var(--text-1);
+    font-family: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.upload-host-item:hover { border-color: var(--brand); }
+.upload-host-item.is-active {
+    border-color: var(--brand); background: var(--brand-bg); color: var(--brand);
+}
+.upload-host-addr { font-size: 12px; color: var(--text-3); }
+.upload-host-item.is-active .upload-host-addr { color: var(--brand); }.upload-path-row { display: flex; gap: 8px; align-items: center; }
+.upload-path-row .input { flex: 1; min-width: 0; }
+.upload-path-row .btn { flex-shrink: 0; }/* 上传弹窗里的 SFTP 快速访问 */
+.upload-quick { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; scrollbar-width: thin; }
+.upload-quick-chip {
+    flex: 0 0 auto; padding: 3px 9px; border: 1px solid var(--border);
+    border-radius: 999px; background: var(--surface); color: var(--text-2);
+    font-family: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.upload-quick-chip:hover { border-color: var(--brand); color: var(--brand); }
+.upload-quick-chip.active {
+    border-color: var(--brand); background: var(--brand-bg); color: var(--brand);
+}

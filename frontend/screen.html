@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>实时屏幕 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/screen.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+    <main class="container screen-container" id="app" v-cloak>
+        <div class="page-head">
+            <div>
+                <h1 class="page-title">实时屏幕</h1>
+                <p class="page-sub" style="margin-bottom:0;">点击画面=左键 ｜ 右键=右键 ｜ 在页面上打字=远程键盘输入</p>
+            </div>
+            <span class="status-pill" :class="statusClass">{{ status }}</span>
+        </div>
+
+        <div class="screen-wrap">
+            <img id="stream-img" ref="streamImg" alt="实时屏幕流">
+            <div class="screen-offline" v-if="offline">画面暂不可用，重连中…</div>
+        </div>
+        <div class="screen-meta">
+            <span>FPS: {{ fps }}</span>
+            <span v-if="resolution">{{ resolution }}</span>
+            <span>点击画面即远程操作</span>
+        </div>
+    </main>
+
+
+    <script src="/assets/js/icons.js?v=__BUILD__"></script>
+    <script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+    <script src="/assets/js/screen.js?v=__BUILD__"></script>
+</body>
+</html>

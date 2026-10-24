@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>收件箱 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+<main class="container inbox-page" id="app" v-cloak>
+    <div class="page-head">
+        <div>
+            <h1 class="page-title">收件箱</h1>
+            <p class="page-sub">{{ total }} 个文件 · 按修改时间排序 · 同名同内容已合并</p>
+        </div>
+        <button class="btn btn-secondary" @click="load" :disabled="loading">{{ loading ? '扫描中…' : '刷新' }}</button>
+    </div>
+
+    <div class="inbox-filters">
+        <button v-for="s in sources" :key="s" class="inbox-chip"
+                :class="{ 'is-active': filter === s }" @click="filter = s">{{ s }}</button>
+        <input class="input inbox-search" v-model.trim="q" placeholder="搜索文件名…" spellcheck="false">
+    </div>
+
+    <p v-if="error" class="load-error">{{ error }}</p>
+
+    <div class="inbox-list" v-if="visible.length">
+        <label v-for="it in visible" :key="it.id" class="inbox-row" :class="{ 'is-selected': isSel(it) }">
+            <input type="checkbox" :checked="isSel(it)" @change="toggle(it)">
+            <span class="inbox-thumb">
+                <img v-if="it.thumb" :src="it.thumb" loading="lazy" alt="">
+                <i v-else :data-icon="iconOf(it)"></i>
+            </span>
+            <span class="inbox-main">
+                <span class="inbox-name" :title="it.path">{{ it.name }}</span>
+                <span class="inbox-meta">
+                    <span class="inbox-badge">{{ it.source }}</span>
+                    <span>{{ fmtTime(it.mtime) }}</span>
+                    <span>{{ fmtSize(it.size) }}</span>
+                    <span v-if="it.dupes.length" class="inbox-dup">重复 ×{{ it.dupes.length + 1 }}</span>
+                </span>
+            </span>
+        </label>
+    </div>
+    <div v-else-if="!loading" class="inbox-empty">
+        <i data-icon="inbox"></i>
+        <p>{{ q || filter !== '全部' ? '没有匹配的文件' : '最近没有收到新文件' }}</p>
+        <p class="inbox-empty-sub">观察目录：{{ dirs.map(d => d.path).join('、') || '未配置' }}</p>
+    </div>
+
+    <div class="inbox-actionbar" v-if="sel.length && !taskOpen && !pickerOpen">
+        <span class="inbox-selinfo">已选 {{ sel.length }} 项</span>
+        <span class="inbox-actions">
+            <button class="btn btn-ghost" @click="sel = []">取消</button>
+            <button class="btn btn-primary" @click="openTask">交给 AI</button>
+        </span>
+    </div>
+
+    <div class="inbox-mask" v-if="taskOpen" @click.self="taskOpen = false">
+        <div class="inbox-sheet">
+            <div class="inbox-sheet-head">
+                <span>交给 AI</span>
+                <button class="inbox-x" @click="taskOpen = false">&times;</button>
+            </div>
+            <div class="inbox-files-summary">{{ sel.map(id => itemById(id).name).join('、') }}</div>
+
+            <label class="field-label">任务名</label>
+            <input class="input" v-model.trim="task" placeholder="例如：整理这批材料" spellcheck="false">
+
+            <label class="field-label">补充要求（可选）</label>
+            <textarea class="input inbox-note" v-model="note" rows="3"
+                      placeholder="例如：整理成一份 PDF；重点看第 3 题；语气按家长沟通稿来…"></textarea>
+
+            <div class="inbox-dest" v-if="plan">
+                <div class="inbox-dest-head">
+                    <span>落点</span>
+                    <span class="inbox-badge" :class="'mode-' + plan.mode">{{ modeLabel(plan.mode) }}</span>
+                    <span v-if="plan.confidence != null" class="inbox-conf">conf {{ plan.confidence }}</span>
+                </div>
+                <div class="inbox-dest-path">{{ destPreview }}</div>
+
+                <div class="inbox-alts" v-if="plan.mode === 'choose' && plan.alternatives.length">
+                    <button v-for="a in plan.alternatives" :key="a.path" class="inbox-alt"
+                            :class="{ 'is-active': dest === a.path }" @click="chooseAlt(a.path)">
+                        <span class="inbox-alt-p">{{ Math.round((a.p || 0) * 100) }}%</span>
+                        <span class="inbox-alt-path">{{ a.path }}</span>
+                    </button>
+                </div>
+
+                <div class="inbox-dest-actions">
+                    <button class="btn btn-secondary" :class="{ 'is-on': destMode === 'new' }"
+                            @click="destMode = 'new'">新建子目录</button>
+                    <button class="btn btn-secondary" :class="{ 'is-on': destMode === 'existing' }"
+                            @click="destMode = 'existing'">就放这一层</button>
+                    <button class="btn btn-ghost" @click="openPicker">选择其他目录…</button>
+                </div>
+                <p class="inbox-hint" v-if="destMode === 'existing'">
+                    文件会直接复制进这个目录，适合复用旧的项目文件夹。
+                </p>
+            </div>
+            <p v-else-if="planLoading" class="inbox-hint">正在判断落点…</p>
+
+            <p v-if="error" class="load-error">{{ error }}</p>
+
+            <button class="btn btn-primary inbox-go" @click="create"
+                    :disabled="creating || !task || !dest">
+                {{ creating ? '正在创建…' : '开始' }}
+            </button>
+        </div>
+    </div>
+
+    <div class="inbox-mask" v-if="pickerOpen" @click.self="pickerOpen = false">
+        <div class="inbox-sheet">
+            <div class="inbox-sheet-head">
+                <span>选择目录</span>
+                <button class="inbox-x" @click="pickerOpen = false">&times;</button>
+            </div>
+            <div class="inbox-picker-roots">
+                <button v-for="r in pickerRoots" :key="r" class="inbox-chip"
+                        :class="{ 'is-active': pickerPath === r }" @click="loadPicker(r)">{{ r }}</button>
+            </div>
+            <div class="inbox-picker-path">{{ pickerPath }}</div>
+            <div class="inbox-picker-list">
+                <button class="inbox-picker-up" @click="pickerUp" :disabled="!canUp">.. 上一级</button>
+                <button v-for="e in pickerEntries" :key="e.path" class="inbox-picker-entry"
+                        @click="loadPicker(e.path)">
+                    <i data-icon="folder"></i>{{ e.name }}
+                </button>
+                <p v-if="!pickerEntries.length" class="inbox-hint">（没有子目录）</p>
+            </div>
+            <button class="btn btn-primary inbox-go" @click="pickHere">选择此目录</button>
+        </div>
+    </div>
+</main>
+
+<script src="/assets/js/icons.js?v=__BUILD__"></script>
+<script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+<script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+<script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/inbox.js?v=__BUILD__"></script>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#F4F7FB">
+<link rel="icon" href="data:,">
+<title>任务 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/tasks.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+<main class="container tasks-page" id="app" v-cloak>
+    <div class="page-head">
+        <div>
+            <h1 class="page-title">任务</h1>
+            <p class="page-sub">给 Kimi 一句话，选上文件，回来看结果。</p>
+        </div>
+    </div>
+
+    <div class="tasks-layout" :class="{ 'show-detail': !!selectedId }">
+        <section class="tasks-main">
+            <div class="task-composer">
+                <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
+                          placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
+                          @keydown.ctrl.enter="create"></textarea>
+                <div class="task-files">
+                    <span class="task-file" v-for="p in paths" :key="p">
+                        {{ baseName(p) }}
+                        <button type="button" title="移除" @click="removePath(p)">&times;</button>
+                    </span>
+                    <button type="button" class="btn btn-secondary" @click="openPicker">从收件箱选择</button>
+                    <button type="button" class="btn btn-ghost" @click="togglePathMenu">添加路径</button>
+                </div>
+                <div class="task-path-menu" v-if="pathMenuOpen">
+                    <div class="task-path-sec" v-if="quickDirs.length">
+                        <div class="task-path-title">快速访问</div>
+                        <button type="button" class="task-path-item" v-for="d in quickDirs" :key="d.path"
+                                :class="{ added: paths.indexOf(d.path) >= 0 }" @click="addQuick(d.path)">
+                            <span class="task-path-tag">{{ d.tag }}</span>
+                            <span class="task-path-name">{{ d.label }}</span>
+                            <span class="task-path-full">{{ d.path }}</span>
+                        </button>
+                    </div>
+                    <div class="task-path-sec" v-if="recentPaths.length">
+                        <div class="task-path-title">最近用过</div>
+                        <button type="button" class="task-path-item" v-for="p in recentPaths" :key="p"
+                                :class="{ added: paths.indexOf(p) >= 0 }" @click="addQuick(p)">
+                            <span class="task-path-tag">最近</span>
+                            <span class="task-path-name">{{ baseName(p) }}</span>
+                            <span class="task-path-full">{{ p }}</span>
+                        </button>
+                    </div>
+                    <div class="task-path-sec">
+                        <div class="task-path-title">手动输入</div>
+                        <div class="task-path-add">
+                            <input class="input" v-model.trim="pathInput" spellcheck="false"
+                                   placeholder="C:\data\... 文件或文件夹" @keydown.enter="addPath">
+                            <button type="button" class="btn btn-secondary" @click="addPath">添加</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="task-options">
+                    <label class="task-mode">模式
+                        <select class="input" v-model="mode">
+                            <option value="auto">自动批准（推荐）</option>
+                            <option value="default">逐项批准</option>
+                            <option value="plan">只读规划</option>
+                            <option value="yolo">全部放行</option>
+                        </select>
+                    </label>
+                    <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
+                </div>
+                <div class="task-compose-foot">
+                    <span class="task-hint">在独立工作区执行；输入文件复制一份，不改原件。</span>
+                    <button type="button" class="btn btn-primary" :disabled="busy || !prompt" @click="create">
+                        {{ busy ? '创建中…' : '开始任务' }}
+                    </button>
+                </div>
+                <p class="load-error" v-if="error">{{ error }}</p>
+            </div>
+
+            <div class="task-list">
+                <button type="button" class="task-row" v-for="t in tasks" :key="t.id"
+                        :class="{ active: selectedId === t.id }" @click="select(t)">
+                    <span class="task-dot" :class="'is-' + t.status"></span>
+                    <span class="task-row-main">
+                        <span class="task-row-title">{{ t.title || t.prompt }}</span>
+                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}</span>
+                    </span>
+                    <span class="task-row-count" v-if="t.resultFiles && t.resultFiles.length">{{ t.resultFiles.length }} 个结果</span>
+                </button>
+                <p class="empty-tip" v-if="!tasks.length">还没有任务。上面写一句，选个文件试试。</p>
+            </div>
+        </section>
+
+        <aside class="task-detail" v-if="detail">
+            <div class="task-detail-head">
+                <div>
+                    <div class="task-detail-title">{{ detail.title || detail.prompt }}</div>
+                    <div class="task-detail-meta">
+                        {{ detail.createdLabel }} · {{ statusLabel(detail.status) }} · {{ modeLabel(detail.mode) }}
+                        <span v-if="detail.lastActiveLabel"> · 最近 {{ detail.lastActiveLabel }}</span>
+                    </div>
+                </div>
+                <div class="task-head-actions">
+                    <select class="input task-mode-switch" :value="detail.mode"
+                            :disabled="detail.status === 'running' || modeBusy"
+                            @change="changeMode($event.target.value)" title="切换批准模式">
+                        <option value="auto">自动批准</option>
+                        <option value="default">逐项批准</option>
+                        <option value="plan">只读规划</option>
+                        <option value="yolo">全部放行</option>
+                    </select>
+                    <button type="button" class="btn btn-ghost task-back" @click="backToList">← 列表</button>
+                    <a class="btn btn-ghost" :href="logUrl" title="下载完整 jsonl 日志">日志</a>
+                    <button type="button" class="btn btn-ghost" v-if="isRunning" @click="cancel">停止本轮</button>
+                    <button type="button" class="btn btn-ghost" v-if="canEnd" @click="closeSession">结束会话</button>
+                </div>
+            </div>
+            <div class="task-chat" ref="chat">
+                <div class="task-event" v-for="e in events" :key="e.seq" :class="'ev-' + e.type">
+                    <div v-if="e.type === 'user'" class="ev-user">{{ e.text }}</div>
+                    <div v-else-if="e.type === 'assistant'" class="ev-text">{{ e.text }}</div>
+                    <div v-else-if="e.type === 'tool'" class="ev-tool">
+                        <span class="ev-tool-name">{{ e.name }}</span>
+                        <code>{{ shortArgs(e.args) }}</code>
+                    </div>
+                    <details v-else-if="e.type === 'tool_result'" class="ev-result">
+                        <summary>工具结果<span v-if="e.truncated">（已截断）</span></summary>
+                        <button v-if="e.truncated && fullEvents[e.seq] === undefined"
+                                type="button" class="btn btn-ghost ev-full"
+                                @click.prevent.stop="loadFull(e)">查看完整</button>
+                        <pre>{{ fullEvents[e.seq] !== undefined ? fullEvents[e.seq] : e.text }}</pre>
+                    </details>
+                    <div v-else-if="e.type === 'permission_request'" class="permission-card">
+                        <div class="permission-title">需要你授权：{{ e.name || '工具调用' }}</div>
+                        <div class="permission-opts" v-if="!permissionResolved(e)">
+                            <button type="button" class="btn btn-secondary"
+                                    v-for="o in e.options" :key="o.optionId"
+                                    @click="resolvePermission(e, o)">
+                                {{ o.name || o.kind }}
+                            </button>
+                            <button type="button" class="btn btn-ghost" @click="resolvePermission(e, null)">拒绝</button>
+                        </div>
+                        <div class="permission-done" v-else>{{ permissionResultText(e) }}</div>
+                    </div>
+                    <div v-else-if="e.type === 'status'" class="ev-status">{{ e.text }}</div>
+                    <div v-else-if="e.type === 'plan'" class="ev-plan">{{ e.text }}</div>
+                    <div v-else-if="e.type === 'error'" class="ev-error">{{ e.text }}</div>
+                    <div v-else class="ev-log">{{ e.text }}</div>
+                </div>
+                <p class="task-waiting" v-if="detail.status === 'running'">Kimi 正在执行…</p>
+                <p class="task-waiting" v-else-if="detail.status === 'waiting'">{{ detail.awaitingAnswer ? 'Kimi 在等你回答上面的问题。' : '这一轮已结束，可以继续追问。' }}</p>
+            </div>
+            <div class="task-continue">
+                <textarea class="input task-continue-input" v-model="message" rows="2"
+                          :disabled="!canSend"
+                          :placeholder="canSend ? (detail.awaitingAnswer ? '回答它的问题…（Ctrl+Enter 发送）' : '继续跟它说…（Ctrl+Enter 发送）') : '当前状态不能继续'"
+                          @keydown.ctrl.enter="sendMessage"></textarea>
+                <button type="button" class="btn btn-primary task-send"
+                        :disabled="!canSend || sending || !message.trim()" @click="sendMessage">
+                    {{ sending ? '发送中…' : '发送' }}
+                </button>
+                <p class="task-continue-hint" v-if="statusHint">{{ statusHint }}</p>
+                <p class="load-error" v-if="error">{{ error }}</p>
+            </div>
+            <div class="task-results" v-if="detail.resultFiles && detail.resultFiles.length">
+                <div class="task-section-title">结果文件</div>
+                <a class="task-result" v-for="f in detail.resultFiles" :key="f.path"
+                   :href="downloadUrl(f.path)" download>
+                    <span>{{ f.path }}</span><span>{{ fmtSize(f.size) }}</span>
+                </a>
+            </div>
+            <div class="task-error" v-if="detail.error">{{ detail.error }}</div>
+        </aside>
+    </div>
+
+    <div class="inbox-mask" v-if="pickerOpen" @click.self="pickerOpen = false">
+        <div class="inbox-sheet">
+            <div class="inbox-sheet-head">
+                <span>从收件箱选择</span>
+                <button class="inbox-x" @click="pickerOpen = false">&times;</button>
+            </div>
+            <div class="fm-filter-row task-inbox-sources">
+                <button type="button" class="fm-filter-chip"
+                        v-for="o in pickerSources" :key="'pick-' + o.value"
+                        :class="{ active: pickerSource === o.value }"
+                        @click="pickerSource = o.value">
+                    {{ o.label }}<em>{{ o.count }}</em>
+                </button>
+            </div>
+            <div class="task-inbox-list">
+                <label class="task-inbox-item" v-for="it in pickerItems" :key="it.path">
+                    <input type="checkbox" :checked="!!picked[it.path]" @change="togglePick(it)">
+                    <span class="task-inbox-main">
+                        <span>{{ it.name }}</span>
+                        <span class="task-inbox-meta">{{ it.source }} · {{ fmtSize(it.size) }} · {{ fmtTime(it.mtime) }}</span>
+                    </span>
+                </label>
+                <p class="empty-tip" v-if="!inboxItems.length">收件箱为空</p>
+            </div>
+            <button class="btn btn-primary inbox-go" @click="addPicked">
+                加入任务 ({{ pickedCount }})
+            </button>
+        </div>
+    </div>
+</main>
+
+<script src="/assets/js/icons.js?v=__BUILD__"></script>
+<script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+<script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+<script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks.js?v=__BUILD__"></script>
+</body>
+</html>

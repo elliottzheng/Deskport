@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>登录 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/login.css?v=__BUILD__">
+</head>
+<body>
+    <form class="login-card" method="post" action="/login">
+        <div class="login-title">远控平台</div>
+        <div class="login-sub">请输入访问密码</div>
+        <!--ERROR-->
+        <label class="field-label" for="password">访问密码</label>
+        <input class="login-input" type="password" id="password" name="password"
+               placeholder="请输入密码" autofocus required autocomplete="current-password">
+        <button class="login-btn" type="submit">登 录</button>
+        <input type="hidden" name="next" value="<!--NEXT-->">
+    </form>
+</body>
+</html>

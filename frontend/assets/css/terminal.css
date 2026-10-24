@@ -1,0 +1,213 @@
+/* 终端工作台 — 顶栏下方满屏, 亮色外壳 + 深色终端区 */
+body { padding-bottom: 0 !important; overflow: hidden; }
+.term-shell {
+    display: flex;
+    height: calc(100vh - var(--header-h));
+    overflow: hidden;
+}
+#main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    position: relative;   /* .term-empty 绝对定位的参照 */
+}
+
+/* ====== 会话侧边栏 ====== */
+#sidebar {
+    flex: 0 0 220px;
+    width: 220px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: none;
+    flex-direction: column;
+    min-height: 0;
+}
+#sidebar.open { display: flex; }
+#sidebar-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-2) var(--sp-3);
+    border-bottom: 1px solid var(--border);
+}
+.sidebar-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.sidebar-head-btns { display: flex; gap: 6px; }
+#sidebar-close, #sidebar-add {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: var(--radius-s);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-3);
+    border: 1px solid var(--border-ctrl);
+}
+#sidebar-add { background: var(--brand); color: #fff; border-color: transparent; }
+#sidebar-add:hover { background: var(--brand-hover); }
+#sidebar-close:hover { background: var(--bg-2); color: var(--text-1); }
+#session-list {
+    flex: 1;
+    list-style: none;
+    margin: 0;
+    padding: var(--sp-1) 0;
+    overflow-y: auto;
+}
+.session-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 10px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+}
+.session-item:hover { background: var(--bg-2); }
+.session-item.active { background: var(--brand-bg); border-left-color: var(--brand); }
+.session-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-family: var(--mono);
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.session-state { flex-shrink: 0; font-size: 11px; color: var(--text-3); }
+.session-close {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: transparent;
+    color: var(--text-3);
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+}
+.session-item:hover .session-close,
+.session-item.active .session-close { opacity: 1; }
+.session-close:hover { background: var(--err-bg); color: var(--err); }
+
+/* ====== 顶栏工具条 ====== */
+#bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+#sidebar-toggle {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    background: var(--surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+}
+#sidebar-toggle svg { width: 18px; height: 18px; }
+#sidebar-toggle:hover { border-color: var(--brand); color: var(--brand); }
+
+/* ====== 工具栏图标按钮 (sftp/搜索/日志/分屏) — 与 sidebar-toggle 同规格 ====== */
+.bar-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    background: var(--surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+}
+.bar-btn svg { width: 18px; height: 18px; }
+.bar-btn:hover { border-color: var(--brand); color: var(--brand); }
+
+.preset-command {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 var(--sp-3);
+    background: var(--surface);
+    color: var(--text-1);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    font-size: 13px;
+    font-family: var(--mono);
+}
+.preset-command:hover { border-color: var(--brand); color: var(--brand); }
+.preset-tag {
+    font-size: 10px;
+    color: #fff;
+    background: var(--brand);
+    border-radius: 999px;
+    padding: 1px 6px;
+}
+#cmd {
+    flex: 1;
+    min-width: 0;
+    max-width: 420px;
+    height: 34px;
+    padding: 0 var(--sp-3);
+    background: var(--surface);
+    color: var(--text-1);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+}
+#cmd:focus { border-color: var(--brand); }
+#connect {
+    height: 34px;
+    padding: 0 var(--sp-4);
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-s);
+    font-size: 13px;
+    font-weight: 500;
+}
+#connect:hover { background: var(--brand-hover); }
+#status {
+    font-size: 12px;
+    color: var(--text-3);
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+#status.ok { color: var(--ok); }
+#status.err { color: var(--err); }
+
+/* ====== 终端区 (深色工作区) ====== */
+#terminal {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    background: #0d1117;
+}
+.session-terminal { position: absolute; inset: 0; padding: 6px 8px; }
+.session-terminal .xterm { height: 100%; }
+

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SSH 工作台 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/xterm.min.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/terminal.css?v=__BUILD__">
+    <link rel="stylesheet" href="/assets/css/terminal-controls.css?v=__BUILD__">
+    <link rel="stylesheet" href="/assets/css/terminal-mobile.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+    <div class="term-shell">
+        <!-- 会话侧边栏: 开关记忆, 窄屏为覆盖层 + 遮罩 -->
+        <aside id="sidebar">
+            <div id="sidebar-head">
+                <span class="sidebar-title">终端会话</span>
+                <div class="sidebar-head-btns">
+                    <button id="sidebar-close" title="收起终端列表">&times;</button>
+                    <button id="sidebar-add" title="新建终端">+</button>
+                </div>
+            </div>
+            <div class="sidebar-quicknav">
+                <a href="/">控制台</a>
+                <a href="/files">文件</a>
+                <a href="/settings">设置</a>
+            </div>
+            <ul id="session-list"></ul>
+            <div id="ssh-section">
+                <div class="nav-section ssh-section-head">
+                    SSH 主机
+                    <span class="ssh-head-btns">
+                        <button id="ssh-host-add" class="ssh-mini-btn" title="新建连接">+</button>
+                    </span>
+                </div>
+                <div id="ssh-hosts" class="ssh-hosts"></div>
+                <div class="nav-section">Snippets (点击发送到前台 SSH)</div>
+                <div id="snippets" class="ssh-hosts"></div>
+                <div class="side-input-row">
+                    <input id="snippet-name" placeholder="名称" class="side-input side-input-name">
+                    <input id="snippet-cmd" placeholder="命令" class="side-input side-input-flex side-input-mono">
+                    <button id="snippet-add" class="ssh-mini-btn" title="保存 snippet">+</button>
+                </div>
+                <div class="side-input-row">
+                    <span class="side-input-label">广播↵:</span>
+                    <input id="multi-exec-input" placeholder="发送到勾选会话" spellcheck="false" class="side-input side-input-flex side-input-mono">
+                </div>
+            </div>
+            <div class="sidebar-foot">
+                <div class="foot-row">
+                    <button class="foot-btn" data-act="vkeys" id="vkeys-toggle">虚拟键:开</button>
+                    <button class="foot-btn" id="sftp-foot-toggle">SFTP 文件:关</button>
+                </div>
+                <div class="foot-nav">
+                    <a href="/terminal">本地终端</a>
+                    <a href="/">概览</a>
+                </div>
+            </div>
+        </aside>
+        <div id="sidebar-backdrop"></div>
+
+        <section id="main">
+            <div id="bar">
+                <button id="sidebar-toggle" title="显示/隐藏终端列表">
+                    <i data-icon="menu"></i>
+                </button>
+                <span class="session-switch" id="session-switch">
+                    <a href="/terminal">本地</a>
+                    <a class="is-active" href="/ssh">SSH</a>
+                </span>
+                <button id="sftp-toggle" class="bar-btn" title="SFTP 文件面板">
+                    <i data-icon="sftp"></i>
+                </button>
+                <button id="search-toggle" class="bar-btn" title="终端内搜索">
+                    <i data-icon="search"></i>
+                </button>
+                <button id="log-toggle" class="bar-btn" title="记录终端日志">
+                    <i data-icon="fileText"></i>
+                </button>
+                <button id="split-toggle" class="bar-btn" title="分屏 (双栏终端)">
+                    <i data-icon="split"></i>
+                </button>
+                <span id="status" title="单击 显示/隐藏控制键">未连接</span>
+            </div>
+            <div id="search-bar" style="display:none">
+                <input id="search-input" placeholder="搜索终端内容…" spellcheck="false">
+                <button id="search-prev" title="上一个">↑</button>
+                <button id="search-next" title="下一个">↓</button>
+                <button id="search-close" title="关闭">×</button>
+            </div>
+            <div id="terminal"><button id="scroll-bottom" class="term-fab" type="button" title="到最底部" aria-label="到最底部" hidden>↓</button></div>
+            <div id="term-empty" class="term-empty"><i data-icon="plug"></i><span class="empty-new">打开左上角菜单，在主机列表中选择设备以建立连接</span><span class="empty-takeover" style="display:none">会话正在其他窗口使用, 点击侧栏会话可接管</span></div>
+            <div id="control-keys">
+                <button class="control-key" title="ESC" data-key="esc">ESC</button>
+                <button class="control-key" title="Ctrl+C" data-key="ctrl-c">Ctrl+C</button>
+                <button class="control-key" title="Ctrl+S" data-key="ctrl-s">Ctrl+S</button>
+                <button class="control-key" title="回车" data-key="enter">Enter</button>
+                <button class="control-key" data-key="home">Home</button>
+                <button class="control-key" data-key="end">End</button>
+                <button class="control-key" title="向左" data-key="left">←</button>
+                <button class="control-key" title="向上" data-key="up">↑</button>
+                <button class="control-key" title="向下" data-key="down">↓</button>
+                <button class="control-key" title="向右" data-key="right">→</button>
+                <button class="control-key" data-key="pgup">PgUp</button>
+                <button class="control-key" data-key="pgdn">PgDn</button>
+            </div>
+        </section>
+    </div>
+
+    <!-- SSH 主机表单弹窗 -->
+    <div class="modal-mask" id="ssh-host-modal" style="display:none">
+        <div class="modal">
+            <div class="modal-title" id="ssh-host-form-title">新建连接</div>
+            <input type="hidden" id="ssh-host-id">
+            <div class="field" style="margin-top:12px"><label class="field-label" for="ssh-f-name">名称</label>
+                <input class="input" id="ssh-f-name" style="width:100%" placeholder="我的服务器"></div>
+            <div class="field"><label class="field-label" for="ssh-f-host">主机地址</label>
+                <input class="input" id="ssh-f-host" style="width:100%" placeholder="192.168.1.100"></div>
+            <div style="display:flex; gap:8px">
+                <div class="field" style="flex:1"><label class="field-label" for="ssh-f-port">端口</label>
+                    <input class="input" id="ssh-f-port" style="width:100%" value="22"></div>
+                <div class="field" style="flex:1"><label class="field-label" for="ssh-f-user">用户名</label>
+                    <input class="input" id="ssh-f-user" style="width:100%" value="root"></div>
+            </div>
+            <div class="field"><label class="field-label" for="ssh-f-authtype">认证方式</label>
+                <select class="select" id="ssh-f-authtype" style="width:100%">
+                    <option value="password">密码</option>
+                    <option value="key">私钥</option>
+                </select></div>
+            <div class="field" id="ssh-f-passwrap"><label class="field-label" for="ssh-f-password">密码</label>
+                <input class="input" id="ssh-f-password" type="password" style="width:100%" placeholder="留空=沿用已保存密码"></div>
+            <div class="field" id="ssh-f-keywrap" style="display:none"><label class="field-label" for="ssh-f-key">私钥 (PEM)</label>
+                <textarea class="input" id="ssh-f-key" rows="5" style="width:100%; height:auto; font-family:var(--mono); font-size:12px" placeholder="留空=沿用已保存私钥"></textarea></div>
+            <div class="field" id="ssh-f-passphrasewrap" style="display:none"><label class="field-label" for="ssh-f-passphrase">私钥口令</label>
+                <input class="input" id="ssh-f-passphrase" type="password" style="width:100%"></div>
+            <div style="display:flex; gap:8px">
+                <div class="field" style="flex:1"><label class="field-label" for="ssh-f-group">分组</label>
+                    <input class="input" id="ssh-f-group" style="width:100%" placeholder="可留空"></div>
+                <div class="field" style="flex:1"><label class="field-label" for="ssh-f-notes">备注</label>
+                    <input class="input" id="ssh-f-notes" style="width:100%"></div>
+            </div>
+            <label class="fm-check-label"><input type="checkbox" id="ssh-f-favorite"> 收藏置顶</label>
+            <p class="load-error" id="ssh-host-error" style="display:none;margin-top:10px"></p>
+            <div class="modal-actions" style="margin-top:16px">
+                <button class="btn btn-primary" id="ssh-host-save">保存并连接</button>
+                <button class="btn btn-ghost" id="ssh-host-cancel">取消</button>
+                <button class="btn btn-danger" id="ssh-host-delete" style="display:none">删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SSH 认证提示弹窗 (keyboard-interactive / 2FA) -->
+    <div class="modal-mask" id="ssh-auth-modal" style="display:none">
+        <div class="modal">
+            <div class="modal-title" id="ssh-auth-title">SSH 认证</div>
+            <div id="ssh-auth-instructions" class="modal-meta" style="margin:8px 0"></div>
+            <div id="ssh-auth-prompts"></div>
+            <div class="modal-actions" style="margin-top:16px">
+                <button class="btn btn-primary" id="ssh-auth-submit">提交</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SFTP 面板 -->
+    <div id="sftp-panel">
+        <div class="sftp-head">
+            <span class="sftp-title">SFTP <span id="sftp-host-label" class="sftp-host-label"></span></span>
+            <div class="sftp-head-btns">
+                <select class="select" id="sftp-host-select" style="height:26px; font-size:12px; padding:0 6px"></select>
+                <button class="ssh-mini-btn" id="sftp-upload-btn" title="上传文件">↑</button>
+                <button class="ssh-mini-btn" id="sftp-close-btn" title="关闭">&times;</button>
+            </div>
+        </div>
+        <input type="file" id="sftp-file-input" style="display:none">
+        <div class="sftp-pathbar">
+            <button class="ssh-mini-btn" id="sftp-up" title="上级">↑</button>
+            <code class="sftp-path" id="sftp-path">/</code>
+            <button class="ssh-mini-btn" id="sftp-pin" title="固定当前目录到快速访问">☆</button>
+        </div>
+        <div class="sftp-quick" id="sftp-quick" style="display:none"></div>
+        <div id="sftp-list" class="sftp-list"></div>
+        <div class="sftp-actions">
+            <button class="btn btn-secondary" id="sftp-mkdir">新建</button>
+            <button class="btn btn-secondary" id="sftp-edit">编辑</button>
+            <button class="btn btn-secondary" id="sftp-chmod">权限</button>
+            <button class="btn btn-secondary" id="sftp-download">下载到浏览器</button>
+            <button class="btn btn-primary" id="sftp-to-local">存到本机</button>
+        </div>
+    </div>
+
+    <script src="/assets/js/icons.js?v=__BUILD__"></script>
+    <script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+    <script src="/assets/js/sftp-memory.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/xterm.min.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/xterm-addon-fit.min.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/xterm-addon-search.min.js?v=__BUILD__"></script>
+    <script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/term-client-env.js?v=__BUILD__"></script>
+<script src="/assets/js/term-session-ui.js?v=__BUILD__"></script>
+<script src="/assets/js/term-controls.js?v=__BUILD__"></script>
+<script src="/assets/js/term-client.js?v=__BUILD__"></script>
+    <script src="/assets/js/term-features.js?v=__BUILD__"></script>
+    <script src="/assets/js/ssh-host-store.js?v=__BUILD__"></script>
+<script src="/assets/js/ssh-ui-ctx.js?v=__BUILD__"></script>
+    <script src="/assets/js/ssh-sftp-ui.js?v=__BUILD__"></script>
+    <script src="/assets/js/ssh-page.js?v=__BUILD__"></script>
+    <script src="/assets/js/ssh-ui.js?v=__BUILD__"></script>
+</body>
+</html>

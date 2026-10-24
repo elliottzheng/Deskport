@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>控制台 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/dashboard.css?v=__BUILD__">
+</head>
+<body>
+<div id="app-shell"></div>
+
+<main class="container ctl-page" id="app" v-cloak>
+    <div class="page-head">
+        <div>
+            <h1 class="page-title">控制台</h1>
+            <p class="page-sub" style="margin-bottom:0">整机操作：电源、进程、窗口、应用</p>
+        </div>
+        <div class="ctl-head-actions">
+            <button class="btn btn-secondary" @click="auditOpen = true">最近操作</button>
+            <button class="btn btn-secondary" @click="openDiag">诊断</button>
+            <button class="btn btn-secondary" @click="loadAll" :disabled="loading">{{ loading ? '刷新中…' : '刷新' }}</button>
+        </div>
+    </div>
+
+    <div class="ctl-resume card" v-if="resume && !resumeHidden">
+        <div class="ctl-resume-main">
+            <span class="ctl-k">继续上次</span>
+            <strong>{{ resume.label }}</strong>
+            <span class="ctl-v">{{ resume.ago }}</span>
+        </div>
+        <div class="ctl-resume-actions">
+            <a class="btn btn-secondary" :href="resume.path">继续</a>
+            <button class="btn btn-ghost" @click="resumeHidden = true">忽略</button>
+        </div>
+    </div>
+
+    <p v-if="error" class="load-error">{{ error }}</p>
+
+    <div class="ctl-status card" v-if="info">
+        <div class="ctl-stat"><span class="ctl-k">主机</span><span class="ctl-v">{{ info.pcName }}\{{ info.user }}</span></div>
+        <div class="ctl-stat"><span class="ctl-k">运行</span><span class="ctl-v">{{ uptimeText }}</span></div>
+        <div class="ctl-stat"><span class="ctl-k">CPU</span><span class="ctl-v">{{ Math.round(info.cpu) }}%</span></div>
+        <div class="ctl-stat"><span class="ctl-k">内存</span><span class="ctl-v">{{ info.memory.percent }}% <span class="muted">可用 {{ fmtSize(info.memory.available) }}</span></span></div>
+        <div class="ctl-stat" v-for="d in mainDisks" :key="d.path">
+            <span class="ctl-k">{{ d.path.replace('\\','') }}</span>
+            <span class="ctl-v">{{ fmtSize(d.free) }} 可用</span>
+        </div>
+        <div class="ctl-services">
+            <span v-for="s in (info.services || [])" :key="s.kind"
+                  class="ctl-svc" :class="{ bad: s.configured !== false && !s.ok, off: s.configured === false }">
+                {{ svcName(s.kind) }} · {{ s.configured === false ? '未启用' : (s.ok ? '正常' : '离线') }}
+                <template v-if="s.sessions != null"> · {{ s.sessions }}</template>
+            </span>
+            <span class="ctl-svc" v-if="build">v{{ build }}</span>
+        </div>
+    </div>
+
+    <div class="ctl-grid">
+        <div class="ctl-col ctl-col-side">
+            <div class="card">
+                <div class="card-title">快动作</div>
+                <div class="ctl-actions">
+                    <button class="ctl-action" @click="key('volume_down')">音量 −</button>
+                    <button class="ctl-action" @click="key('volume_up')">音量 +</button>
+                    <button class="ctl-action" @click="key('mute')">静音</button>
+                    <button class="ctl-action" @click="key('play_pause')">播放/暂停</button>
+                    <button class="ctl-action" @click="power('lock')">锁屏</button>
+                    <button class="ctl-action" @click="power('display_off')">关显示器</button>
+                    <button class="ctl-action" @click="power('sleep')">睡眠</button>
+                    <a class="ctl-action" href="/screen">看屏幕</a>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">电源</div>
+                <div class="ctl-power">
+                    <button class="btn btn-secondary" @click="askPower('restart')">重启</button>
+                    <button class="btn btn-danger" @click="askPower('shutdown')">关机</button>
+                </div>
+                <p class="ctl-note">重启/关机会中断远控；平台在启动文件夹自启，重启后需有人登录才会恢复。</p>
+                <div class="ctl-plan" v-if="pendingAbort">
+                    已计划执行，<button class="btn btn-ghost" @click="abortPower">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="ctl-col ctl-col-work">
+            <div class="card ctl-work">
+                <div class="ctl-seg" role="tablist">
+                    <button role="tab" :class="{ active: workTab === 'processes' }" @click="workTab = 'processes'">进程</button>
+                    <button role="tab" :class="{ active: workTab === 'windows' }" @click="workTab = 'windows'">窗口</button>
+                    <button role="tab" :class="{ active: workTab === 'apps' }" @click="workTab = 'apps'">应用</button>
+                </div>
+
+                <div class="ctl-panel" v-show="workTab === 'processes'">
+                    <div class="ctl-filter">
+                        <input class="input" v-model.trim="procQuery" placeholder="搜索进程…" spellcheck="false">
+                        <button class="btn btn-ghost" @click="procSort = procSort === 'mem' ? 'cpu' : 'mem'">
+                            按{{ procSort === 'mem' ? '内存' : 'CPU' }}
+                        </button>
+                    </div>
+                    <div class="ctl-list ctl-list-scroll">
+                        <div class="ctl-row" v-for="g in processGroups" :key="g.name">
+                            <span class="ctl-row-main">
+                                <span class="ctl-row-name">{{ g.name }}<span class="ctl-x" v-if="g.count > 1"> ×{{ g.count }}</span></span>
+                                <span class="ctl-row-meta">
+                                    {{ fmtSize(g.mem) }}<template v-if="g.count === 1"> · PID {{ g.pids[0] }}</template>
+                                </span>
+                            </span>
+                            <button class="btn btn-ghost ctl-mini" @click="askCloseGroup(g)">结束</button>
+                        </div>
+                        <p v-if="!processGroups.length" class="empty-tip">没有匹配的进程</p>
+                    </div>
+                </div>
+
+                <div class="ctl-panel" v-show="workTab === 'windows'">
+                    <div class="ctl-list ctl-list-scroll">
+                        <div class="ctl-row" v-for="w in windows" :key="w.hwnd">
+                            <span class="ctl-row-main">
+                                <span class="ctl-row-name">{{ w.title }}</span>
+                                <span class="ctl-row-meta">{{ w.process }} · PID {{ w.pid }}</span>
+                            </span>
+                            <span class="ctl-row-actions">
+                                <button class="btn btn-ghost ctl-mini" @click="windowAct(w, 'focus')">切换</button>
+                                <button class="btn btn-ghost ctl-mini" @click="windowAct(w, 'close')">关闭</button>
+                            </span>
+                        </div>
+                        <p v-if="!windows.length" class="empty-tip">没有可见窗口</p>
+                    </div>
+                </div>
+
+                <div class="ctl-panel" v-show="workTab === 'apps'">
+                    <div class="ctl-apps">
+                        <button class="ctl-app" v-for="a in (info && info.pinnedApps)" :key="a.path" @click="launch(a)">{{ a.name }}</button>
+                    </div>
+                    <input class="input" v-model.trim="appQuery" placeholder="搜索开始菜单程序…" spellcheck="false">
+                    <div class="ctl-apps ctl-apps-more" v-if="appQuery">
+                        <button class="ctl-app" v-for="a in appMatches" :key="a.path" @click="launch(a)">{{ a.name }}</button>
+                    </div>
+                    <p class="ctl-note" v-if="!info || !info.pinnedApps || !info.pinnedApps.length">
+                        在 config.json 的 pinnedApps 里填程序名（开始菜单显示名）即可固定到这里。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="ctl-fab" @click="textOpen = true">发送文本</button>
+
+    <!-- 电源确认 -->
+    <div class="modal-mask" v-if="powerModal" @click.self="powerModal = null">
+        <div class="modal">
+            <div class="modal-title">{{ powerModal === 'restart' ? '重启电脑' : '关闭电脑' }}</div>
+            <p class="ctl-note">执行后远控会断开，直到有人在电脑上登录。</p>
+            <div class="ctl-delays">
+                <button class="btn btn-secondary" @click="doPower(0)">立即</button>
+                <button class="btn btn-secondary" @click="doPower(60)">1 分钟后</button>
+                <button class="btn btn-secondary" @click="doPower(300)">5 分钟后</button>
+            </div>
+            <button class="btn btn-ghost" @click="powerModal = null">取消</button>
+        </div>
+    </div>
+
+    <!-- 结束进程确认 -->
+    <div class="modal-mask" v-if="closeTarget" @click.self="closeTarget = null">
+        <div class="modal">
+            <div class="modal-title">结束进程</div>
+            <p class="ctl-note">
+                {{ closeTarget.name }}<template v-if="closeTarget.count > 1"> ×{{ closeTarget.count }}</template>
+                （PID {{ closeTarget.pids.join(', ') }}），未保存的内容可能丢失。
+            </p>
+            <div class="ctl-delays">
+                <button class="btn btn-danger" @click="doClose(false)">结束</button>
+                <button class="btn btn-secondary" @click="doClose(true)">强制结束</button>
+                <button class="btn btn-ghost" @click="closeTarget = null">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 发送文本 -->
+    <div class="modal-mask" v-if="textOpen" @click.self="textOpen = false">
+        <div class="modal">
+            <div class="modal-title">发送文本</div>
+            <select class="select" v-model="textTarget">
+                <option value="">当前前台窗口</option>
+                <option v-for="w in windows" :key="w.hwnd" :value="String(w.hwnd)">{{ w.title }}</option>
+            </select>
+            <textarea class="input ctl-text" v-model="textBody" rows="4" placeholder="粘贴或输入要发送的文字…"></textarea>
+            <label class="ctl-check"><input type="checkbox" v-model="textSubmit"> 发送后回车</label>
+            <div class="ctl-delays">
+                <button class="btn btn-primary" @click="sendText" :disabled="!textBody.trim()">发送</button>
+                <button class="btn btn-ghost" @click="textOpen = false">取消</button>
+            </div>
+            <p class="ctl-note">微信回复：先点开对应聊天窗口，在目标窗口里选中它，输入内容后勾选“回车发送”。</p>
+        </div>
+    </div>
+
+    <!-- 最近操作 -->
+    <div class="modal-mask" v-if="auditOpen" @click.self="auditOpen = false">
+        <div class="modal ctl-diag">
+            <div class="modal-title">最近操作</div>
+            <div class="ctl-audit">
+                <div class="ctl-audit-row" v-for="(e, i) in audit" :key="i">
+                    <span class="ctl-audit-time">{{ e.at.slice(11) }}</span>
+                    <span class="ctl-audit-act">{{ actionText(e.action) }}</span>
+                    <span class="ctl-audit-target">{{ e.target }}</span>
+                    <span class="ctl-audit-res" :class="{ bad: e.result !== 'ok' }">{{ e.result }}</span>
+                </div>
+                <p v-if="!audit.length" class="empty-tip">还没有操作记录</p>
+            </div>
+            <button class="btn btn-ghost" @click="auditOpen = false">关闭</button>
+        </div>
+    </div>
+
+    <!-- 诊断 -->
+    <div class="modal-mask" v-if="diagOpen" @click.self="diagOpen = false">
+        <div class="modal ctl-diag">
+            <div class="modal-title">诊断</div>
+            <pre class="ctl-diag-pre">{{ diagText }}</pre>
+            <button class="btn btn-ghost" @click="diagOpen = false">关闭</button>
+        </div>
+    </div>
+
+    <div class="toast" :class="{ show: toast }">{{ toast }}</div>
+</main>
+
+<script src="/assets/js/icons.js?v=__BUILD__"></script>
+<script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+<script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+<script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/dashboard.js?v=__BUILD__"></script>
+</body>
+</html>

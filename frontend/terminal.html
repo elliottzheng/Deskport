@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>远程终端 — 远控平台</title>
+<link rel="stylesheet" href="/assets/css/xterm.min.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/terminal.css?v=__BUILD__">
+    <link rel="stylesheet" href="/assets/css/terminal-controls.css?v=__BUILD__">
+    <link rel="stylesheet" href="/assets/css/terminal-mobile.css?v=__BUILD__">
+</head>
+<body class="term-focus">
+<div id="app-shell"></div>
+
+    <div class="term-shell">
+        <!-- 会话侧边栏: 开关记忆, 窄屏为覆盖层 + 遮罩 -->
+        <aside id="sidebar">
+            <div id="sidebar-head">
+                <span class="sidebar-title">终端会话</span>
+                <div class="sidebar-head-btns">
+                    <button id="sidebar-close" title="收起终端列表">&times;</button>
+                    <button id="sidebar-add" title="新建终端">+</button>
+                </div>
+            </div>
+            <div class="sidebar-quicknav">
+                    <a href="/">控制台</a>
+                    <a href="/files">文件</a>
+                    <a href="/settings">设置</a>
+                </div>
+            <ul id="session-list"></ul>
+            <div class="sidebar-foot">
+                <div class="foot-row">
+                    <button class="foot-btn" data-act="search">搜索</button>
+                    <button class="foot-btn" data-act="log">日志</button>
+                    <button class="foot-btn" data-act="vkeys" id="vkeys-toggle">虚拟键:开</button>
+                </div>
+                <div class="foot-nav">
+                    <a href="/">概览</a>
+                    <a href="/screen">屏幕</a>
+                    <a href="/files">文件</a>
+                    <a href="/command">命令</a>
+                    <a href="/ssh">SSH</a>
+                </div>
+                <a class="foot-logout" href="/logout">退出登录</a>
+            </div>
+        </aside>
+        <div id="sidebar-backdrop"></div>
+
+        <section id="main">
+            <div id="bar">
+                <button id="sidebar-toggle" title="显示/隐藏终端列表">
+                    <i data-icon="menu"></i>
+                </button>
+                <span class="session-switch" id="session-switch">
+                    <a class="is-active" href="/terminal">本地</a>
+                    <a href="/ssh">SSH</a>
+                </span>
+                <button class="preset-command is-default" data-cmd="pwsh.exe">
+                    <span class="preset-name">pwsh7</span>
+                    <span class="preset-tag">默认</span>
+                </button>
+                <button class="preset-command" data-cmd="cmd.exe">
+                    <span class="preset-name">cmd</span>
+                </button>
+                <button class="preset-command" data-cmd="powershell.exe">
+                    <span class="preset-name">powershell</span>
+                </button>
+                <button id="search-toggle" class="bar-btn" title="终端内搜索">
+                    <i data-icon="search"></i>
+                </button>
+                <button id="log-toggle" class="bar-btn" title="记录终端日志">
+                    <i data-icon="fileText"></i>
+                </button>
+                <button id="split-toggle" class="bar-btn" title="分屏 (双栏终端)">
+                    <i data-icon="split"></i>
+                </button>
+                <input id="cmd" value="" placeholder="自定义终端程序 (留空默认 pwsh7)" spellcheck="false" autocomplete="off">
+                <button id="connect">新建</button>
+                <span id="status" title="单击 显示/隐藏控制键">未连接</span>
+            </div>
+            <div id="search-bar" style="display:none">
+                <input id="search-input" placeholder="搜索终端内容…" spellcheck="false">
+                <button id="search-prev" title="上一个">↑</button>
+                <button id="search-next" title="下一个">↓</button>
+                <button id="search-close" title="关闭">×</button>
+            </div>
+            <div id="terminal"><button id="scroll-bottom" class="term-fab" type="button" title="到最底部" aria-label="到最底部" hidden>↓</button></div>
+            <div id="term-empty" class="term-empty"><i data-icon="terminal"></i><span class="empty-new">点击工具栏「新建」开启本地终端</span><span class="empty-takeover" style="display:none">会话正在其他窗口使用, 点击侧栏会话可接管</span></div>
+            <div id="control-keys">
+                <button class="control-key" title="ESC" data-key="esc">ESC</button>
+                <button class="control-key" title="Ctrl+C" data-key="ctrl-c">Ctrl+C</button>
+                <button class="control-key" title="Ctrl+S" data-key="ctrl-s">Ctrl+S</button>
+                <button class="control-key" title="回车" data-key="enter">Enter</button>
+                <button class="control-key" data-key="home">Home</button>
+                <button class="control-key" data-key="end">End</button>
+                <button class="control-key" title="向左" data-key="left">←</button>
+                <button class="control-key" title="向上" data-key="up">↑</button>
+                <button class="control-key" title="向下" data-key="down">↓</button>
+                <button class="control-key" title="向右" data-key="right">→</button>
+                <button class="control-key" data-key="pgup">PgUp</button>
+                <button class="control-key" data-key="pgdn">PgDn</button>
+            </div>
+        </section>
+    </div>
+
+    <!-- 移动端新建会话: 程序选择 -->
+    <div class="modal-mask" id="prog-picker" style="display:none">
+        <div class="modal">
+            <div class="modal-title">新建终端会话</div>
+            <div class="picker-list">
+                <button class="picker-item" data-cmd="pwsh.exe">pwsh 7（默认）</button>
+                <button class="picker-item" data-cmd="cmd.exe">cmd</button>
+                <button class="picker-item" data-cmd="powershell.exe">Windows PowerShell</button>
+                <button class="picker-item" data-cmd="__custom__">自定义程序…</button>
+            </div>
+            <div class="picker-custom" id="picker-custom-row" style="display:none">
+                <input class="input" id="picker-custom-cmd" placeholder="程序路径, 如 pwsh.exe" spellcheck="false">
+                <button class="btn btn-primary" id="picker-custom-go">启动</button>
+            </div>
+            <button class="modal-close" id="picker-close">&times;</button>
+        </div>
+    </div>
+
+    <script src="/assets/js/icons.js?v=__BUILD__"></script>
+    <script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/app-shell.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/xterm.min.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/xterm-addon-fit.min.js?v=__BUILD__"></script>
+    <script src="/assets/vendor/xterm-addon-search.min.js?v=__BUILD__"></script>
+    <script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/term-client-env.js?v=__BUILD__"></script>
+<script src="/assets/js/term-session-ui.js?v=__BUILD__"></script>
+<script src="/assets/js/term-controls.js?v=__BUILD__"></script>
+<script src="/assets/js/term-client.js?v=__BUILD__"></script>
+    <script src="/assets/js/term-features.js?v=__BUILD__"></script>
+    <script src="/assets/js/terminal.js?v=__BUILD__"></script>
+</body>
+</html>

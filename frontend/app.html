@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#F4F7FB">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="远控">
+<link rel="icon" href="data:,">
+<title>远控平台</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/shell.css?v=__BUILD__">
+</head>
+<body class="shell-body">
+<div class="shell">
+    <header class="shell-top">
+        <a class="shell-brand" href="/app">远控平台</a>
+        <nav class="shell-nav" id="shell-nav"></nav>
+        <div class="shell-utils" id="shell-utils"></div>
+    </header>
+
+    <main class="shell-main">
+        <div class="shell-session-head" id="session-head" hidden>
+            <div class="session-switch" id="session-switch">
+                <button type="button" data-kind="local">本地终端</button>
+                <button type="button" data-kind="ssh">SSH</button>
+            </div>
+            <span class="shell-session-note">切换视图不会断开会话</span>
+        </div>
+        <div class="shell-frames" id="shell-frames"></div>
+    </main>
+
+    <nav class="shell-tabs" id="shell-tabs"></nav>
+</div>
+
+<div class="shell-more" id="shell-more" hidden>
+    <div class="shell-more-sheet">
+        <div class="more-grid" id="more-grid"></div>
+        <button class="btn btn-ghost" id="more-close" type="button">取消</button>
+    </div>
+</div>
+
+<div class="shell-more" id="recent-sheet" hidden>
+    <div class="shell-more-sheet shell-recent-sheet">
+        <div class="shell-recent-head">
+            <span>最近</span>
+            <button class="btn btn-ghost" id="recent-close" type="button">关闭</button>
+        </div>
+        <div id="recent-list" class="shell-recent-list"></div>
+    </div>
+</div>
+
+<script src="/assets/js/icons.js?v=__BUILD__"></script>
+<script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/shell.js?v=__BUILD__"></script>
+<script>
+// PWA: 仅在安全上下文(https / localhost)生效, 失败静默
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+    });
+}
+</script>
+</body>
+</html>

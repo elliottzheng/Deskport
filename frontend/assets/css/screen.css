@@ -1,0 +1,45 @@
+/* 实时屏幕页 */
+.screen-container { max-width: none; }
+.screen-wrap {
+    position: relative;
+    text-align: center;
+    background: #101418;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-l);
+    overflow: hidden;
+}
+#stream-img {
+    max-width: 100%;
+    max-height: 78vh;
+    display: block;
+    margin: 0 auto;
+    cursor: crosshair;
+}
+.screen-offline {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 14px;
+    background: var(--bg-2);
+}
+.screen-meta {
+    display: flex;
+    gap: var(--sp-6);
+    color: var(--text-3);
+    font-size: 13px;
+    font-family: var(--mono);
+    padding: var(--sp-3) var(--sp-1) 0;
+    font-variant-numeric: tabular-nums;
+}
+.status-pill {
+    flex-shrink: 0;
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-weight: 500;
+}
+.status-ok { background: var(--brand-bg); color: var(--brand); }
+.status-err { background: var(--err-bg); color: var(--err); }

@@ -1,0 +1,31 @@
+[project]
+name = "web-platform"
+version = "0.1.0"
+description = "远控平台 — Windows 远程控制 Web 系统 (Vue 全局构建 + Flask)"
+requires-python = ">=3.13"
+dependencies = [
+    "flask>=3.1",
+    "flask-sock>=0.7",
+    "psutil>=7.0",
+    "pillow>=11.0",
+    "pynput>=1.8",
+    "pywinpty>=3.1",
+    "requests>=2.32",
+    "simple-websocket>=1.1",
+    "paramiko>=5.0.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 固定到仓库根，避开系统临时目录的 pytest 保留目录清理（曾每次卡 60 秒）
+addopts = "--basetemp=.pytest-tmp"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "websocket-client>=1.8",
+    "pyflakes>=3.2",
+]

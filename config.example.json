@@ -1,0 +1,16 @@
+{
+  "port": 6789,
+  "password": "在这里填写你的访问密码",
+  "stateDirName": "web-platform",
+  "terminalIdleTimeoutHours": 0,
+  "inboxEnabled": false,
+  "inboxDirs": [],
+  "workDirs": [],
+  "fallbackDir": "",
+  "dirNotes": {},
+  "aiCommand": "",
+  "decisionApiKey": "",
+  "pinnedApps": [],
+  "sessiondUrl": "",
+  "sshSessiondUrl": ""
+}
