@@ -106,7 +106,7 @@ RDP/远程桌面为“看屏幕”优化；写代码、跑命令、和 AI 对话
 - **收件箱**：默认关闭；开启后按你配置的目录聚合微信/QQ/下载/桌面的新文件
 - **PWA**：手机安装后像独立 App；记住上次视图和会话
 - **品牌名**：设置页可改顶栏、登录页与 PWA 名称（默认 Deskport）
-- **插件**：原生清单 + RemoteConnecter legacy 插件直接导入（见 [docs/plugin-api.md](docs/plugin-api.md)）
+- **插件**：原生清单 + RemoteConnecter legacy 插件直接导入（见 [docs/plugin-api.md](docs/plugin-api.md)）。社区插件示例：[RemoteVSCode](https://github.com/mc-lhz/RemoteVSCode)、[RemoteOffice](https://github.com/mc-lhz/RemoteOffice)，本仓库只做兼容加载，不分发插件本体
 
 ## 30 秒开始
 

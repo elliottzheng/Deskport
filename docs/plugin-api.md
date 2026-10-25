@@ -113,7 +113,7 @@ def page():
 - 路由写在根路径，和宿主冲突时宿主优先；装之前看一眼 `/api/plugins` 的 `ok` 与日志；
 - 模板同名时先注册的赢；`lib/` 会进入 `sys.path`，多个插件带同名依赖时按加载顺序生效；
 - 轮询型插件注意开销：`process` 在 300+ 进程的机器上单次列表约 4–5 秒，页面每 3 秒刷新一次，Prod 不建议常开；
-- `code` / `office` 这类重插件也能加载，但 `office` 需要外部约 530MB 的 `office-dist`（设 `RC_OFFICE_DIST`），且两者许可证各自归属上游，不随 Deskport 分发。
+- 社区重型插件：[RemoteVSCode](https://github.com/mc-lhz/RemoteVSCode)（Monaco 代码工作台，自带前端资源）与 [RemoteOffice](https://github.com/mc-lhz/RemoteOffice)（OnlyOffice 系在线文档）。**Deskport 仓库不分发这两个插件本体，只做兼容加载**；`office` 另需约 530MB 的 `office-dist`（`RC_OFFICE_DIST` 或插件目录下 `office-dist/`），许可证与资源均归上游。
 
 ## 已知限制
 
