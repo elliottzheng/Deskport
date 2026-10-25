@@ -1,7 +1,7 @@
 [project]
 name = "web-platform"
 version = "0.1.0"
-description = "远控平台 — Windows 远程控制 Web 系统 (Vue 全局构建 + Flask)"
+description = "Deskport — 自己的电脑，一个浏览器就能到（Windows 远程控制 Web 系统）"
 requires-python = ">=3.13"
 dependencies = [
     "flask>=3.1",

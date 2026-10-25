@@ -2,7 +2,7 @@
 // 页面只需放 <div id="app-shell"></div> 并引入 icons.js + app-shell.js
 // 导航规则见 docs/ui-rules.md (R1/R2)。
 window.AppShell = (function () {
-    var BRAND = '远控平台';
+    var BRAND = 'Deskport';
     var PRIMARY = [
         { href: '/', icon: 'grid', label: '控制台' },
         { href: '/files', icon: 'folder', label: '文件' },

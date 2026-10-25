@@ -1,37 +1,50 @@
-# web-platform
+# Deskport
 
-Windows 远程控制台：在浏览器/手机上管理本机终端、SSH、文件、屏幕与常用操作。
+> **自己的电脑，一个浏览器就能到。**
 
-单用户、单机部署，Flask + 原生前端（Vue 3 全局构建，无前端构建链），支持 PWA 安装到手机桌面。
+Deskport 是一个自托管的个人电脑控制台。手机、平板或另一台电脑打开一个网址，就能拿到你真实机器的终端、文件、屏幕和常用控制——不用装客户端，不经过厂商云。
 
-> 本项目受 [mc-lhz/RemoteConnecter](https://github.com/mc-lhz/RemoteConnecter) 启发，并大量借鉴和沿用了其代码与实现思路；详见文末[致谢与代码来源](#致谢与代码来源)。
+它面向 Vibe Coder 和重度个人电脑用户：不只写代码，也能处理文件、跑 AI、看屏幕、做日常操作。
 
-## 功能
+![Deskport 演示](docs/assets/hero.gif)
 
-- **本机终端**：ConPTY 多会话、断线重连、回放、抢占接管；会话常驻，刷新页面不丢
-- **SSH**：密码/密钥认证、keyboard-interactive（2FA）、known_hosts TOFU、SFTP 浏览/上传/下载/编辑
-- **文件管理**：磁盘浏览、快速访问、缩略图、文本预览（保留原编码）、回收站删除、压缩/解压、搜索、打包下载
-- **收件箱**：默认关闭，可在设置页开启并维护扫描目录；内置下载/桌面/Documents 微信/QQ 默认目录
-- **实时屏幕**：MJPEG 单捕获广播（多客户端不降帧），鼠标/键盘控制
-- **控制台**：进程/窗口/应用管理，关机/重启/锁屏/睡眠，音量键，向指定窗口粘贴文本
-- **任务与 AI 交接**：把文件/文件夹交给终端 AI CLI，任务常驻、可继续对话、权限请求可见
-- **PWA**：手机可安装为独立应用，记住视图状态
+## 为什么做这个
 
-## 环境要求
+传统远程桌面为“看屏幕”设计：把整块画面编码、传输、再解码。延迟低的时候能用，但用来写代码、跑终端、和 AI 对话，体验并不好——传几个字符的事情，没必要传整个画面。
 
-- Windows 10/11（终端、抓屏、键鼠注入依赖 Windows API）
-- [uv](https://docs.astral.sh/uv/)（自动下载 Python 3.13 与依赖）
-- 可选：PowerShell 7（`pwsh.exe`），未安装时回退 Windows PowerShell 5.1
+Deskport 换了一个思路：
 
-## 快速开始
+- **终端只传字符**：本地终端、SSH 都是原生 PTY 流，不是屏幕视频
+- **会话活在 web 服务里**：电脑上打开、手机上 attach，刷新页面也不断
+- **浏览器就是客户端**：不需要在手机/平板装任何 App
+- **移动端按手机设计**：PWA、虚拟按键、手势、响应式布局，尽量接近原生
+- **整机而不只是 coding**：文件、屏幕、键鼠、进程、电源、AI 任务都在同一个地方
 
-```bash
+## 你能得到什么
+
+- **终端**：本机 PowerShell 7 / cmd，多会话、断线重连、回放、抢占接管
+- **SSH**：密码/密钥/2FA、known_hosts TOFU、SFTP 浏览与传输
+- **文件管理**：浏览、缩略图、文本预览（保留原编码）、压缩/解压、搜索、打包下载
+- **收件箱**：默认关闭；开启后按你配置的目录聚合微信/QQ/下载/桌面的新文件
+- **实时屏幕**：MJPEG 单捕获广播，多客户端不降帧；支持鼠标/键盘控制
+- **控制台**：进程、窗口、应用启动、关机/重启/锁屏/睡眠、音量键、向窗口发送文本
+- **AI 交接**：把文件/文件夹交给终端里的 AI CLI，任务常驻、可继续、权限可见
+- **PWA**：手机安装后像独立 App；记住上次视图和会话
+
+## 30 秒开始
+
+环境：Windows 10/11 + [uv](https://docs.astral.sh/uv/)。
+
+```powershell
 uv sync
-copy config.example.json config.json   # 设置 password
-.venv\Scripts\python.exe app.py        # http://127.0.0.1:6789
+copy config.example.json config.json
+# 编辑 config.json，至少设置 password
+.venv\Scripts\python.exe app.py
 ```
 
-`config.json` 不入库。最小配置：
+然后打开 `http://127.0.0.1:6789`。手机和电脑在同一网络时，用 `http://<电脑IP>:6789` 访问。
+
+最小配置：
 
 ```json
 {
@@ -40,57 +53,77 @@ copy config.example.json config.json   # 设置 password
 }
 ```
 
-更多字段见 [docs/deployment.md](docs/deployment.md)。密码为空时无人能登录，这是有意的 fail-closed 行为。
+更多字段见 [docs/deployment.md](docs/deployment.md)。
 
-### 开机自启（可选）
+## 截图
 
-创建启动文件夹快捷方式：
+桌面端文件管理：
+
+![文件管理](docs/assets/files.png)
+
+桌面端终端：
+
+![终端](docs/assets/terminal.png)
+
+移动端：
+
+<img src="docs/assets/mobile.png" alt="移动端文件管理" width="320">
+
+## 它是怎么工作的
 
 ```
-%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\web-platform.lnk
-  → wscript.exe "<仓库路径>\start-hidden.vbs"
+浏览器（手机 / 平板 / 另一台电脑）
+   │  HTTP + WebSocket
+   ▼
+web（认证、UI、文件、控制台）
+   ├── WS 代理 ──> locald（本机 ConPTY 终端）
+   └── WS 代理 ──> sshd  （paramiko SSH）
 ```
 
-`start-hidden.vbs` 会以隐藏窗口启动 web、两个会话守护进程和 watchdog，并写 `run.log`。
-详细说明（防双开、日志轮转、取消自启）见 [docs/deployment.md](docs/deployment.md)。
+- web 重启不会杀掉终端/SSH 会话
+- 会话状态在守护进程里，页面只是附着
+- 单用户、单机部署，配置和状态都在你自己的电脑上
 
-## 测试
+## 安全模型
 
-```bash
+Deskport 暴露的是完整的本机控制能力，请把它当作“远程管理入口”对待：
+
+- 单用户、单密码；密码明文保存在本机 `config.json`
+- 默认 HTTP，无内置 TLS/TOTP/CSRF
+- **不要直接把端口暴露到公网**；远程访问请放在 HTTPS 反向代理、VPN 或可信内网之后
+- 使用强密码；不需要时关闭服务
+- 收件箱扫描默认关闭，只扫描你显式配置的目录
+
+## 这不是什么
+
+- 不是云电脑：你的电脑必须开着、联网
+- 不是多租户/团队协作平台
+- 不是高帧率游戏串流
+- 目前只支持 Windows
+
+## Roadmap
+
+- 办公文档预览与批注流
+- 手机 ↔ 电脑剪贴板
+- 文件限时分享链接
+- 更完整的移动端手势与键盘
+- 多显示器与屏幕选择
+
+## 开发与测试
+
+```powershell
 .venv\Scripts\python.exe -m pytest tests -q
 .venv\Scripts\python.exe tools/check_structure.py
 ```
 
-终端/SSH 的端到端验证需要先启动服务（`app.py` + 两个 `sessiond.py`），见 [docs/ops.md](docs/ops.md)。
-
-## 架构
-
-```
-浏览器 ──HTTP/WS──> web(6789, 认证/UI/文件/控制台)
-                        ├──WS 代理──> locald(6791, ConPTY 终端)
-                        └──WS 代理──> sshd  (6792, paramiko SSH)
-```
-
-- web 重启不影响终端/SSH 会话
-- 状态与凭据存放在 `%APPDATA%\<stateDirName>`，不进仓库
-- 模块分层、依赖方向与文件预算见 [docs/code-structure.md](docs/code-structure.md)
-
-## 安全说明
-
-- 单用户、单密码；密码以明文存于本机 `config.json`
-- 默认 HTTP、无 TLS/TOTP；**不要直接暴露到公网**，如需远程访问请置于 HTTPS 反向代理/VPN 之后
-- 服务具备完整本机控制能力，请使用强密码并限制网络入口
+终端/SSH 端到端验证需要启动 `app.py` 与两个 `sessiond.py`，见 [docs/ops.md](docs/ops.md)。
 
 ## 文档
 
 见 [docs/README.md](docs/README.md)。
 
-## 许可证
+## 许可证与来源
 
-[MIT](LICENSE)。第三方依赖的许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本项目以 [MIT](LICENSE) 发布。第三方依赖见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## 致谢与代码来源
-
-本项目受到 [mc-lhz/RemoteConnecter](https://github.com/mc-lhz/RemoteConnecter) 的启发，并**大量借鉴和沿用了该项目的代码与实现思路**。终端 WebSocket 协议、ConPTY 会话管理、MJPEG 单捕获广播、认证守卫、文件管理、SSH/SFTP 等模块都能看到原项目的影子；v2 在此基础上做了重构、补强与扩展。
-
-原项目版权归其作者所有。上游仓库当前未声明开源许可证，使用、修改或分发本项目时，请同时确认上游代码的授权情况；如果你是上游作者或已获得授权，请在本仓库补充相应说明。
+Deskport 最初受到开源项目 [mc-lhz/RemoteConnecter](https://github.com/mc-lhz/RemoteConnecter) 的启发，并在其基础上大量借鉴、重构和扩展。原项目版权归其作者所有；上游仓库未附许可证，上游作者已说明其仓库可无限制使用，具体授权请以你获取到的上游说明为准。

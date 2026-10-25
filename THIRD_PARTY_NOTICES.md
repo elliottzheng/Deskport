@@ -31,4 +31,4 @@
 
 | 项目 | 许可证 | 说明 |
 |---|---|---|
-| [mc-lhz/RemoteConnecter](https://github.com/mc-lhz/RemoteConnecter) | 上游未声明 | 本项目受其启发并大量借鉴其代码；公开分发前请确认上游授权。 |
+| [mc-lhz/RemoteConnecter](https://github.com/mc-lhz/RemoteConnecter) | 上游未附许可证 | 本项目受其启发并大量借鉴其代码。上游作者已说明其仓库可无限制使用；原代码版权仍归其作者。 |

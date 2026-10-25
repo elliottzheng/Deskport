@@ -88,7 +88,7 @@ window.TermFeatures = (function () {
         function notifyTitle() {
             var active = manager ? manager.getActive() : null;
             var label = displayName(active);
-            document.title = label ? (label + ' — 远控平台') : baseTitle;
+            document.title = label ? (label + ' — Deskport') : baseTitle;
             if (window.parent && window.parent !== window) {
                 try {
                     window.parent.postMessage({ source: WP_MSG.SRC.EMBED, type: WP_MSG.EMBED.TITLE, text: label,

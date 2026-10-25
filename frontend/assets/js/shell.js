@@ -115,11 +115,11 @@ window.AppShellV2 = (function () {
     function syncTitle() {
         if (currentView === 'session') {
             var label = sessionTitles[sessionKind];
-            document.title = (label ? label + ' — ' : '会话 — ') + '远控平台';
+            document.title = (label ? label + ' — ' : '会话 — ') + 'Deskport';
             return;
         }
         var view = VIEWS[currentView];
-        document.title = (view ? view.label : '远控平台') + ' — 远控平台';
+        document.title = (view ? view.label : 'Deskport') + ' — Deskport';
     }
 
     function show(view, opts) {
