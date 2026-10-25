@@ -38,6 +38,7 @@
                     </span>
                 </div>
                 <div id="ssh-hosts" class="ssh-hosts"></div>
+                <p class="ssh-hint">选择主机连接；会话会保留，可随时接管</p>
                 <div class="nav-section">Snippets (点击发送到前台 SSH)</div>
                 <div id="snippets" class="ssh-hosts"></div>
                 <div class="side-input-row">
@@ -65,26 +66,26 @@
 
         <section id="main">
             <div id="bar">
-                <button id="sidebar-toggle" title="显示/隐藏终端列表">
+                <button id="sidebar-toggle" title="显示或隐藏左侧会话与主机列表">
                     <i data-icon="menu"></i>
                 </button>
                 <span class="session-switch" id="session-switch">
                     <a href="/terminal">本地</a>
                     <a class="is-active" href="/ssh">SSH</a>
                 </span>
-                <button id="sftp-toggle" class="bar-btn" title="SFTP 文件面板">
+                <button id="sftp-toggle" class="bar-btn" title="打开或关闭右侧 SFTP 文件面板">
                     <i data-icon="sftp"></i>
                 </button>
-                <button id="search-toggle" class="bar-btn" title="终端内搜索">
+                <button id="search-toggle" class="bar-btn" title="在当前终端输出中搜索（Ctrl+F）">
                     <i data-icon="search"></i>
                 </button>
-                <button id="log-toggle" class="bar-btn" title="记录终端日志">
+                <button id="log-toggle" class="bar-btn" title="把当前终端输出保存为日志文件">
                     <i data-icon="fileText"></i>
                 </button>
-                <button id="split-toggle" class="bar-btn" title="分屏 (双栏终端)">
+                <button id="split-toggle" class="bar-btn" title="左右分屏，同时查看两个终端">
                     <i data-icon="split"></i>
                 </button>
-                <span id="status" title="单击 显示/隐藏控制键">未连接</span>
+                <span id="status" title="单击显示或隐藏底部控制键；会话保留在电脑上">未连接</span>
             </div>
             <div id="search-bar" style="display:none">
                 <input id="search-input" placeholder="搜索终端内容…" spellcheck="false">
@@ -170,25 +171,26 @@
         <div class="sftp-head">
             <span class="sftp-title">SFTP <span id="sftp-host-label" class="sftp-host-label"></span></span>
             <div class="sftp-head-btns">
-                <select class="select" id="sftp-host-select" style="height:26px; font-size:12px; padding:0 6px"></select>
-                <button class="ssh-mini-btn" id="sftp-upload-btn" title="上传文件">↑</button>
+                <select class="select" id="sftp-host-select" title="选择要浏览的 SFTP 主机" style="height:26px; font-size:12px; padding:0 6px"></select>
+                <button class="ssh-mini-btn" id="sftp-upload-btn" title="上传本机文件到当前远程目录">↑</button>
                 <button class="ssh-mini-btn" id="sftp-close-btn" title="关闭">&times;</button>
             </div>
         </div>
         <input type="file" id="sftp-file-input" style="display:none">
         <div class="sftp-pathbar">
-            <button class="ssh-mini-btn" id="sftp-up" title="上级">↑</button>
+            <button class="ssh-mini-btn" id="sftp-up" title="返回上一级远程目录">↑</button>
             <code class="sftp-path" id="sftp-path">/</code>
-            <button class="ssh-mini-btn" id="sftp-pin" title="固定当前目录到快速访问">☆</button>
+            <button class="ssh-mini-btn" id="sftp-pin" title="把当前远程目录固定到快速访问">☆</button>
         </div>
         <div class="sftp-quick" id="sftp-quick" style="display:none"></div>
         <div id="sftp-list" class="sftp-list"></div>
+        <p class="sftp-hint">单击选中 · 双击编辑 · 右键更多</p>
         <div class="sftp-actions">
-            <button class="btn btn-secondary" id="sftp-mkdir">新建</button>
-            <button class="btn btn-secondary" id="sftp-edit">编辑</button>
-            <button class="btn btn-secondary" id="sftp-chmod">权限</button>
-            <button class="btn btn-secondary" id="sftp-download">下载到浏览器</button>
-            <button class="btn btn-primary" id="sftp-to-local">存到本机</button>
+            <button class="btn btn-secondary" id="sftp-mkdir" title="在当前远程目录新建文件夹">新建</button>
+            <button class="btn btn-secondary" id="sftp-edit" title="编辑选中的远程文本文件">编辑</button>
+            <button class="btn btn-secondary" id="sftp-chmod" title="修改选中文件或目录的权限">权限</button>
+            <button class="btn btn-secondary" id="sftp-download" title="下载选中文件到浏览器">下载到浏览器</button>
+            <button class="btn btn-primary" id="sftp-to-local" title="把选中文件保存到本机目录">存到本机</button>
         </div>
     </div>
 

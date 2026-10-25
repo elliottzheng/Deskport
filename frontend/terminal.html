@@ -50,7 +50,7 @@
 
         <section id="main">
             <div id="bar">
-                <button id="sidebar-toggle" title="显示/隐藏终端列表">
+                <button id="sidebar-toggle" title="显示或隐藏左侧会话列表">
                     <i data-icon="menu"></i>
                 </button>
                 <span class="session-switch" id="session-switch">
@@ -67,18 +67,18 @@
                 <button class="preset-command" data-cmd="powershell.exe">
                     <span class="preset-name">powershell</span>
                 </button>
-                <button id="search-toggle" class="bar-btn" title="终端内搜索">
+                <button id="search-toggle" class="bar-btn" title="在当前终端输出中搜索（Ctrl+F）">
                     <i data-icon="search"></i>
                 </button>
-                <button id="log-toggle" class="bar-btn" title="记录终端日志">
+                <button id="log-toggle" class="bar-btn" title="把当前终端输出保存为日志文件">
                     <i data-icon="fileText"></i>
                 </button>
-                <button id="split-toggle" class="bar-btn" title="分屏 (双栏终端)">
+                <button id="split-toggle" class="bar-btn" title="左右分屏，同时查看两个终端">
                     <i data-icon="split"></i>
                 </button>
                 <input id="cmd" value="" placeholder="自定义终端程序 (留空默认 pwsh7)" spellcheck="false" autocomplete="off">
                 <button id="connect">新建</button>
-                <span id="status" title="单击 显示/隐藏控制键">未连接</span>
+                <span id="status" title="单击显示或隐藏底部控制键；会话保留在电脑上">未连接</span>
             </div>
             <div id="search-bar" style="display:none">
                 <input id="search-input" placeholder="搜索终端内容…" spellcheck="false">

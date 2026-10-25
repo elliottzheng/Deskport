@@ -69,14 +69,14 @@
                     </button>
                     <input type="file" ref="fileInput" style="display:none" @change="uploadLocal">
                     <span class="sep"></span>
-                    <button class="icon-btn" :title="viewMode === 'details' ? '切换到图标视图' : '切换到详细视图'" @click="toggleView">
+                    <button class="icon-btn" :title="viewMode === 'details' ? '切换到图标视图（图片显示缩略图）' : '切换到详细视图（名称/时间/类型/大小）'" @click="toggleView">
                         <i data-icon="grid" v-if="viewMode === 'details'"></i>
                         <i data-icon="menu" v-else></i>
                     </button>
                     <label class="fm-check-label" title="显示隐藏与系统文件">
                         <input type="checkbox" v-model="showHidden"> 显示隐藏项
                     </label>
-                    <span class="fm-toolbar-hint">批量操作：框选/长按选中后 右键 或 底部操作栏</span>
+                    <span class="fm-toolbar-hint">双击预览 · 右键更多 · 框选/长按多选后批量操作</span>
                 </div>
 
                 <!-- 地址栏: 后退/前进/刷新 + 面包屑 -->

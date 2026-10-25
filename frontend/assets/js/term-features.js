@@ -170,7 +170,7 @@ window.TermFeatures = (function () {
                 li.className = 'session-item' + (s === manager.getActive() ? ' active' : '');
                 li.innerHTML =
                     (s.kind === 'ssh'
-                        ? '<label class="me-check" title="multi-exec 勾选"><input type="checkbox"' +
+                        ? '<label class="me-check" title="勾选多个 SSH 会话后，可在侧栏广播框批量发送命令"><input type="checkbox"' +
                           (multiExecSet.has(s.uid) ? ' checked' : '') + '></label>'
                         : '') +
                     '<span class="session-badge ' + s.kind + '">' + (s.kind === 'ssh' ? 'SSH' : '本地') + '</span>' +

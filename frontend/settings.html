@@ -44,12 +44,15 @@
 
     <div class="card settings-card">
         <div class="card-title">收件箱扫描</div>
-        <p class="settings-note">默认关闭。开启后「文件 → 收件箱」会扫描下列目录；目录留空则自动探测微信/QQ/下载/桌面。</p>
+        <p class="settings-note">默认关闭。开启后「文件 → 收件箱」会扫描下列目录；目录留空则使用软件默认目录（下载/桌面/Documents 微信 QQ）。</p>
 
         <label class="settings-toggle">
             <input type="checkbox" v-model="inboxEnabled">
             <span>启用收件箱扫描</span>
         </label>
+        <p class="settings-hint" v-if="!inboxEnabled">扫描已关闭：收件箱不会读取任何目录。</p>
+        <p class="settings-hint" v-else-if="!inboxDirs.length">目录为空：将使用软件默认目录（下载、桌面、Documents 下的微信/QQ）。</p>
+        <p class="settings-hint" v-else>将扫描上方 {{ inboxDirs.length }} 个目录；保存后立即生效。</p>
 
         <div v-if="inboxEnabled" class="settings-inbox">
             <div class="settings-dir" v-for="(d, i) in inboxDirs" :key="d">
@@ -92,6 +95,7 @@
 
 <script src="/assets/js/icons.js?v=__BUILD__"></script>
 <script src="/assets/js/messages.js?v=__BUILD__"></script>
+<script src="/assets/js/common.js?v=__BUILD__"></script>
 <script src="/assets/js/app-shell.js?v=__BUILD__"></script>
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
 <script src="/assets/js/settings.js?v=__BUILD__"></script>

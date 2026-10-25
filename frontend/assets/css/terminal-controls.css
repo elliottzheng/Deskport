@@ -182,6 +182,12 @@
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
 }
+.sftp-hint {
+    margin: 6px var(--sp-3) 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-3);
+}
 .sftp-actions {
     display: flex;
     gap: 6px;

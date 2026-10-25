@@ -211,3 +211,11 @@ body { padding-bottom: 0 !important; overflow: hidden; }
 .session-terminal { position: absolute; inset: 0; padding: 6px 8px; }
 .session-terminal .xterm { height: 100%; }
 
+
+/* SSH 主机区说明 */
+.ssh-hint {
+    margin: 6px 10px 2px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-3);
+}

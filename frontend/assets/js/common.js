@@ -42,4 +42,86 @@
         fmtAgo: fmtAgo,
         escapeHtml: escapeHtml,
     };
+
+    // ---- 统一 tooltip：把分散的原生 title 升级成可读的悬浮说明 ----
+    (function () {
+        if (!window.matchMedia || !window.matchMedia('(hover: hover)').matches) {
+            return;
+        }
+        var box = null;
+        var timer = null;
+        var active = null;
+
+        function ensureBox() {
+            if (!box) {
+                box = document.createElement('div');
+                box.className = 'ui-tooltip';
+                box.setAttribute('role', 'tooltip');
+                box.hidden = true;
+                document.body.appendChild(box);
+            }
+            return box;
+        }
+
+        function restore() {
+            if (active && active.getAttribute('data-tip-title')) {
+                active.setAttribute('title', active.getAttribute('data-tip-title'));
+                active.removeAttribute('data-tip-title');
+            }
+        }
+
+        function hide() {
+            clearTimeout(timer);
+            timer = null;
+            if (box) { box.hidden = true; }
+            restore();
+            active = null;
+        }
+
+        function place(el) {
+            var r = el.getBoundingClientRect();
+            var b = ensureBox();
+            b.textContent = el.getAttribute('data-tip-title') || '';
+            b.hidden = false;
+            var bw = b.offsetWidth;
+            var bh = b.offsetHeight;
+            var left = r.left + r.width / 2 - bw / 2;
+            left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+            var top = r.top - bh - 8;
+            if (top < 8) { top = r.bottom + 8; }
+            b.style.left = left + 'px';
+            b.style.top = top + 'px';
+        }
+
+        function show(el) {
+            var text = el.getAttribute('title');
+            if (!text) { return; }
+            el.setAttribute('data-tip-title', text);
+            el.removeAttribute('title');
+            active = el;
+            place(el);
+        }
+
+        document.addEventListener('mouseover', function (e) {
+            var el = e.target.closest('[title]');
+            if (!el || el === active || (active && active.contains(el))) { return; }
+            hide();
+            timer = setTimeout(function () { show(el); }, 350);
+        });
+        document.addEventListener('mouseout', function (e) {
+            if (!active) { return; }
+            if (e.relatedTarget && active.contains(e.relatedTarget)) { return; }
+            hide();
+        });
+        document.addEventListener('focusin', function (e) {
+            var el = e.target.closest('[title]');
+            if (!el) { return; }
+            hide();
+            show(el);
+        });
+        document.addEventListener('focusout', hide);
+        document.addEventListener('scroll', hide, true);
+        document.addEventListener('mousedown', hide, true);
+        window.addEventListener('resize', hide);
+    })();
 })();

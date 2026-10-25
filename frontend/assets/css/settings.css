@@ -15,6 +15,7 @@
     font-size: 14px; color: var(--text-2); cursor: pointer;
 }
 .settings-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.settings-hint { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-3); }
 .settings-inbox { margin-top: var(--sp-2); }
 .settings-dir {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
