@@ -233,6 +233,19 @@ def test_plugin_api_returns_401_json_when_unauthenticated(tmp_path):
     assert client.get("/demo/api/ping").status_code == 200
 
 
+def test_legacy_terminal_ws_alias_is_registered(tmp_path):
+    from app import create_app
+
+    app, _sock = create_app(pluginRoots=[], pluginNavDir=tmp_path / "nav")
+    rules = {rule.rule for rule in app.url_map.iter_rules()}
+    assert "/terminal/api/ws" in rules
+
+    resp = app.test_client().get(
+        "/terminal/api/ws",
+        headers={"Upgrade": "websocket", "Connection": "Upgrade"})
+    assert resp.status_code == 401
+
+
 def test_api_plugins_lists_registry_and_errors(tmp_path):
     from app import create_app
 

@@ -34,6 +34,13 @@ def register(app, sock, sessionRoutes=True):
         app.add_url_rule('/api/terminal/sessions/<sessionID>', 'terminalKill',
                          killSessionEndpoint, methods=['DELETE'])
         sock.route('/api/terminal/ws')(wsLocalTerminal)
+        # legacy 兼容：RemoteConnecter 插件（RemoteVSCode 等）写死 /terminal/api/ws
+        sock.route('/terminal/api/ws')(wsLocalTerminalLegacy)
+
+
+def wsLocalTerminalLegacy(ws):
+    """legacy 插件入口：路径不同，行为与 /api/terminal/ws 一致。"""
+    return wsLocalTerminal(ws)
 
 
 def wsLocalTerminal(ws):

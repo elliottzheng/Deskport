@@ -106,6 +106,10 @@ def _registerTerminal(app, sock):
         return _proxyJson('local', '/sessions/' + sessionId, 'DELETE')
 
     sock.route('/api/terminal/ws')(wsTerminal)
+    # legacy 兼容：RemoteConnecter 插件（RemoteVSCode 等）写死 /terminal/api/ws
+    def wsTerminalLegacy(ws):
+        return wsTerminal(ws)
+    sock.route('/terminal/api/ws')(wsTerminalLegacy)
     app.add_url_rule('/api/terminal/sessions', 'proxyTerminalSessions', terminalSessions)
     app.add_url_rule('/api/terminal/sessions/<sessionId>', 'proxyTerminalKill',
                      terminalKill, methods=['DELETE'])
