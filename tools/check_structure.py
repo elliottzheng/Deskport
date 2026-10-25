@@ -30,7 +30,7 @@ ALLOWED_WINDOW = {'termManager', 'termUI', 'createSshSession', 'SSHUI',
                   'AppShell', 'AppShellV2', 'Icons', 'SftpMemory',
                   'TermClient', 'TermFeatures', 'toggleMultiExec', 'WPCommon',
                   'FilesMethodsCore', 'FilesMethodsOps', 'FilesMethodsUi', 'FilesMethodsAi',
-                  'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore',
+                  'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
                   'TermEnv', 'TermSessionUI', 'TermControls'}
 
 

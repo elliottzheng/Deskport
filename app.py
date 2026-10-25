@@ -4,6 +4,8 @@
 `create_app()` 负责装配；模块级 `app` 仅为兼容既有入口与测试。
 """
 import gzip
+import html
+import json
 import logging
 import mimetypes
 import os
@@ -79,10 +81,13 @@ def _makePageHandler(filename):
         path = os.path.join(FRONTEND_DIR, filename)
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                html = f.read().replace('__BUILD__', metaModule.BUILD)
+                page = f.read().replace('__BUILD__', metaModule.BUILD)
         except OSError:
             return send_from_directory(FRONTEND_DIR, filename)
-        resp = Response(html, mimetype='text/html')
+        brand = html.escape(config.getBrandName())
+        page = page.replace('Deskport', brand)
+        page = page.replace('<head>', '<head>\n<meta name="wp-brand" content="%s">' % brand, 1)
+        resp = Response(page, mimetype='text/html')
         resp.headers['Cache-Control'] = 'no-cache'
         return resp
     handler.__name__ = 'page_' + filename.replace('.', '_')
@@ -130,9 +135,19 @@ def assets(filename):
 
 @pages.route('/manifest.webmanifest')
 def manifest():
-    """PWA 清单：让手机把 /app 装成独立应用(standalone)。"""
-    resp = send_from_directory(FRONTEND_DIR, 'manifest.webmanifest',
-                               mimetype='application/manifest+json')
+    """PWA 清单：让手机把 /app 装成独立应用(standalone)，名称跟随品牌设置。"""
+    path = os.path.join(FRONTEND_DIR, 'manifest.webmanifest')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {'name': 'Deskport', 'short_name': 'Deskport', 'start_url': '/app',
+                'display': 'standalone', 'icons': []}
+    brand = config.getBrandName()
+    data['name'] = brand
+    data['short_name'] = brand[:12]
+    resp = Response(json.dumps(data, ensure_ascii=False),
+                    mimetype='application/manifest+json')
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
 

@@ -78,6 +78,17 @@
     </div>
 
     <div class="card settings-card">
+        <div class="card-title">品牌名称</div>
+        <p class="settings-note">显示在顶栏、登录页和 PWA 名称；保存后刷新页面生效。</p>
+        <input class="input" v-model.trim="brandName" maxlength="24" placeholder="Deskport" spellcheck="false">
+        <p v-if="brandError" class="load-error" style="margin-top:12px">{{ brandError }}</p>
+        <p v-if="brandOk" class="settings-ok">{{ brandOk }}</p>
+        <button class="btn btn-primary settings-submit" @click="saveBrand" :disabled="brandBusy">
+            {{ brandBusy ? '保存中…' : '保存品牌名称' }}
+        </button>
+    </div>
+
+    <div class="card settings-card">
         <div class="card-title">备份</div>
         <p class="settings-note">打包 config.json 与状态目录（SSH 主机、审计、令牌等），不含缩略图缓存。</p>
         <a class="btn btn-secondary settings-submit settings-download" href="/api/backup">导出备份</a>

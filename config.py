@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
 DEFAULTS = {'port': 6789, 'password': '', 'stateDirName': 'web-platform',
-            'inboxEnabled': False}
+            'inboxEnabled': False, 'brandName': 'Deskport'}
 _cache = {'mtime': None, 'data': None}
 _cacheLock = threading.Lock()
 
@@ -65,6 +65,23 @@ def setPassword(newPassword):
     from modules import state
     cfg = load()
     cfg['password'] = newPassword
+    state.atomicWriteJson(CONFIG_PATH, cfg)
+    with _cacheLock:
+        _cache['mtime'] = None
+        _cache['data'] = None
+
+
+def getBrandName():
+    r"""界面品牌名；缺省 Deskport，最长 24 字符。"""
+    name = str(load().get('brandName') or 'Deskport').strip()
+    return name[:24] or 'Deskport'
+
+
+def setBrandName(name):
+    """写回品牌名（保留其他配置键）。"""
+    from modules import state
+    cfg = load()
+    cfg['brandName'] = name
     state.atomicWriteJson(CONFIG_PATH, cfg)
     with _cacheLock:
         _cache['mtime'] = None

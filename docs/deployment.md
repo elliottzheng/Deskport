@@ -37,6 +37,7 @@ copy config.example.json config.json    # 填写密码
 | `fallbackDir` | `<第一个 workDir>\默认工作空间` | 低置信度兜底目录 |
 | `inboxEnabled` | `false` | 收件箱扫描开关；关闭时 `inboxDirs` 不生效，可在设置页开启 |
 | `inboxDirs` | 软件默认目录 | 收件箱观察目录；开启且为空 = 用户主目录下的下载/桌面/Documents 微信/QQ 目录 |
+| `brandName` | `"Deskport"` | 顶栏、登录页与 PWA 名称；也可在设置页修改 |
 | `aiCommand` | 自动 | 终端里启动的 AI CLI；空 = 探测 `omp` / `kimi`，都无则 `pwsh.exe` |
 | `decisionApiKey` | 空 | SiliconFlow Key；空则使用本地词面匹配 |
 | `pinnedApps` | `[]` | 控制台固定应用：开始菜单名或 `.exe/.lnk` 路径 |

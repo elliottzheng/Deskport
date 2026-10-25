@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """认证模块 — 会话登录守卫 + 登录限速"""
 import hmac
+import html
 import threading
 import time
 
@@ -53,6 +54,7 @@ def renderLoginPage(errorMessage, nextTarget):
     with open('frontend/login.html', 'r', encoding='utf-8') as f:
         page = f.read()
     from modules import meta as metaModule
+    page = page.replace('Deskport', html.escape(config.getBrandName()))
     return (page.replace('<!--ERROR-->', errorHtml)
                 .replace('<!--NEXT-->', nextTarget)
                 .replace('__BUILD__', metaModule.BUILD))

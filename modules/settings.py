@@ -9,6 +9,24 @@ import config
 blueprint = Blueprint('settings', __name__)
 
 MAX_DIRS = 20
+MAX_BRAND = 24
+
+
+@blueprint.route('/api/settings/brand', methods=['GET'])
+def getBrandSettings():
+    return jsonify({'name': config.getBrandName()})
+
+
+@blueprint.route('/api/settings/brand', methods=['POST'])
+def setBrandSettings():
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name or len(name) > MAX_BRAND:
+        return jsonify({'error': '品牌名需为 1-%d 个字符' % MAX_BRAND}), 400
+    if any(c in name for c in '<>"\'') or any(c in name for c in '\r\n\t'):
+        return jsonify({'error': '品牌名不能包含 < > " \' 或换行'}), 400
+    config.setBrandName(name)
+    return jsonify({'ok': True, 'name': name})
 
 
 @blueprint.route('/api/settings/inbox', methods=['GET'])

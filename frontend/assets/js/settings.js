@@ -18,12 +18,55 @@ createApp({
             inboxError: '',
             inboxOk: '',
             inboxBusy: false,
+            brandName: '',
+            brandError: '',
+            brandOk: '',
+            brandBusy: false,
         };
     },
     mounted() {
         this.loadInbox();
+        this.loadBrand();
     },
     methods: {
+        async loadBrand() {
+            try {
+                const r = await fetch('/api/settings/brand');
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.brandName = data.name || 'Deskport';
+            } catch (err) {
+                this.brandError = '加载品牌名称失败: ' + err.message;
+            }
+        },
+        async saveBrand() {
+            if (this.brandBusy) { return; }
+            this.brandError = '';
+            this.brandOk = '';
+            const name = this.brandName.trim();
+            if (!name) { this.brandError = '品牌名不能为空'; return; }
+            if (name.length > 24) { this.brandError = '品牌名最多 24 个字符'; return; }
+            this.brandBusy = true;
+            try {
+                const r = await fetch('/api/settings/brand', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.brandName = data.name;
+                this.brandOk = '已保存，正在刷新页面…';
+                setTimeout(() => {
+                    if (window.top && window.top !== window) { window.top.location.reload(); }
+                    else { location.reload(); }
+                }, 700);
+            } catch (err) {
+                this.brandError = err.message;
+            } finally {
+                this.brandBusy = false;
+            }
+        },
         async loadInbox() {
             try {
                 const r = await fetch('/api/settings/inbox');

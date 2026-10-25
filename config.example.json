@@ -12,5 +12,6 @@
   "decisionApiKey": "",
   "pinnedApps": [],
   "sessiondUrl": "",
-  "sshSessiondUrl": ""
+  "sshSessiondUrl": "",
+  "brandName": "Deskport"
 }
