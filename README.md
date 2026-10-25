@@ -131,6 +131,12 @@ copy config.example.json config.json
 
 更多字段见 [docs/deployment.md](docs/deployment.md)。
 
+## 配合内网穿透食用
+
+Deskport 只监听本机端口，家里/公司网络通常没有公网 IP。**不要直接把 6789 裸奔到公网**；优先用私有网络（Tailscale / ZeroTier），需要域名再用 Cloudflare Tunnel、frp + Caddy 等，并确保全程 HTTPS。
+
+常见方案、最小配置和 WebSocket/MJPEG 注意事项见 [docs/remote-access.md](docs/remote-access.md)。
+
 ## 它是怎么工作的
 
 ```

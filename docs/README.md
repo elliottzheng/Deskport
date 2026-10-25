@@ -12,10 +12,11 @@
 | [terminal-protocol.md](terminal-protocol.md) | 终端 WebSocket 帧协议：连接参数、帧类型、回放、抢占接管 |
 | [ai-handoff.md](ai-handoff.md) | 收件箱与「交给 AI」：扫描去重、落点判断、案例目录、配置 |
 | [control.md](control.md) | 控制台：电源/进程/窗口/应用/文本/审计 |
-| [settings.md](settings.md) | 设置页：修改访问密码与会话失效 |
+| [settings.md](settings.md) | 设置页：访问密码、收件箱扫描、品牌名称 |
 | [sessiond.md](sessiond.md) | 会话守护进程：终端/SSH 分治、web 代理、启动方式 |
 | [ops.md](ops.md) | 发布与运维：部署脚本、版本/诊断、watchdog、日志、缓存戳 |
 | [deployment.md](deployment.md) | 安装与配置：uv、Python 3.13、config.json、端口、开机自启、依赖 |
+| [remote-access.md](remote-access.md) | 远程访问与内网穿透：Tailscale/ZeroTier、Cloudflare Tunnel、frp+Caddy、ngrok、端口转发与安全检查 |
 | [principles.md](principles.md) | 产品与设计原则 |
 | [ui-rules.md](ui-rules.md) | UI 设计规则 |
 | [design-system.md](design-system.md) | 设计令牌、组件类与断点规范 |
