@@ -22,6 +22,19 @@ window.AppShell = (function () {
         { href: '/settings', icon: 'settings', label: '设置' }
     ];
 
+    // 插件导航：服务端注入，legacy 插件整页跳转（external），原生插件走壳内视图
+    var PLUGIN_NAV = (window.__WP_PLUGIN_NAV__ || []).filter(function (p) {
+        return p && p.href && p.label;
+    });
+    PLUGIN_NAV.forEach(function (p) {
+        MORE.push({ href: p.href, icon: p.icon || 'plug', label: p.label, external: !!p.external });
+    });
+
+    function icon(name) {
+        var svg = Icons.svg(name);
+        return svg || Icons.svg('plug');
+    }
+
     // 被 App 壳嵌入时：不渲染旧导航，并把顶层链接交给壳处理
     var EMBED = new URLSearchParams(location.search).get('embed') === '1';
     if (EMBED) {
@@ -32,6 +45,9 @@ window.AppShell = (function () {
             '/ssh': 'ssh', '/screen': 'screen', '/command': 'command',
             '/settings': 'settings', '/logout': 'logout',
         };
+        PLUGIN_NAV.forEach(function (p) {
+            if (!p.external) { NAV_MAP[p.href] = 'plugin'; }
+        });
         document.addEventListener('click', function (e) {
             var a = e.target.closest ? e.target.closest('a[href]') : null;
             if (!a) { return; }
@@ -62,8 +78,9 @@ window.AppShell = (function () {
 
     function link(item, path, extraClass) {
         return '<a class="sidenav-link' + (isActive(item, path) ? ' is-active' : '') + '"'
-            + ' href="' + hrefOf(item) + '" title="' + item.label + '">'
-            + Icons.svg(item.icon) + '<span class="label">' + item.label + '</span></a>';
+            + ' href="' + hrefOf(item) + '" title="' + item.label + '"'
+            + (item.external ? ' target="_blank" rel="noopener"' : '') + '>'
+            + icon(item.icon) + '<span class="label">' + item.label + '</span></a>';
     }
 
     function render() {
@@ -114,8 +131,9 @@ window.AppShell = (function () {
             + '<div class="more-handle"></div>'
             + '<div class="more-grid">'
             + MORE.map(function (n) {
-                return '<a class="more-item' + (isActive(n, path) ? ' is-active' : '') + '" href="' + n.href + '">'
-                    + Icons.svg(n.icon) + '<span>' + n.label + '</span></a>';
+                return '<a class="more-item' + (isActive(n, path) ? ' is-active' : '') + '" href="' + n.href + '"'
+                    + (n.external ? ' target="_blank" rel="noopener"' : '') + '>'
+                    + icon(n.icon) + '<span>' + n.label + '</span></a>';
             }).join('')
             + '</div>'
             + '<button class="btn btn-ghost more-close" id="more-close" type="button">取消</button>'

@@ -30,6 +30,7 @@ from modules import settings as settingsModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
+from modules import plugins as pluginsModule  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
@@ -86,7 +87,10 @@ def _makePageHandler(filename):
             return send_from_directory(FRONTEND_DIR, filename)
         brand = html.escape(config.getBrandName())
         page = page.replace('Deskport', brand)
-        page = page.replace('<head>', '<head>\n<meta name="wp-brand" content="%s">' % brand, 1)
+        navJson = json.dumps(pluginsModule.getNavItems(), ensure_ascii=False).replace('<', '\\u003c')
+        headInject = ('<head>\n<meta name="wp-brand" content="%s">'
+                      '\n<script>window.__WP_PLUGIN_NAV__=%s;</script>' % (brand, navJson))
+        page = page.replace('<head>', headInject, 1)
         resp = Response(page, mimetype='text/html')
         resp.headers['Cache-Control'] = 'no-cache'
         return resp
@@ -189,11 +193,12 @@ def gzipText(resp):
 
 # 显式注册表：蓝图模块与 register(app) 模块分开，新增模块必须在这里登记。
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
-                     controlModule, tasksModule, settingsModule)
+                     controlModule, tasksModule, settingsModule,
+                     pluginsModule)
 REGISTER_MODULES = (systemModule, metaModule, tasksModule)
 
 
-def _registerModules(app, sock):
+def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
     for module in REGISTER_MODULES:
         module.register(app)
     for module in BLUEPRINT_MODULES:
@@ -211,8 +216,11 @@ def _registerModules(app, sock):
             'sessiond local=%s ssh=%s', config.getSessiondUrl('local'),
             config.getSessiondUrl('ssh'))
 
+    # 插件最后加载：legacy 插件注册根路径，冲突时宿主路由优先
+    pluginsModule.load(app, roots=pluginRoots, navDir=pluginNavDir)
 
-def create_app():
+
+def create_app(pluginRoots=None, pluginNavDir=None):
     """装配一个独立 Flask 实例；测试可多次调用，互不共享路由状态。"""
     app = Flask(__name__)
     sock = Sock(app)
@@ -227,7 +235,7 @@ def create_app():
                          view_func=_makeLegacyHandler(filename, target), methods=['GET'])
     app.after_request(gzipText)
 
-    _registerModules(app, sock)
+    _registerModules(app, sock, pluginRoots, pluginNavDir)
     sock.init_app(app)
     return app, sock
 

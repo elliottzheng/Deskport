@@ -16,13 +16,32 @@ window.AppShellV2 = (function () {
         { view: 'more', label: '更多', icon: 'more' },
     ];
     var NAV = ['home', 'tasks', 'files', 'session', 'screen', 'command'];
+
+    // 插件导航：服务端注入。原生插件作为壳内视图（iframe），legacy 走新标签页。
+    var PLUGIN_NAV = (window.__WP_PLUGIN_NAV__ || []).filter(function (p) {
+        return p && p.id && p.href && p.label;
+    });
+    PLUGIN_NAV.forEach(function (p) {
+        if (p.external) { return; }
+        var key = 'plugin:' + p.id;
+        VIEWS[key] = { href: p.href, label: p.label, icon: p.icon || 'plug', plugin: true };
+        NAV.push(key);
+    });
+    var PLUGIN_EXTERNAL = PLUGIN_NAV.filter(function (p) { return p.external; });
+    var MORE_VIEWS = ['tasks', 'screen', 'command', 'settings'].concat(
+        PLUGIN_NAV.filter(function (p) { return !p.external; }).map(function (p) {
+            return 'plugin:' + p.id;
+        }));
     var frames = {};
     var currentView = 'home';
     var sessionKind = localStorage.getItem('wp.shell.kind') === 'ssh' ? 'ssh' : 'local';
     var filesLoc = new URLSearchParams(location.search).get('loc') || '';
     var sessionTitles = { local: '', ssh: '' };
 
-    function svg(name) { return window.Icons ? Icons.svg(name) : ''; }
+    function svg(name) {
+        if (!window.Icons) { return ''; }
+        return Icons.svg(name) || Icons.svg('plug');
+    }
 
     function sessionFrameKey() { return sessionKind === 'ssh' ? 'ssh' : 'local'; }
 
@@ -95,7 +114,7 @@ window.AppShellV2 = (function () {
         document.querySelectorAll('[data-view]').forEach(function (el) {
             var v = el.getAttribute('data-view');
             var active = v === currentView
-                || (v === 'more' && ['tasks', 'screen', 'command', 'settings'].indexOf(currentView) >= 0);
+                || (v === 'more' && MORE_VIEWS.indexOf(currentView) >= 0);
             el.classList.toggle('is-active', active);
         });
         document.querySelectorAll('#session-switch button, #session-inline button').forEach(function (btn) {
@@ -242,11 +261,16 @@ window.AppShellV2 = (function () {
     function escapeAttr(s) { return escapeHtml(s); }
 
     function build() {
-        document.getElementById('shell-nav').innerHTML = NAV.map(function (view) {
+        var navItems = NAV.map(function (view) {
             var v = VIEWS[view];
             return '<a href="' + (view === 'session' ? '/app?view=session' : '/app?view=' + view) + '" data-view="' + view + '">'
                 + svg(v.icon) + '<span class="nav-label">' + v.label + '</span></a>';
         }).join('');
+        navItems += PLUGIN_EXTERNAL.map(function (p) {
+            return '<a href="' + escapeAttr(p.href) + '" target="_blank" rel="noopener">'
+                + svg(p.icon) + '<span class="nav-label">' + escapeHtml(p.label) + '</span></a>';
+        }).join('');
+        document.getElementById('shell-nav').innerHTML = navItems;
         document.getElementById('shell-utils').innerHTML =
             '<button type="button" class="shell-recent-btn" id="recent-open" title="最近使用">'
             + svg('recent') + '<span>最近</span></button>'
@@ -261,10 +285,14 @@ window.AppShellV2 = (function () {
         document.getElementById('more-grid').innerHTML =
             '<button type="button" class="more-item" data-more-recent="1">'
             + svg('recent') + '<span>最近</span></button>'
-            + ['tasks', 'screen', 'command', 'settings'].map(function (view) {
+            + MORE_VIEWS.map(function (view) {
                 var v = VIEWS[view];
                 return '<button type="button" class="more-item" data-more-view="' + view + '">'
-                    + svg(v.icon) + '<span>' + v.label + '</span></button>';
+                    + svg(v.icon) + '<span>' + escapeHtml(v.label) + '</span></button>';
+            }).join('')
+            + PLUGIN_EXTERNAL.map(function (p) {
+                return '<a class="more-item" href="' + escapeAttr(p.href) + '" target="_blank" rel="noopener">'
+                    + svg(p.icon) + '<span>' + escapeHtml(p.label) + '</span></a>';
             }).join('');
         document.getElementById('shell-more').hidden = true;
 
@@ -375,7 +403,11 @@ window.AppShellV2 = (function () {
                     '/': 'home', '/tasks': 'tasks', '/files': 'files', '/screen': 'screen',
                     '/command': 'command', '/settings': 'settings',
                 };
-                if (map[href]) { show(map[href]); }
+                if (map[href]) { show(map[href]); return; }
+                var pluginView = Object.keys(VIEWS).filter(function (key) {
+                    return key.indexOf('plugin:') === 0 && VIEWS[key].href === href;
+                })[0];
+                if (pluginView) { show(pluginView); }
             } else if (data.type === WP_MSG.SHELL.OPEN_TERMINAL) {
                 setSessionKind('local');
                 var frame = ensureFrame('local');
