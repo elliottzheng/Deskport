@@ -17,3 +17,6 @@ logs/
 
 *.log
 *.log.1
+
+# 插件本体不入库：仓库只做兼容加载，插件见 docs/plugin-api.md 里的上游链接
+/plugins/
