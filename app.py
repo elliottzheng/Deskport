@@ -42,7 +42,8 @@ def _setupLogging():
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s [%(name)s] %(message)s', '%Y-%m-%d %H:%M:%S'))
-    for name in ('termcore', 'localterm', 'ssh', 'files', 'sessionproxy', 'control'):
+    for name in ('termcore', 'localterm', 'ssh', 'files', 'sessionproxy', 'control',
+                 'plugins'):
         logger = logging.getLogger(name)
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
