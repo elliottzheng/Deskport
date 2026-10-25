@@ -206,6 +206,7 @@
     padding: var(--sp-2) var(--sp-1) 0;
     font-variant-numeric: tabular-nums;
 }
+.fm-mobile-tip { display: none; }
 
 /* ====== 移动端 (≤640px) ====== */
 @media (max-width: 640px) {
@@ -399,4 +400,7 @@
 .upload-quick-chip:hover { border-color: var(--brand); color: var(--brand); }
 .upload-quick-chip.active {
     border-color: var(--brand); background: var(--brand-bg); color: var(--brand);
+}
+@media (max-width: 640px) {
+    .fm-mobile-tip { display: inline; margin-left: auto; font-size: 11px; }
 }

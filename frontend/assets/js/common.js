@@ -102,8 +102,14 @@
             place(el);
         }
 
-        document.addEventListener('mouseover', function (e) {
+        function targetOf(e) {
             var el = e.target.closest('[title]');
+            if (!el || el.tagName === 'IFRAME') { return null; }
+            return el;
+        }
+
+        document.addEventListener('mouseover', function (e) {
+            var el = targetOf(e);
             if (!el || el === active || (active && active.contains(el))) { return; }
             hide();
             timer = setTimeout(function () { show(el); }, 350);
@@ -114,7 +120,7 @@
             hide();
         });
         document.addEventListener('focusin', function (e) {
-            var el = e.target.closest('[title]');
+            var el = targetOf(e);
             if (!el) { return; }
             hide();
             show(el);
