@@ -89,13 +89,18 @@ function Wait-Http([string]$url, [int]$seconds = 25) {
 }
 
 function Hash-File([string]$path) {
-    # 不依赖 Get-FileHash (Git Bash 继承的 PSModulePath 可能找不到该 cmdlet)
+    # 不依赖 Get-FileHash (Git Bash 继承的 PSModulePath 可能找不到该 cmdlet)。
+    # 统一换行后再哈希：dev 与 prod 的 CRLF/LF 差异不应被当成代码变更，
+    # 否则每次发布都会误判守护进程需要重启、白白杀掉会话。
     if (-not (Test-Path $path)) { return '' }
     try {
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+        $data = [System.Text.Encoding]::UTF8.GetBytes($normalized)
         $sha = [System.Security.Cryptography.SHA256]::Create()
-        $fs = [System.IO.File]::OpenRead($path)
-        try { return [BitConverter]::ToString($sha.ComputeHash($fs)) }
-        finally { $fs.Dispose(); $sha.Dispose() }
+        try { return [BitConverter]::ToString($sha.ComputeHash($data)) }
+        finally { $sha.Dispose() }
     } catch { return '' }
 }
 
