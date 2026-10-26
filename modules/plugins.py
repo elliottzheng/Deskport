@@ -167,6 +167,12 @@ def _register(app, bp, legacy, pluginId):
 
 
 def _autoRoute(app, bpNames, pluginId):
+    """legacy 插件的页面路由：限定插件命名空间内最短的静态 GET 路由。
+
+    插件常在根路径注册杂项（如 office 的 /sw.js 兜底），不限定命名空间
+    会把它们误认成页面入口。
+    """
+    prefix = '/%s' % pluginId
     best = ''
     for rule in app.url_map.iter_rules():
         if not any(rule.endpoint.startswith(name + '.') for name in bpNames):
@@ -175,7 +181,11 @@ def _autoRoute(app, bpNames, pluginId):
             continue
         if '<' in rule.rule or '/static' in rule.rule:
             continue
-        if rule.rule.startswith('/%s/api' % pluginId):
+        if rule.rule != prefix and not rule.rule.startswith(prefix + '/'):
+            continue
+        if '/api' in rule.rule:
+            continue
+        if re.search(r'\.[a-z0-9]{1,12}$', rule.rule):
             continue
         if not best or (len(rule.rule), rule.rule) < (len(best), best):
             best = rule.rule

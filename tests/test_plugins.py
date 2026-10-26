@@ -246,6 +246,39 @@ def test_legacy_terminal_ws_alias_is_registered(tmp_path):
     assert resp.status_code == 401
 
 
+def test_nav_skips_out_of_namespace_routes(tmp_path):
+    """office 这类插件在根路径注册 /sw.js 兜底时，导航必须仍指向插件页面。"""
+    root = tmp_path / "plugins"
+    root.mkdir()
+    source = '''
+from flask import Blueprint, jsonify, render_template
+
+bp = Blueprint("office_bp", __name__, template_folder="templates")
+
+
+@bp.route("/office")
+def page():
+    return render_template("page.html")
+
+
+@bp.route("/sw.js")
+def swFallback():
+    return "", 200
+
+
+@bp.route("/office/api/ping")
+def ping():
+    return jsonify(ok=True)
+'''
+    makePlugin(root, "office", source,
+               manifest={"id": "office", "entry": "bp.py"},
+               templates={"page.html": "<title>在线 Office 编辑器</title>"})
+
+    _app, result = loadOne(tmp_path, root)
+    nav = result["plugins"][0]["nav"][0]
+    assert nav["href"] == "/office"
+
+
 def test_api_plugins_lists_registry_and_errors(tmp_path):
     from app import create_app
 
