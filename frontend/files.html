@@ -90,12 +90,17 @@
                     <button class="icon-btn" title="刷新 (F5)" @click="refresh" :disabled="loading">
                         <i data-icon="refresh"></i>
                     </button>
-                    <div class="crumb-wrap">
+                    <div class="crumb-wrap" @click="crumbBarClick" @click.capture="addressSwallowClick"
+                         @touchstart.passive="addressPressStart" @touchmove.passive="addressPressMove"
+                         @touchend.passive="addressPressEnd" @touchcancel.passive="addressPressEnd">
                         <template v-if="!addressEditing">
                             <button class="crumb-seg" v-for="(c, i) in crumbs" :key="c.path"
                                     @click="navigate(c.path)">{{ c.label }}</button>
                             <button class="crumb-seg" title="编辑路径" @click="editAddress">
                                 <i data-icon="pencil"></i>
+                            </button>
+                            <button class="crumb-seg" title="复制当前路径" @click="copyAddress">
+                                <i data-icon="copy"></i>
                             </button>
                         </template>
                         <input v-else ref="addressInput" class="address-input" v-model="addressInput"

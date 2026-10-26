@@ -26,6 +26,7 @@ window.Icons = (function () {
         download: '<path d="M12 4v12M7.5 11.5L12 16l4.5-4.5M4.5 19h15"/>',
         upload: '<path d="M12 16V4M7.5 8.5L12 4l4.5 4.5M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16"/>',
         menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+        copy: '<rect x="9" y="9" width="11.5" height="11.5" rx="2"/><path d="M15 5.2V5a1.8 1.8 0 0 0-1.8-1.8H5A1.8 1.8 0 0 0 3.2 5v8.2A1.8 1.8 0 0 0 5 15h.2"/>',
         chevronLeft: '<path d="M15 5l-7 7 7 7"/>',
         chevronRight: '<path d="M9 5l7 7-7 7"/>',
         refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.6M20 3.5V8h-4.5"/>',

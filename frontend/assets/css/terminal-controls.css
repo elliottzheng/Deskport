@@ -155,6 +155,8 @@
     padding: 4px 6px;
     background: var(--bg-2);
     border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
 }
 .sftp-list { flex: 1; overflow-y: auto; padding: var(--sp-2); position: relative; }
 .sftp-marquee {

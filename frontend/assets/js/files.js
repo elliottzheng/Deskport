@@ -36,6 +36,9 @@ createApp({
 
             addressEditing: false,
             addressInput: '',
+            addressLongPress: false,   // 长按复制后吞掉合成 click
+            addressPressTimer: null,
+            addressPressXY: null,
             isMobile: window.matchMedia('(hover: none) and (pointer: coarse)').matches,
 
             nameModal: false,

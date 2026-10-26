@@ -549,6 +549,15 @@ window.SSHSftpUI = (function (ctx) {
         const sftpFoot = $('sftp-foot-toggle');
         if (sftpFoot) { sftpFoot.addEventListener('click', toggleSftpPanel); }
         $('sftp-up').addEventListener('click', () => sftpNavigate(parentPath(sftpPath)));
+        const sftpPathEl = $('sftp-path');
+        sftpPathEl.title = '点击复制路径';
+        sftpPathEl.style.cursor = 'pointer';
+        sftpPathEl.addEventListener('click', function () {
+            if (!sftpPath || sftpPath === '.') { return; }
+            navigator.clipboard.writeText(sftpPath)
+                .then(() => toastMsg('路径已复制'))
+                .catch(() => toastMsg('复制失败'));
+        });
         const pinBtn = $('sftp-pin');
         if (pinBtn) { pinBtn.addEventListener('click', toggleSftpPin); }
         $('sftp-list').addEventListener('mousedown', sftpMarqueeStart);   // FM-17 桌面框选

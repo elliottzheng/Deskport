@@ -264,9 +264,69 @@ window.FilesMethodsCore = {
             this.exitSelMode();
         },
         copyPath(path) {
-            navigator.clipboard.writeText(path)
-                .then(() => this.toastMsg('路径已复制'))
-                .catch(() => this.toastMsg('复制失败'));
+            this.copyToClipboard(path, '路径已复制');
+        },
+        // 剪贴板: 优先 navigator.clipboard (需安全上下文), 局域网 HTTP 回退 execCommand
+        async copyToClipboard(text, okMsg) {
+            try {
+                await navigator.clipboard.writeText(text);
+                this.toastMsg(okMsg);
+                return;
+            } catch (err) { /* 回退 execCommand */ }
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+            ta.remove();
+            this.toastMsg(ok ? okMsg : '复制失败，请改用地址栏编辑后复制');
+        },
+        // ---- 地址栏: 空白处单击进入编辑 (Windows 资源管理器语义), 长按复制 ----
+        crumbBarClick(e) {
+            if (this.addressLongPress) { this.addressLongPress = false; return; }
+            if (e.target.closest('.crumb-seg') || e.target.closest('input')) { return; }
+            this.editAddress();
+        },
+        addressSwallowClick(e) {
+            // 长按后的合成 click 会先落到子按钮上, 在捕获阶段吞掉
+            if (this.addressLongPress) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.addressLongPress = false;
+            }
+        },
+        copyAddress() {
+            if (this.loc === 'inbox' || !this.currentPath) {
+                this.toastMsg('收件箱没有可复制的路径');
+                return;
+            }
+            this.copyToClipboard(this.currentPath, '路径已复制');
+        },
+        addressPressStart(e) {
+            if (this.loc === 'inbox' || !e.touches.length) { return; }
+            const t = e.touches[0];
+            this.addressPressXY = [t.clientX, t.clientY];
+            this.addressPressTimer = setTimeout(() => {
+                this.addressPressTimer = null;
+                this.addressLongPress = true;
+                this.copyAddress();
+            }, 500);
+        },
+        addressPressMove(e) {
+            if (!this.addressPressTimer || !this.addressPressXY || !e.touches.length) { return; }
+            const t = e.touches[0];
+            if (Math.abs(t.clientX - this.addressPressXY[0]) > 10
+                || Math.abs(t.clientY - this.addressPressXY[1]) > 10) {
+                clearTimeout(this.addressPressTimer);
+                this.addressPressTimer = null;
+            }
+        },
+        addressPressEnd() {
+            if (this.addressPressTimer) { clearTimeout(this.addressPressTimer); this.addressPressTimer = null; }
         },
         toggleMobileNav() {   // MOB-04: 移动端快速访问抽屉
             this.mobileNav = !this.mobileNav;
