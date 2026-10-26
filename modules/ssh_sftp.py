@@ -1,16 +1,27 @@
 # -*- coding: utf-8 -*-
-"""SSH SFTP：列表/读写/上传下载/权限，共 12 个接口。"""
+"""SSH SFTP：列表/读写/上传下载/权限/打包，共 13 个接口。"""
+import io
+import json as jsonMod
 import os
 import posixpath
 import re
+import stat as statMod
+import zipfile
 from contextlib import contextmanager
+from urllib.parse import quote
 
 import paramiko
-from flask import Response, jsonify, request
+from flask import Response, jsonify, request, send_file
 
 from modules import ssh_hosts as hosts
 from modules import fsutil, textio
 from modules.ssh_base import blueprint, log, SftpAuthError
+
+ZIP_SIZE_BUDGET = 2 * 1024 * 1024 * 1024   # 打包内存上限 2GB，超出报 413
+
+
+class ZipBudgetExceeded(Exception):
+    pass
 
 
 def _openSftp(hostId):
@@ -183,10 +194,82 @@ def sftpDownload():
             except Exception:
                 pass
 
+    ext = posixpath.splitext(name)[1]
+    asciiName = 'download' + ext if ext and len(ext) <= 12 else 'download'
     headers = {'Content-Disposition':
-               "attachment; filename*=UTF-8''" + name}
+               "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+               % (asciiName, quote(name, safe=''))}
     return Response(generate(), mimetype='application/octet-stream',
                     headers=headers)
+
+
+def _zipRemoteTree(sftp, remotePath, arcPrefix, zf, budget):
+    """递归把远程文件/目录写进 zip；budget 是剩余字节数的 [n] 引用。"""
+    attr = sftp.stat(remotePath)
+    if statMod.S_ISDIR(attr.st_mode):
+        parent = remotePath.rstrip('/') or '/'
+        for entry in sftp.listdir_attr(parent):
+            child = posixpath.join(parent, entry.filename)
+            isDir = statMod.S_ISDIR(entry.st_mode)
+            arc = arcPrefix + '/' + entry.filename
+            if isDir:
+                _zipRemoteTree(sftp, child, arc, zf, budget)
+            else:
+                budget[0] -= entry.st_size or 0
+                _zipAddFile(sftp, child, arc, zf, budget)
+    else:
+        budget[0] -= attr.st_size or 0
+        _zipAddFile(sftp, remotePath, arcPrefix, zf, budget)
+
+
+def _zipAddFile(sftp, remotePath, arc, zf, budget):
+    if budget[0] < 0:
+        raise ZipBudgetExceeded('打包总量超过 2GB 上限，请分批选择')
+    with sftp.open(remotePath, 'rb') as src, zf.open(arc, 'w') as dst:
+        while True:
+            chunk = src.read(256 * 1024)
+            if not chunk:
+                break
+            dst.write(chunk)
+
+
+@blueprint.route('/api/ssh/sftp/download-zip')
+def sftpDownloadZip():
+    """多选/文件夹打包下载: 服务端拉取远程文件写入 zip 内存流后整体下发。"""
+    hostId = request.args.get('hostId')
+    try:
+        paths = [str(p) for p in jsonMod.loads(request.args.get('paths') or '[]')]
+    except ValueError:
+        return jsonify({'error': 'paths 必须是 JSON 数组'}), 400
+    paths = [p for p in paths if p]
+    if not paths:
+        return jsonify({'error': '缺少路径'}), 400
+
+    buf = io.BytesIO()
+    budget = [ZIP_SIZE_BUDGET]
+    try:
+        with _sftpSession(hostId) as sftp, \
+                zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            used = set()
+            for path in paths:
+                base = posixpath.basename(path.rstrip('/')) or path
+                arc, i = base, 1
+                while arc in used:
+                    arc = '%s(%d)' % (base, i)
+                    i += 1
+                used.add(arc)
+                _zipRemoteTree(sftp, path, arc, zf, budget)
+    except ZipBudgetExceeded as e:
+        return jsonify({'error': str(e)}), 413
+    except IOError as e:
+        return jsonify({'error': str(e)}), 404
+    except paramiko.SSHException as e:
+        return jsonify({'error': str(e)}), 502
+
+    buf.seek(0)
+    stamp = request.args.get('stamp') or 'sftp'
+    return send_file(buf, mimetype='application/zip', as_attachment=True,
+                     download_name='sftp-%s.zip' % re.sub(r'[^0-9A-Za-z_-]', '', stamp)[:40])
 
 
 def _remoteExists(sftp, path):

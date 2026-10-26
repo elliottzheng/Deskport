@@ -256,18 +256,40 @@ window.SSHSftpUI = (function (ctx) {
     }
 
     async function sftpDownloadSelected() {
-        // 多选: 逐个经 a[download] 触发 (不开新标签); 未选中: 当前目录
-        const paths = Object.keys(sftpSel);
-        if (!paths.length) { paths.push(sftpPath !== '/' ? sftpPath : null); }
-        if (!paths[0]) { alert('请先选中文件'); return; }
-        for (const p of paths) {
+        // 单个文件: 流式直下; 多选/文件夹: 服务端打包 zip (浏览器会拦截连续多次自动下载)
+        const sel = Object.values(sftpSel);
+        if (!sel.length) { toastMsg('请先选中文件或文件夹'); return; }
+        if (sel.length === 1 && sel[0].type !== 'folder') {
             const a = document.createElement('a');
             a.href = '/api/ssh/sftp/download?hostId=' + encodeURIComponent(sftpHostId)
-                + '&path=' + encodeURIComponent(p);
+                + '&path=' + encodeURIComponent(sel[0].path);
             a.download = '';
             document.body.appendChild(a);
             a.click();
             a.remove();
+            return;
+        }
+        const paths = sel.map(x => x.path);
+        toastMsg('正在打包 ' + paths.length + ' 项…');
+        try {
+            const r = await fetch('/api/ssh/sftp/download-zip?hostId=' + encodeURIComponent(sftpHostId)
+                + '&paths=' + encodeURIComponent(JSON.stringify(paths)));
+            if (!r.ok) {
+                const d = await r.json().catch(() => ({}));
+                throw new Error(d.error || ('HTTP ' + r.status));
+            }
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'sftp-' + Date.now() + '.zip';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 30000);
+            toastMsg('打包完成 (' + Math.round(blob.size / 1024) + ' KB)');
+        } catch (err) {
+            toastMsg('打包下载失败: ' + err.message);
         }
     }
     async function sftpToLocalSelected() {
