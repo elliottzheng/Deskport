@@ -172,11 +172,12 @@
             <span class="sftp-title">SFTP <span id="sftp-host-label" class="sftp-host-label"></span></span>
             <div class="sftp-head-btns">
                 <select class="select" id="sftp-host-select" title="选择要浏览的 SFTP 主机" style="height:26px; font-size:12px; padding:0 6px"></select>
-                <button class="ssh-mini-btn" id="sftp-upload-btn" title="上传本机文件到当前远程目录">↑</button>
+                <button class="ssh-mini-btn" id="sftp-upload-btn" title="上传本机文件（可多选）">↑</button>
                 <button class="ssh-mini-btn" id="sftp-close-btn" title="关闭">&times;</button>
             </div>
         </div>
-        <input type="file" id="sftp-file-input" style="display:none">
+        <input type="file" id="sftp-file-input" multiple style="display:none">
+        <input type="file" id="sftp-folder-input" webkitdirectory multiple style="display:none">
         <div class="sftp-pathbar">
             <button class="ssh-mini-btn" id="sftp-up" title="返回上一级远程目录">↑</button>
             <code class="sftp-path" id="sftp-path">/</code>
@@ -184,9 +185,10 @@
         </div>
         <div class="sftp-quick" id="sftp-quick" style="display:none"></div>
         <div id="sftp-list" class="sftp-list"></div>
-        <p class="sftp-hint">单击选中 · 双击编辑 · 右键更多</p>
+        <p class="sftp-hint">单击选中 · Ctrl 多选 · 双击编辑 · 右键/长按更多</p>
         <div class="sftp-actions">
             <button class="btn btn-secondary" id="sftp-mkdir" title="在当前远程目录新建文件夹">新建</button>
+            <button class="btn btn-secondary" id="sftp-upload-folder" title="上传整个文件夹（保留目录结构）">传文件夹</button>
             <button class="btn btn-secondary" id="sftp-edit" title="编辑选中的远程文本文件">编辑</button>
             <button class="btn btn-secondary" id="sftp-chmod" title="修改选中文件或目录的权限">权限</button>
             <button class="btn btn-secondary" id="sftp-download" title="下载选中文件到浏览器">下载到浏览器</button>

@@ -79,13 +79,36 @@ def sftpList():
 
 @blueprint.route('/api/ssh/sftp/mkdir', methods=['POST'])
 def sftpMkdir():
+    """新建远程目录；逐级创建（mkdir -p 语义），已存在则视为成功。"""
     data = request.json or {}
+    path = (data.get('path') or '').strip()
+    if not path:
+        return jsonify({'error': '缺少 path'}), 400
     try:
         with _sftpSession(data.get('hostId')) as sftp:
-            sftp.mkdir(data.get('path'))
+            _ensureRemoteDir(sftp, path)
         return jsonify({'ok': True})
     except OSError as e:
         return jsonify({'error': str(e)}), 400
+
+
+def _ensureRemoteDir(sftp, path):
+    """逐级创建远程目录，已存在的层级直接跳过。"""
+    path = posixpath.normpath(path or '')
+    if path in ('', '.', '/'):
+        return
+    current = ''
+    for part in path.strip('/').split('/'):
+        if part in ('', '.'):
+            continue
+        if part == '..':
+            current = posixpath.dirname(current)
+            continue
+        current += '/' + part
+        try:
+            sftp.stat(current)
+        except IOError:
+            sftp.mkdir(current)
 
 
 @blueprint.route('/api/ssh/sftp/rename', methods=['POST'])
@@ -274,6 +297,45 @@ def sftpUpload():
         return jsonify({'ok': True, 'path': remotePath})
     except IOError as e:
         return jsonify({'error': str(e)}), 500
+
+
+@blueprint.route('/api/ssh/sftp/upload-batch', methods=['POST'])
+def sftpUploadBatch():
+    """多选/整夹上传: 一次请求完成 N 个文件（含目录结构），共用一个 SFTP 通道。
+
+    表单: hostId / remoteDir / files[](多个) / paths[](与 files 对齐的相对路径)。
+    """
+    hostId = request.form.get('hostId')
+    remoteDir = request.form.get('remoteDir') or '.'
+    files = request.files.getlist('files')
+    rels = request.form.getlist('paths')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({'error': '未选择文件'}), 400
+    uploaded, failed = [], []
+    try:
+        with _sftpSession(hostId) as sftp:
+            baseDir = sftp.normalize(remoteDir)
+            for index, file in enumerate(files):
+                rel = (rels[index] if index < len(rels) else '') or file.filename
+                rel = posixpath.normpath(rel.replace('\\', '/')).lstrip('/')
+                if not rel or rel.startswith('..'):
+                    failed.append({'name': file.filename, 'error': '非法路径'})
+                    continue
+                target = posixpath.join(baseDir, rel)
+                try:
+                    _ensureRemoteDir(sftp, posixpath.dirname(target))
+                    with sftp.open(target, 'wb') as dst:
+                        while True:
+                            chunk = file.stream.read(64 * 1024)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                    uploaded.append(target)
+                except IOError as e:
+                    failed.append({'name': file.filename, 'error': str(e)})
+    except paramiko.SSHException as e:
+        failed.append({'error': '连接中断: %s' % e})
+    return jsonify({'ok': not failed, 'uploaded': uploaded, 'failed': failed})
 
 
 @blueprint.route('/api/ssh/sftp/read', methods=['POST'])
