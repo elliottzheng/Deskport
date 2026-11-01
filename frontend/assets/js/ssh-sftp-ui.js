@@ -594,6 +594,8 @@ window.SSHSftpUI = (function (ctx) {
         $('sftp-list').addEventListener('touchcancel', sftpPressCancel);
         $('sftp-upload-btn').addEventListener('click', () => $('sftp-file-input').click());
         $('sftp-file-input').addEventListener('change', sftpUploadFiles);
+        const filesBtn = $('sftp-upload-files');
+        if (filesBtn) { filesBtn.addEventListener('click', () => $('sftp-file-input').click()); }
         const folderBtn = $('sftp-upload-folder');
         if (folderBtn) { folderBtn.addEventListener('click', () => $('sftp-folder-input').click()); }
         const folderInput = $('sftp-folder-input');
