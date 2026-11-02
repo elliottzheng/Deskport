@@ -53,6 +53,7 @@ window.SSHSftpUI = (function (ctx) {
         const boxRect = { l: left, t: top, r: left + width, b: top + height };
         const sel = m.additive ? Object.assign({}, m.base) : {};
         m.listEl.querySelectorAll('.sftp-row').forEach(row => {
+            if (row.dataset.parent) { return; }   // 上级行不参与框选
             const r = row.getBoundingClientRect();
             if (r.left < boxRect.r && r.right > boxRect.l && r.top < boxRect.b && r.bottom > boxRect.t) {
                 const p = row.dataset.path;
@@ -229,6 +230,10 @@ window.SSHSftpUI = (function (ctx) {
         const row = document.createElement('div');
         row.className = 'sftp-row' + (sftpSel[e.path] ? ' selected' : '');
         row.dataset.path = e.path;
+        if (isParent) {
+            e.isParent = true;
+            row.dataset.parent = '1';
+        }
         row.innerHTML =
             Icons.svg(e.type === 'folder' ? 'folder' : 'file') +
             '<span class="sftp-row-name">' + escapeHtml(e.name) + '</span>' +
@@ -249,6 +254,7 @@ window.SSHSftpUI = (function (ctx) {
         });
         row.addEventListener('contextmenu', (ev) => {
             ev.preventDefault();
+            if (isParent) { showSftpBlankMenu(ev.clientX, ev.clientY); return; }
             // 文件与文件夹右键都自动选中 (文件夹之前不选中, 直接下载会提示"请先选中")
             if (!sftpSel[e.path]) { sftpSel = { [e.path]: e }; renderSftpSelection(); }
             showSftpMenu(ev, e);
@@ -258,7 +264,7 @@ window.SSHSftpUI = (function (ctx) {
 
     async function sftpDownloadSelected() {
         // 单个文件: 流式直下; 多选/文件夹: 服务端打包 zip (浏览器会拦截连续多次自动下载)
-        const sel = Object.values(sftpSel);
+        const sel = Object.values(sftpSel).filter(x => !x.isParent);
         if (!sel.length) { toastMsg('请先选中文件或文件夹'); return; }
         if (sel.length === 1 && sel[0].type !== 'folder') {
             const a = document.createElement('a');
