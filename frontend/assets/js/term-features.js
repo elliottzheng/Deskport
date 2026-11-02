@@ -18,7 +18,7 @@ window.TermFeatures = (function () {
 
         // 控制键按钮 data-key → 发送序列 (两页 #control-keys 共用)
         var KEY_SEQS = {
-            esc: '\x1b', 'ctrl-c': '\x03', 'ctrl-s': '\x13',
+            esc: '\x1b', tab: '\t', 'ctrl-c': '\x03', 'ctrl-s': '\x13',
             up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
             enter: '\r',
             home: '\x1b[H', end: '\x1b[F',
