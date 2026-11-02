@@ -249,7 +249,8 @@ window.SSHSftpUI = (function (ctx) {
         });
         row.addEventListener('contextmenu', (ev) => {
             ev.preventDefault();
-            if (e.type === 'file' && !sftpSel[e.path]) { sftpSel = { [e.path]: e }; renderSftpSelection(); }
+            // 文件与文件夹右键都自动选中 (文件夹之前不选中, 直接下载会提示"请先选中")
+            if (!sftpSel[e.path]) { sftpSel = { [e.path]: e }; renderSftpSelection(); }
             showSftpMenu(ev, e);
         });
         return row;
@@ -371,7 +372,7 @@ window.SSHSftpUI = (function (ctx) {
             item('重命名', sftpRenameSelected);
             item('chmod', sftpChmodSelected);
         } else {
-            item('下载 (' + batch.length + ' 项)', sftpDownloadSelected);
+            item('下载 (打包 zip' + (batch.length > 1 ? '，' + batch.length + ' 项' : '') + ')', sftpDownloadSelected);
         }
         item('删除 (' + batch.length + ' 项)', sftpDeleteSelected);
         item('复制路径', () => {
