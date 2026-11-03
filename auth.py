@@ -126,6 +126,10 @@ def register(app):
 
     @app.before_request
     def authGuard():
+        # 联邦模式: 门面 Deskport 持有本机 token, header 认证免疫 CSRF
+        fedToken = config.getFederationToken()
+        if fedToken and request.headers.get('X-Deskport-Token') == fedToken:
+            return None
         if isAuthenticated():
             return None
         path = request.path

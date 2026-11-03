@@ -3,6 +3,10 @@
 
 浏览器仍然只连 web 的 6789: 认证、路由不变; WS 与会话列表在这里双向转发。
 这样 web 重启不会杀掉 pty/SSH channel, 客户端重连后按 session id 重新附着。
+
+联邦: 配置 remotes 后, 其他 Deskport 的终端会话会合并进本机列表
+（条目带 machine 标签）, WS/删除按 session id 路由到归属机器
+（带联邦 token）。会话本体仍活在各机器自己的进程里, hub 重启不影响。
 """
 import json
 import logging
@@ -12,6 +16,8 @@ import requests
 from flask import jsonify, request
 from simple_websocket import Client, ConnectionClosed
 
+import config
+import modules.federation as federation
 import modules.internal_api as internal_api
 from modules.termcore import sealSocketAfterClose
 
@@ -26,17 +32,17 @@ def _fail(ws, message):
     sealSocketAfterClose(ws)
 
 
-def _proxyWs(ws, kind):
-    query = request.query_string.decode('utf-8', 'replace')
-    url = internal_api.wsUrl(kind, query)
+def _proxyWs(ws, url, headers, mid=None):
+    """双向泵: 浏览器 WS ⇄ 上游 WS。mid 用于联邦会话归属登记。"""
     try:
-        upstream = Client(url, headers=internal_api.headers(kind))
+        upstream = Client(url, headers=headers)
     except Exception as e:
-        log.warning('sessiond(%s) connect failed: %s', kind, e)
+        log.warning('sessiond connect failed: %s', e)
         _fail(ws, '会话服务不可用: %s' % e)
         return
 
     stop = threading.Event()
+    registered = False
 
     def pumpBrowserToDaemon():
         while not stop.is_set():
@@ -69,6 +75,14 @@ def _proxyWs(ws, kind):
                 break
             if msg is None:
                 continue
+            if mid and not registered:
+                try:
+                    data = json.loads(msg)
+                    if isinstance(data, dict) and data.get('type') == 'hello':
+                        federation.remember(mid, data.get('session'))
+                        registered = True
+                except ValueError:
+                    pass
             try:
                 ws.send(msg)
             except Exception:
@@ -82,28 +96,78 @@ def _proxyWs(ws, kind):
         sealSocketAfterClose(ws)
 
 
-def _proxyJson(kind, path, method='GET'):
+def _proxyJsonData(url, headers, method='GET'):
     try:
-        resp = requests.request(method, internal_api.base(kind) + path,
-                                headers=internal_api.headers(kind), timeout=5)
+        resp = requests.request(method, url, headers=headers, timeout=5)
     except requests.RequestException as e:
-        return jsonify({'error': '会话服务不可用: %s' % e}), 503
+        return {'error': '会话服务不可用: %s' % e}, 503
     try:
-        data = resp.json()
+        return resp.json(), resp.status_code
     except ValueError:
-        data = {'error': resp.text[:200]}
-    return jsonify(data), resp.status_code
+        return {'error': resp.text[:200]}, resp.status_code
+
+
+def _proxyJson(kind, path, method='GET'):
+    url = internal_api.base(kind) + path
+    data, status = _proxyJsonData(url, internal_api.headers(kind), method)
+    return jsonify(data), status
+
+
+def _localWsUrl():
+    return internal_api.wsUrl('local', request.query_string.decode('utf-8', 'replace'))
+
+
+def _localHeaders():
+    return internal_api.headers('local')
+
+
+def _resolveTerminalWs():
+    """联邦路由: ?machine= 指定远端(新会话), 或 ?session= 归属远端(附着)。
+
+    返回 (url, headers, mid) 或 None (走本机上游)。
+    """
+    mid = request.args.get('machine')
+    if mid:
+        remote = federation.findRemote(mid)
+        if remote:
+            scheme = 'wss://' if remote['base'].startswith('https://') else 'ws://'
+            url = scheme + remote['base'][len('http://'):].rstrip('/') + '/api/terminal/ws'
+            headers = {'X-Deskport-Token': remote['token']}
+            if request.query_string:
+                url += '?' + request.query_string.decode('utf-8', 'replace')
+            return url, headers, mid
+        log.warning('联邦机器不存在: %s', mid)
+    session = request.args.get('session')
+    if session:
+        found = federation.wsUpstreamFor(session, request.query_string.decode('utf-8', 'replace'))
+        if found:
+            return found[0], found[1], None
+    return None
 
 
 def _registerTerminal(app, sock):
     def wsTerminal(ws):
-        return _proxyWs(ws, 'local')
+        upstream = _resolveTerminalWs()
+        if upstream:
+            url, headers, mid = upstream
+            return _proxyWs(ws, url, headers, mid=mid)
+        return _proxyWs(ws, _localWsUrl(), _localHeaders())
 
     def terminalSessions():
-        return _proxyJson('local', '/sessions')
+        data, status = _proxyJsonData(internal_api.base('local') + '/sessions',
+                                      internal_api.headers('local'))
+        if status == 200 and isinstance(data.get('sessions'), list):
+            data['sessions'] = federation.mergeTerminalSessions(data['sessions'])
+        return jsonify(data), status
 
-    def terminalKill(sessionId):
-        return _proxyJson('local', '/sessions/' + sessionId, 'DELETE')
+    def terminalKill(sessionID):
+        found = federation.killUpstreamFor(sessionID)
+        if found:
+            url, headers = found
+            data, status = _proxyJsonData(url, headers, 'DELETE')
+            return jsonify(data), status
+        data, status = _proxyJson('local', '/sessions/' + sessionID, 'DELETE')
+        return jsonify(data), status
 
     sock.route('/api/terminal/ws')(wsTerminal)
     # legacy 兼容：RemoteConnecter 插件（RemoteVSCode 等）写死 /terminal/api/ws
@@ -117,7 +181,8 @@ def _registerTerminal(app, sock):
 
 def _registerSsh(app, sock):
     def wsSsh(ws):
-        return _proxyWs(ws, 'ssh')
+        return _proxyWs(ws, internal_api.wsUrl('ssh', request.query_string.decode('utf-8', 'replace')),
+                        internal_api.headers('ssh'))
 
     def sshSessions():
         return _proxyJson('ssh', '/sessions')

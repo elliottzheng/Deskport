@@ -12,6 +12,7 @@ r"""配置模块 — 端口/密码 + 状态目录
 """
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -20,6 +21,36 @@ from urllib.parse import urlparse
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
 DEFAULTS = {'port': 6789, 'password': '', 'stateDirName': 'web-platform',
             'inboxEnabled': False, 'brandName': 'Deskport'}
+
+
+def getRemotes():
+    """联邦远端 Deskport 列表: [{id, name, base, token}]。
+
+    base 指向远端 web 根 (如 http://127.0.0.1:6790)；token 须与远端
+    config 的 federationToken 一致。终端会话会被合并进本机列表，
+    WS 按 session id 路由到归属机器。
+    """
+    raw = load().get('remotes')
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get('id') or '').strip()
+        base = str(item.get('base') or '').strip().rstrip('/')
+        if not re.match(r'^[a-z0-9_-]{1,20}$', rid) or not base.startswith(('http://', 'https://')):
+            continue
+        out.append({'id': rid,
+                    'name': str(item.get('name') or rid)[:24],
+                    'base': base,
+                    'token': str(item.get('token') or '')})
+    return out
+
+
+def getFederationToken():
+    r"""联邦模式: 持有此 token 的调用方 (其他 Deskport) 免登录访问本机 API。"""
+    return str(load().get('federationToken') or '')
 _cache = {'mtime': None, 'data': None}
 _cacheLock = threading.Lock()
 

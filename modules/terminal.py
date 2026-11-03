@@ -9,7 +9,9 @@ import shutil
 
 from flask import jsonify, request
 
+import config
 from modules import termcore
+from modules import federation as federationModule
 from modules.termcore import ConPTYBackend
 
 # 默认 pwsh 7 (用户指定); 没装则回落 Windows PowerShell 5.1。
@@ -20,7 +22,10 @@ log = logging.getLogger('localterm')
 
 def register(app, sock, sessionRoutes=True):
     def localSessionsEndpoint():
-        return jsonify({'sessions': termcore.listSessions(kind='local')})
+        sessions = termcore.listSessions(kind='local')
+        if config.getRemotes():
+            sessions = federationModule.mergeTerminalSessions(sessions)
+        return jsonify({'sessions': sessions})
 
     def killSessionEndpoint(sessionID):
         session = termcore.getSession(sessionID)
