@@ -16,7 +16,6 @@ import requests
 from flask import jsonify, request
 from simple_websocket import Client, ConnectionClosed
 
-import config
 import modules.federation as federation
 import modules.internal_api as internal_api
 from modules.termcore import sealSocketAfterClose

@@ -1,18 +1,26 @@
 # -*- coding: utf-8 -*-
 """联邦会话: 把其他 Deskport 实例的终端会话合并进本机列表。
 
-中转模式: 会话清单由门面 (hub) 聚合下发, WS 由 hub 按 session id 路由到
-归属机器的 Deskport (带联邦 token)。会话本体仍活在各机器的进程里,
-hub 重启不影响任何会话; 远端条目在侧栏带 [机器名] 标签。
-
-约定:
-    - 远端 base 指向其 web 根; 认证走 X-Deskport-Token (与 auth.py 一致)
-    - 首条上游 hello 帧的 session id 会登记到归属表, 供 WS 路由与 DELETE 转发
-    - 未配置 remotes 时本模块全部为空操作
+非阻塞设计 (2026-11 修复):
+    - 远端列表由后台线程每 5 秒刷新并缓存, 本地会话接口永远不等远端;
+    - 远端不可达时返回旧缓存 (条目带 offline 标记), 超时只发生在后台线程;
+    - 远端条目标记 remote=True, 客户端恢复时不自动附着, 点侧栏才连
+      (否则远端一离线, 自动附着就变成无限重连, 表现为终端页疯狂滚动)。
 """
+import threading
+import time
+
 import requests
 
 import config
+
+REFRESH_SECONDS = 5.0
+REQUEST_TIMEOUT = 4.0
+
+_lock = threading.Lock()
+_cache = {}        # mid -> {'entries': [...], 'ok': bool}
+_owners = {}       # session id -> mid
+_started = False
 
 
 def remotes():
@@ -26,7 +34,42 @@ def findRemote(mid):
     return None
 
 
-_owners = {}
+def _headers(remote):
+    return {'X-Deskport-Token': remote['token']}
+
+
+def _refreshLoop():
+    while True:
+        for r in remotes():
+            entries = None
+            try:
+                resp = requests.get(r['base'] + '/api/terminal/sessions',
+                                    headers=_headers(r), timeout=REQUEST_TIMEOUT)
+                if resp.status_code == 200:
+                    entries = resp.json().get('sessions') or []
+            except (requests.RequestException, ValueError):
+                pass
+            with _lock:
+                prev = _cache.get(r['id']) or {'entries': [], 'ok': False}
+                if entries is not None:
+                    # 刷新成功: 整体替换; 失败: 保留上次已知会话, 仅标记 offline
+                    prev['entries'] = entries
+                    prev['ok'] = True
+                    for e in entries:
+                        if e.get('id'):
+                            _owners[e['id']] = r['id']
+                else:
+                    prev['ok'] = False
+                _cache[r['id']] = prev
+        time.sleep(REFRESH_SECONDS)
+
+
+def _ensureThread():
+    global _started
+    if not _started and remotes():
+        _started = True
+        threading.Thread(target=_refreshLoop, daemon=True,
+                         name='federation-refresh').start()
 
 
 def remember(mid, sessionId):
@@ -38,40 +81,32 @@ def ownerOf(sessionId):
     return _owners.get(sessionId)
 
 
-def _headers(remote):
-    return {'X-Deskport-Token': remote['token']}
-
-
-def _wsBase(base):
-    if base.startswith('https://'):
-        return 'wss://' + base[len('https://'):]
-    return 'ws://' + base[len('http://'):]
+def remoteEntries():
+    """缓存的远端会话条目; 不发起任何网络请求。"""
+    _ensureThread()
+    out = []
+    with _lock:
+        for r in remotes():
+            cached = _cache.get(r['id'])
+            if not cached:
+                continue
+            for e in cached['entries']:
+                item = dict(e)
+                item['machine'] = r['name']
+                item['machineId'] = r['id']
+                item['remote'] = True
+                item['offline'] = not cached['ok']
+                item['label'] = ('[%s] %s' % (r['name'], item.get('label')
+                                              or item.get('cmd') or '')).strip()
+                out.append(item)
+    return out
 
 
 def mergeTerminalSessions(sessions):
-    """本地会话列表 + 各远端终端会话; 远端条目打 [机器名] 标签并登记归属。"""
-    remoteList = remotes()
-    if not remoteList:
+    """本地会话 + 缓存的远端会话 (remote 标记, 客户端不自动附着)。"""
+    if not remotes():
         return sessions
-    out = list(sessions)
-    for r in remoteList:
-        try:
-            resp = requests.get(r['base'] + '/api/terminal/sessions',
-                                headers=_headers(r), timeout=4)
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-        except (requests.RequestException, ValueError):
-            continue
-        for entry in data.get('sessions') or []:
-            entry['machine'] = r['name']
-            entry['machineId'] = r['id']
-            entry['label'] = ('[%s] %s' % (r['name'], entry.get('label')
-                                           or entry.get('cmd') or '')).strip()
-            if entry.get('id'):
-                remember(r['id'], entry['id'])
-            out.append(entry)
-    return out
+    return list(sessions) + remoteEntries()
 
 
 def wsUpstreamFor(sessionId, query=''):
@@ -80,7 +115,9 @@ def wsUpstreamFor(sessionId, query=''):
     remote = findRemote(mid) if mid else None
     if not remote:
         return None
-    return _wsBase(remote['base']) + '/api/terminal/ws' + \
+    base = remote['base']
+    scheme = 'wss://' if base.startswith('https://') else 'ws://'
+    return scheme + base[len('http://'):] + '/api/terminal/ws' + \
         (('?' + query) if query else ''), _headers(remote)
 
 

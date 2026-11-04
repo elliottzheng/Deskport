@@ -158,9 +158,13 @@ window.TermClient = (function () {
                     if (activeSession) { onChange(); return; }
                     // 单用户: 上次前台会话优先接管。attached 可能来自 bfcache 里的旧页面,
                     // 不应当成"其他设备"而拒绝恢复; 新附着会向旧连接发 preempted。
+                    // remote (联邦远端会话) 不自动附着: 远端离线时自动重连会变成
+                    // 无限重试, 表现为终端页疯狂滚动; 点侧栏才连。
                     const rememberedId = localStorage.getItem(ACTIVE_SESSION_KEY);
-                    const remembered = items.find(function (it) { return it.id === rememberedId; });
-                    const first = remembered || items.find(function (it) { return !it.attached; });
+                    const remembered = items.find(function (it) {
+                        return it.id === rememberedId && !it.remote; });
+                    const first = remembered || items.find(function (it) {
+                        return !it.attached && !it.remote; });
                     if (!first) {
                         setStatus('检测到会话正在其他窗口使用, 点击侧栏会话可接管');
                         onChange();
