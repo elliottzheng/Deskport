@@ -112,6 +112,7 @@
 }
 .session-badge.local { background: var(--bg-2); color: var(--text-3); }
 .session-badge.ssh { background: var(--brand-bg); color: var(--brand); }
+.session-badge.remote { background: #ede9fe; color: #6d28d9; }
 
 /* ====== SFTP 面板 ====== */
 #sftp-panel {

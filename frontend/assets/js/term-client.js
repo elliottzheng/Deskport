@@ -147,6 +147,7 @@ window.TermClient = (function () {
                         s.label = it.label || s.label;
                         s.remote = !!it.remote;
                         s.offline = !!it.offline;
+                        s.machine = it.machine || s.machine;
                         s.cwd = it.cwd || s.cwd;
                         s.cwdLabel = it.cwdLabel || s.cwdLabel;
                         s.foreground = it.foreground || '';

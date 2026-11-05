@@ -73,7 +73,9 @@ window.TermFeatures = (function () {
             var label = s.label || s.cmd || '';
             var lower = label.toLowerCase();
             var shell = label;
-            if (s.kind === 'local') {
+            // 联邦远端会话保留服务端标签(带 [机器名] 前缀), 不做通用 shell 名映射,
+            // 否则 '[i7-4710MQ] pwsh.exe' 会被替换成'PowerShell 7', 与本地会话混淆
+            if (s.kind === 'local' && !s.remote) {
                 if (lower.indexOf('pwsh') >= 0) { shell = 'PowerShell 7'; }
                 else if (lower.indexOf('powershell') >= 0) { shell = 'Windows PowerShell'; }
                 else if (lower.indexOf('cmd') >= 0) { shell = '命令提示符'; }
@@ -173,7 +175,9 @@ window.TermFeatures = (function () {
                         ? '<label class="me-check" title="勾选多个 SSH 会话后，可在侧栏广播框批量发送命令"><input type="checkbox"' +
                           (multiExecSet.has(s.uid) ? ' checked' : '') + '></label>'
                         : '') +
-                    '<span class="session-badge ' + s.kind + '">' + (s.kind === 'ssh' ? 'SSH' : '本地') + '</span>' +
+                    '<span class="session-badge ' + s.kind + (s.remote ? ' remote' : '') + '">' +
+                        (s.remote ? TermClient.escapeHtml(s.machine || '远端')
+                                  : (s.kind === 'ssh' ? 'SSH' : '本地')) + '</span>' +
                     '<span class="session-name">' + TermClient.escapeHtml(displayName(s)) + '</span>' +
                     '<span class="session-state">' + TermClient.stateText(s) + '</span>' +
                     '<button class="session-close" title="关闭终端">&times;</button>';
