@@ -75,3 +75,17 @@ def test_replay_buffer_is_bounded():
         term.enqueueOut(('data', 'x' * 1024))
     assert term.replaySize <= termcore.REPLAY_MAX
     assert len(term.replayBuf) <= termcore.REPLAY_MAX // 1024
+
+
+def test_replay_snapshot_takes_tail_only():
+    """附着回放只发尾部: 旧数据丢弃, 尾部完整保留, 总量受 REPLAY_TAIL 约束。"""
+    import collections
+    buf = collections.deque()
+    buf.append('old' * 4000)                       # 应被丢掉的旧输出
+    tail = 'z' * (termcore.REPLAY_TAIL + 2048)
+    buf.append(tail)
+    snap = termcore._replaySnapshot(buf)
+    joined = ''.join(snap)
+    assert 'old' not in joined
+    assert joined.endswith(tail[-200:])
+    assert termcore.REPLAY_TAIL <= len(joined) < termcore.REPLAY_MAX

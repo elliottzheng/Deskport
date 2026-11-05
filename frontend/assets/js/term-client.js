@@ -262,6 +262,9 @@ window.TermClient = (function () {
                         fitSession(session);
                     };
                     if (replayData) {
+                        // 回放写入期间视口钉在顶部: xterm 只在视口位于底部时才自动跟随,
+                        // 钉住后超大写入不再产生"从头滚到尾"的可见滚动
+                        try { session.term.scrollToTop(); } catch (err) { /* ignore */ }
                         session.term.write(replayData, reveal);
                         // 部分 xterm 版本在超大写入时不回调, 兜底 150ms 后显示
                         setTimeout(reveal, 150);

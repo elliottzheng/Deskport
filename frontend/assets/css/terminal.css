@@ -210,6 +210,20 @@ body { padding-bottom: 0 !important; overflow: hidden; }
 }
 .session-terminal { position: absolute; inset: 0; padding: 6px 8px; }
 .session-terminal .xterm { height: 100%; }
+/* 回放期间隐藏终端: 服务端补发历史输出时 xterm 逐行渲染会自动跟随滚动,
+   表现为"恢复会话时从头滚到尾"; 写入完成后再一次性呈现(视口已在底部) */
+.session-terminal.is-replaying .xterm { opacity: 0; }
+.session-terminal.is-replaying::after {
+    content: "正在恢复会话…";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #8b949e;
+    font-size: 13px;
+    background: #0d1117;
+}
 
 
 /* SSH 主机区说明 */

@@ -36,7 +36,10 @@ log = logging.getLogger('termcore')
 #   缺省 0 = 永不回收 (终端/SSH 会话像 tmux 一样常驻, 直到进程自己退出或手动关闭)
 REAPER_INTERVAL = 10     # 回收线程扫描周期(秒)
 MAX_BACKLOG = 20000      # 无人附着时输出队列上限(条)
-REPLAY_MAX = 512 * 1024  # 回放缓冲上限
+REPLAY_MAX = 512 * 1024  # 回放缓冲上限(服务端会话内scrollback)
+# 附着时只下发尾部: 客户端 xterm 默认 scrollback 1000 行, 发多了也被丢;
+# 而全量回放在手机上要逐行渲染, 视觉上就是"疯狂滚动"
+REPLAY_TAIL = 192 * 1024
 
 
 class ConPTYBackend:
@@ -402,6 +405,22 @@ def _handleControl(ws, session, backend, payload):
         terminateSession(session)
 
 
+def _replaySnapshot(replayBuf):
+    """附着回放快照: 只取尾部 REPLAY_TAIL 字节。
+
+    全量回放(会话缓冲最大 REPLAY_MAX)在手机上要逐行渲染, 视觉上就是
+    "恢复会话时从头滚到尾"; 客户端 xterm 默认 scrollback 1000 行, 发多了
+    也被丢弃, 因此只发尾部。
+    """
+    acc, size = [], 0
+    for chunk in reversed(replayBuf):
+        acc.append(chunk)
+        size += len(chunk if isinstance(chunk, bytes) else chunk.encode())
+        if size >= REPLAY_TAIL:
+            break
+    return list(reversed(acc))
+
+
 def _sendJson(ws, obj):
     try:
         ws.send(json.dumps(obj, ensure_ascii=False))
@@ -491,7 +510,7 @@ def attachAndPump(ws, session, resumed=False, wantReplay=False):
 
     replaySnapshot = []
     if wantReplay:
-        replaySnapshot = list(session.replayBuf)
+        replaySnapshot = _replaySnapshot(session.replayBuf)
         while True:
             try:
                 session.outQueue.get_nowait()
