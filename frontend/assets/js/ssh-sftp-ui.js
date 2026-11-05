@@ -1,4 +1,9 @@
-// SSH SFTP 面板：状态、渲染、框选、上传下载、菜单与文本编辑。
+// SSH SFTP 面板编排: 状态迁移、列表渲染、导航、快速访问、CRUD、文本编辑、绑定。
+// 拆自原 618 行的单体闭包 (2026-11-05):
+//   ssh-sftp-state.js     共享状态 + 纯路径工具 + 选中渲染
+//   ssh-sftp-select.js    桌面框选 + 移动端长按
+//   ssh-sftp-menu.js      行菜单 / 空白处菜单 (动作由本文件注入)
+//   ssh-sftp-transfer.js  下载 / 转存本机 / 上传
 window.SSHSftpUI = (function (ctx) {
     'use strict';
     const $ = ctx.$;
@@ -6,80 +11,17 @@ window.SSHSftpUI = (function (ctx) {
     const toastMsg = ctx.toastMsg;
     const escapeHtml = WPCommon.escapeHtml;
     const fmtSize = WPCommon.fmtSize;
-
-    let sftpHostId = null;
-    let sftpPath = '/';
-    let sftpHomePath = '';
-    let sftpEntries = [];
-    let sftpSel = {};   // path → entry (FM-17 多选)
-
-    function renderSftpSelection() {
-        document.querySelectorAll('#sftp-list .sftp-row').forEach(r => {
-            r.classList.toggle('selected', !!sftpSel[r.dataset.path]);
-        });
-    }
-    // FM-17 桌面框选: 空白处拖拽圈选 (触屏跳过, 走长按多选)
-    let sftpMarquee = null;
-    function sftpMarqueeStart(e) {
-        if (e.button !== 0) { return; }
-        if (e.target.closest('.sftp-row')) { return; }
-        if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) { return; }
-        const list = e.currentTarget;
-        sftpMarquee = {
-            x1: e.clientX, y1: e.clientY,
-            listEl: list, listRect: list.getBoundingClientRect(),
-            additive: e.ctrlKey || e.metaKey,
-            base: Object.assign({}, sftpSel),
-            moved: false,
-        };
-        const box = document.createElement('div');
-        box.className = 'sftp-marquee';
-        list.appendChild(box);
-        sftpMarquee.box = box;
-        window.addEventListener('mousemove', sftpMarqueeMove);
-        window.addEventListener('mouseup', sftpMarqueeEnd);
-        e.preventDefault();
-    }
-    function sftpMarqueeMove(e) {
-        const m = sftpMarquee;
-        if (!m) { return; }
-        const left = Math.min(m.x1, e.clientX), top = Math.min(m.y1, e.clientY);
-        const width = Math.abs(e.clientX - m.x1), height = Math.abs(e.clientY - m.y1);
-        m.box.style.left = (left - m.listRect.left) + 'px';
-        m.box.style.top = (top - m.listRect.top) + 'px';
-        m.box.style.width = width + 'px';
-        m.box.style.height = height + 'px';
-        if (width + height > 6) { m.moved = true; }
-        const boxRect = { l: left, t: top, r: left + width, b: top + height };
-        const sel = m.additive ? Object.assign({}, m.base) : {};
-        m.listEl.querySelectorAll('.sftp-row').forEach(row => {
-            if (row.dataset.parent) { return; }   // 上级行不参与框选
-            const r = row.getBoundingClientRect();
-            if (r.left < boxRect.r && r.right > boxRect.l && r.top < boxRect.b && r.bottom > boxRect.t) {
-                const p = row.dataset.path;
-                const en = sftpEntries.find(x => x.path === p);
-                if (en) { sel[p] = en; }
-            }
-        });
-        sftpSel = sel;
-        renderSftpSelection();
-    }
-    function sftpMarqueeEnd() {
-        window.removeEventListener('mousemove', sftpMarqueeMove);
-        window.removeEventListener('mouseup', sftpMarqueeEnd);
-        if (sftpMarquee && sftpMarquee.box) { sftpMarquee.box.remove(); }
-        // 空白处单击(未拖动) = 清空选择 (Explorer 语义)
-        if (sftpMarquee && !sftpMarquee.moved) { sftpSel = {}; renderSftpSelection(); }
-        sftpMarquee = null;
-    }
-    function selectedSftpPath() {
-        const keys = Object.keys(sftpSel);
-        return keys.length ? keys[0] : null;
-    }
+    const S = window.SftpState;
 
     let editingFile = null;
 
-    function renderSftpHostOptions() {
+    // ---- 主机下拉 ----
+    function hostLabel(hostId) {
+        const h = ctx.getHosts().find(x => x.id === hostId);
+        return h ? h.name : (hostId || '');
+    }
+
+    function renderHostOptions() {
         const sel = $('sftp-host-select');
         if (!sel) { return; }
         sel.innerHTML = '';
@@ -87,19 +29,19 @@ window.SSHSftpUI = (function (ctx) {
             const opt = document.createElement('option');
             opt.value = h.id;
             opt.textContent = h.name;
-            if (h.id === sftpHostId) { opt.selected = true; }
+            if (h.id === S.state.hostId) { opt.selected = true; }
             sel.appendChild(opt);
         });
         sel.onchange = function () {
-            sftpHostId = this.value;
-            sftpPath = SftpMemory.getLast(sftpHostId) || '.';
-            $('sftp-host-label').textContent = hostLabel(sftpHostId);
-            renderSftpQuick();
-            sftpNavigate(sftpPath);
+            S.state.hostId = this.value;
+            S.state.path = SftpMemory.getLast(S.state.hostId) || '.';
+            $('sftp-host-label').textContent = hostLabel(S.state.hostId);
+            renderQuick();
+            navigate(S.state.path);
         };
     }
 
-    function toggleSftpPanel() {
+    function togglePanel() {
         const panel = $('sftp-panel');
         const opening = panel.style.display !== 'flex';
         panel.style.display = opening ? 'flex' : 'none';
@@ -107,38 +49,27 @@ window.SSHSftpUI = (function (ctx) {
         if (foot) { foot.textContent = opening ? 'SFTP 文件:开' : 'SFTP 文件:关'; }
         if (!opening) { return; }
         // 默认目标: 当前活跃 SSH 会话的主机; 否则第一台主机
-        if (!sftpHostId) {
+        if (!S.state.hostId) {
             const active = window.termManager && window.termManager.getActive();
             if (active && active.kind === 'ssh' && active.hostId) {
-                sftpHostId = active.hostId;
+                S.state.hostId = active.hostId;
             } else if (ctx.getHosts().length) {
-                sftpHostId = ctx.getHosts()[0].id;
+                S.state.hostId = ctx.getHosts()[0].id;
             }
         }
-        $('sftp-host-label').textContent = hostLabel(sftpHostId);
-        if (!sftpPath || sftpPath === '/') {
-            sftpPath = SftpMemory.getLast(sftpHostId) || '.';
+        $('sftp-host-label').textContent = hostLabel(S.state.hostId);
+        if (!S.state.path || S.state.path === '/') {
+            S.state.path = SftpMemory.getLast(S.state.hostId) || '.';
         }
-        renderSftpQuick();
-        sftpNavigate(sftpPath);
+        renderQuick();
+        navigate(S.state.path);
     }
 
-    function hostLabel(hostId) {
-        const h = ctx.getHosts().find(x => x.id === hostId);
-        return h ? h.name : (hostId || '');
-    }
-
-    // ---- SFTP 快速访问（当前路径可固定、可取消） ----
-    function sftpDisplayPath(p) {
-        if (p === sftpHomePath || p === '.') { return '登录目录'; }
-        const parts = p.split('/').filter(Boolean);
-        return parts.length ? parts[parts.length - 1] : p;
-    }
-
-    function renderSftpQuick() {
+    // ---- 快速访问 (当前路径可固定、可取消) ----
+    function renderQuick() {
         const box = $('sftp-quick');
         if (!box) { return; }
-        const pins = SftpMemory.getPins(sftpHostId);
+        const pins = SftpMemory.getPins(S.state.hostId);
         box.innerHTML = '';
         if (!pins.length) {
             box.style.display = 'none';
@@ -149,15 +80,15 @@ window.SSHSftpUI = (function (ctx) {
         pins.forEach(function (p) {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'sftp-quick-chip' + (p === sftpPath ? ' active' : '');
-            btn.textContent = sftpDisplayPath(p);
+            btn.className = 'sftp-quick-chip' + (p === S.state.path ? ' active' : '');
+            btn.textContent = S.displayPath(p);
             btn.title = p;
-            btn.addEventListener('click', function () { sftpNavigate(p); });
+            btn.addEventListener('click', function () { navigate(p); });
             btn.addEventListener('contextmenu', function (ev) {
                 ev.preventDefault();
                 if (confirm('取消固定 ' + p + ' ？')) {
-                    SftpMemory.unpin(sftpHostId, p);
-                    renderSftpQuick();
+                    SftpMemory.unpin(S.state.hostId, p);
+                    renderQuick();
                 }
             });
             box.appendChild(btn);
@@ -168,57 +99,48 @@ window.SSHSftpUI = (function (ctx) {
     function updatePinStar() {
         const btn = $('sftp-pin');
         if (!btn) { return; }
-        const pinned = SftpMemory.isPinned(sftpHostId, sftpPath);
+        const pinned = SftpMemory.isPinned(S.state.hostId, S.state.path);
         btn.textContent = pinned ? '★' : '☆';
         btn.title = pinned ? '取消固定当前目录' : '固定当前目录到快速访问';
     }
 
-    function toggleSftpPin() {
-        if (!sftpHostId || !sftpPath) { return; }
-        if (SftpMemory.isPinned(sftpHostId, sftpPath)) {
-            SftpMemory.unpin(sftpHostId, sftpPath);
+    function togglePin() {
+        if (!S.state.hostId || !S.state.path) { return; }
+        if (SftpMemory.isPinned(S.state.hostId, S.state.path)) {
+            SftpMemory.unpin(S.state.hostId, S.state.path);
         } else {
-            SftpMemory.pin(sftpHostId, sftpPath);
+            SftpMemory.pin(S.state.hostId, S.state.path);
         }
-        renderSftpQuick();
+        renderQuick();
     }
 
-    function parentPath(p) {
-        const parent = posixDirname(p);
-        return parent || '/';
-    }
-
-    function posixDirname(p) {
-        const idx = p.lastIndexOf('/');
-        if (idx <= 0) { return '/'; }
-        return p.slice(0, idx);
-    }
-
-    async function sftpNavigate(path) {
-        sftpPath = path || '.';
-        $('sftp-path').textContent = sftpPath;
-        renderSftpQuick();
+    // ---- 列表渲染与导航 ----
+    async function navigate(path) {
+        S.state.path = path || '.';
+        $('sftp-path').textContent = S.state.path;
+        renderQuick();
         const box = $('sftp-list');
         box.innerHTML = '<div class="empty-tip">加载中…</div>';
         try {
             const data = await api('/api/ssh/sftp/list', {
                 method: 'POST',
-                body: JSON.stringify({ hostId: sftpHostId, path: sftpPath }),
+                body: JSON.stringify({ hostId: S.state.hostId, path: S.state.path }),
             });
-            sftpEntries = data.entries || [];
-            sftpSel = {};
-            sftpPath = data.currentPath || sftpPath;
-            sftpHomePath = data.homePath || sftpHomePath;
-            if (sftpHomePath) { SftpMemory.setHome(sftpHostId, sftpHomePath); }
-            $('sftp-path').textContent = sftpPath;
-            SftpMemory.setLast(sftpHostId, sftpPath);
-            renderSftpQuick();
+            S.state.entries = data.entries || [];
+            S.state.sel = {};
+            S.state.path = data.currentPath || S.state.path;
+            S.state.homePath = data.homePath || S.state.homePath;
+            if (S.state.homePath) { SftpMemory.setHome(S.state.hostId, S.state.homePath); }
+            $('sftp-path').textContent = S.state.path;
+            SftpMemory.setLast(S.state.hostId, S.state.path);
+            renderQuick();
             box.innerHTML = '';
-            if (sftpPath !== '/' && data.parentPath !== null) {
-                box.appendChild(sftpRow({ name: '..', path: data.parentPath, type: 'folder', size: 0 }, true));
+            if (S.state.path !== '/' && data.parentPath !== null) {
+                box.appendChild(row({ name: '..', path: data.parentPath,
+                                      type: 'folder', size: 0 }, true));
             }
-            sftpEntries.forEach(e => { box.appendChild(sftpRow(e, false)); });
-            if (!sftpEntries.length) {
+            S.state.entries.forEach(e => { box.appendChild(row(e, false)); });
+            if (!S.state.entries.length) {
                 box.innerHTML = '<div class="empty-tip">空目录</div>';
             }
         } catch (err) {
@@ -226,300 +148,117 @@ window.SSHSftpUI = (function (ctx) {
         }
     }
 
-    function sftpRow(e, isParent) {
-        const row = document.createElement('div');
-        row.className = 'sftp-row' + (sftpSel[e.path] ? ' selected' : '');
-        row.dataset.path = e.path;
+    function row(e, isParent) {
+        const el = document.createElement('div');
+        el.className = 'sftp-row' + (S.state.sel[e.path] ? ' selected' : '');
+        el.dataset.path = e.path;
         if (isParent) {
             e.isParent = true;
-            row.dataset.parent = '1';
+            el.dataset.parent = '1';
         }
-        row.innerHTML =
+        el.innerHTML =
             Icons.svg(e.type === 'folder' ? 'folder' : 'file') +
             '<span class="sftp-row-name">' + escapeHtml(e.name) + '</span>' +
             '<span class="sftp-row-meta">' + (e.type === 'file' ? fmtSize(e.size) : '') + '</span>';
-        row.addEventListener('click', (ev) => {
-            if (isParent) { sftpNavigate(e.path); return; }
-            if (e.type === 'folder') { sftpNavigate(e.path); return; }
+        el.addEventListener('click', (ev) => {
+            if (isParent || e.type === 'folder') { navigate(e.path); return; }
             // 单击选中; Ctrl 多选 (FM-17)
             if (ev.ctrlKey) {
-                if (sftpSel[e.path]) { delete sftpSel[e.path]; } else { sftpSel[e.path] = e; }
+                if (S.state.sel[e.path]) { delete S.state.sel[e.path]; }
+                else { S.state.sel[e.path] = e; }
             } else {
-                sftpSel = { [e.path]: e };
+                S.state.sel = { [e.path]: e };
             }
-            renderSftpSelection();
+            S.renderSelection();
         });
-        row.addEventListener('dblclick', () => {
-            if (e.type === 'file') { sftpEditSelected(); }
+        el.addEventListener('dblclick', () => {
+            if (e.type === 'file') { editSelected(); }
         });
-        row.addEventListener('contextmenu', (ev) => {
+        el.addEventListener('contextmenu', (ev) => {
             ev.preventDefault();
-            if (isParent) { showSftpBlankMenu(ev.clientX, ev.clientY); return; }
+            if (isParent) { SftpMenu.showBlank(ev.clientX, ev.clientY); return; }
             // 文件与文件夹右键都自动选中 (文件夹之前不选中, 直接下载会提示"请先选中")
-            if (!sftpSel[e.path]) { sftpSel = { [e.path]: e }; renderSftpSelection(); }
-            showSftpMenu(ev, e);
-        });
-        return row;
-    }
-
-    async function sftpDownloadSelected() {
-        // 单个文件: 流式直下; 多选/文件夹: 服务端打包 zip (浏览器会拦截连续多次自动下载)
-        const sel = Object.values(sftpSel).filter(x => !x.isParent);
-        if (!sel.length) { toastMsg('请先选中文件或文件夹'); return; }
-        if (sel.length === 1 && sel[0].type !== 'folder') {
-            const a = document.createElement('a');
-            a.href = '/api/ssh/sftp/download?hostId=' + encodeURIComponent(sftpHostId)
-                + '&path=' + encodeURIComponent(sel[0].path);
-            a.download = '';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            return;
-        }
-        const paths = sel.map(x => x.path);
-        toastMsg('正在打包 ' + paths.length + ' 项…');
-        try {
-            const r = await fetch('/api/ssh/sftp/download-zip?hostId=' + encodeURIComponent(sftpHostId)
-                + '&paths=' + encodeURIComponent(JSON.stringify(paths)));
-            if (!r.ok) {
-                const d = await r.json().catch(() => ({}));
-                throw new Error(d.error || ('HTTP ' + r.status));
+            if (!S.state.sel[e.path]) {
+                S.state.sel = { [e.path]: e };
+                S.renderSelection();
             }
-            const blob = await r.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'sftp-' + Date.now() + '.zip';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 30000);
-            toastMsg('打包完成 (' + Math.round(blob.size / 1024) + ' KB)');
-        } catch (err) {
-            toastMsg('打包下载失败: ' + err.message);
-        }
-    }
-    async function sftpToLocalSelected() {
-        const p = selectedSftpPath() || (sftpPath !== '/' ? sftpPath : null);
-        if (!p) { alert('请先选中文件'); return; }
-        try {
-            const data = await api('/api/ssh/sftp/to-local', {
-                method: 'POST',
-                body: JSON.stringify({ hostId: sftpHostId, remotePath: p }),
-            });
-            alert('已存到本机: ' + data.localPath);
-        } catch (err) { alert('转存失败: ' + err.message); }
-    }
-    let sftpUploading = false;
-
-    async function sftpUploadFiles(ev) {
-        const input = ev.target;
-        const folderMode = input.id === 'sftp-folder-input';
-        const files = Array.from(input.files || []);
-        input.value = '';
-        if (!files.length || sftpUploading) { return; }
-        const items = files.map(function (f) {
-            return { file: f, rel: folderMode ? (f.webkitRelativePath || f.name) : f.name };
+            SftpMenu.showRow(ev, e);
         });
-        sftpUploading = true;
-        const BATCH = 20;
-        let done = 0;
-        const failed = [];
-        try {
-            for (let i = 0; i < items.length; i += BATCH) {
-                const slice = items.slice(i, i + BATCH);
-                toastMsg('上传中 ' + (done + 1) + '-' + (done + slice.length) + ' / ' + items.length);
-                const fd = new FormData();
-                fd.append('hostId', sftpHostId);
-                fd.append('remoteDir', sftpPath);
-                slice.forEach(function (it) {
-                    fd.append('files', it.file, it.file.name);
-                    fd.append('paths', it.rel);
-                });
-                const r = await fetch('/api/ssh/sftp/upload-batch', { method: 'POST', body: fd });
-                const data = await r.json().catch(function () { return {}; });
-                if (!r.ok) {
-                    failed.push(slice.map(function (it) { return it.rel + ': ' + (data.error || ('HTTP ' + r.status)); }));
-                } else if (data.failed && data.failed.length) {
-                    data.failed.forEach(function (f) { failed.push((f.name || '') + ': ' + (f.error || '失败')); });
-                }
-                done += slice.length;
-            }
-            toastMsg(failed.length ? ('上传完成，' + failed.length + ' 个失败') : ('已上传 ' + items.length + ' 个文件'));
-            if (failed.length) { alert('部分上传失败:\n' + failed.slice(0, 8).join('\n')); }
-            await sftpNavigate(sftpPath || '.');
-        } finally {
-            sftpUploading = false;
-        }
+        return el;
     }
 
-    // ------------------------------------------------------------------
-    // 工具
-    // ------------------------------------------------------------------
-    let sftpMenuEl = null;
-    function showSftpMenu(ev, entry) {
-        closeSftpMenu();
-        const batch = Object.keys(sftpSel).length > 1 && sftpSel[entry.path] ? Object.values(sftpSel) : [entry];
-        const single = batch.length === 1 ? batch[0] : null;
-        const menu = document.createElement('div');
-        menu.className = 'ctx-menu';
-        menu.style.left = Math.min(ev.clientX, innerWidth - 170) + 'px';
-        menu.style.top = Math.min(ev.clientY, innerHeight - 260) + 'px';
-        const item = (label, fn) => {
-            const b = document.createElement('button');
-            b.className = 'ctx-item';
-            b.textContent = label;
-            b.addEventListener('click', () => { closeSftpMenu(); fn(); });
-            menu.appendChild(b);
-        };
-        if (single && single.type === 'file') {
-            item('下载', sftpDownloadSelected);
-            item('预览 / 编辑', sftpEditSelected);
-            item('重命名', sftpRenameSelected);
-            item('chmod', sftpChmodSelected);
-        } else {
-            item('下载 (打包 zip' + (batch.length > 1 ? '，' + batch.length + ' 项' : '') + ')', sftpDownloadSelected);
-        }
-        item('删除 (' + batch.length + ' 项)', sftpDeleteSelected);
-        item('复制路径', () => {
-            navigator.clipboard.writeText(single ? single.path : batch.map(x => x.path).join('\n'))
-                .then(() => toastMsg('路径已复制')).catch(() => {});
-        });
-        document.body.appendChild(menu);
-        sftpMenuEl = menu;
-        setTimeout(() => document.addEventListener('click', closeSftpMenu, { once: true }), 0);
-    }
-    function closeSftpMenu() {
-        if (sftpMenuEl) { sftpMenuEl.remove(); sftpMenuEl = null; }
-    }
-    function sftpRenameSelected() {
-        const p = selectedSftpPath();
+    // ---- CRUD 动作 (由 SftpMenu 注入) ----
+    function renameSelected() {
+        const p = S.selectedPath();
         if (!p) { toastMsg('请先选中'); return; }
         const name = window.prompt('重命名为:', p.split('/').pop());
         if (!name || name === p.split('/').pop()) { return; }
-        api('/api/ssh/sftp/rename', { method: 'POST', body: JSON.stringify({ hostId: sftpHostId, path: p, newName: name }) })
-            .then(() => { toastMsg('已重命名'); sftpSel = {}; sftpNavigate(sftpPath || '.'); })
+        api('/api/ssh/sftp/rename', {
+            method: 'POST',
+            body: JSON.stringify({ hostId: S.state.hostId, path: p, newName: name }),
+        })
+            .then(() => { toastMsg('已重命名'); S.state.sel = {}; navigate(S.state.path || '.'); })
             .catch(err => toastMsg('重命名失败: ' + err.message));
     }
-    function sftpChmodSelected() {
-        const p = selectedSftpPath();
+
+    async function chmodSelected() {
+        const p = S.selectedPath();
         if (!p) { toastMsg('请先选中'); return; }
         const mode = window.prompt('chmod 权限 (如 755):');
-        if (!mode) { return; }
-        api('/api/ssh/sftp/chmod', { method: 'POST', body: JSON.stringify({ hostId: sftpHostId, path: p, mode: mode }) })
-            .then(() => { toastMsg('已修改权限'); sftpNavigate(sftpPath || '.'); })
-            .catch(err => toastMsg('chmod 失败: ' + err.message));
-    }
-    function sftpDeleteSelected() {
-        const paths = Object.keys(sftpSel);
-        if (!paths.length) { toastMsg('请先选中'); return; }
-        if (!window.confirm('删除选中的 ' + paths.length + ' 项？(不可恢复)')) { return; }
-        (async () => {
-            for (const p of paths) {
-                try { await api('/api/ssh/sftp/delete', { method: 'POST', body: JSON.stringify({ hostId: sftpHostId, path: p }) }); }
-                catch (err) { toastMsg('删除失败: ' + err.message); }
-            }
-            sftpSel = {};
-            sftpNavigate(sftpPath || '.');
-        })();
-    }
-
-    function sftpMkdirPrompt() {
-        const name = window.prompt('新建文件夹名称:');
-        if (!name) { return; }
-        api('/api/ssh/sftp/mkdir', {
-            method: 'POST',
-            body: JSON.stringify({ hostId: sftpHostId, path: joinRemote(sftpPath, name) }),
-        })
-            .then(() => { toastMsg('已创建 ' + name); return sftpNavigate(sftpPath); })
-            .catch(err => toastMsg('新建失败: ' + err.message));
-    }
-
-    // 空白处右键 / 长按: 新建与上传入口 (移动端没有右键)
-    function showSftpBlankMenu(x, y) {
-        closeSftpMenu();
-        const menu = document.createElement('div');
-        menu.className = 'ctx-menu';
-        menu.style.left = Math.min(x, innerWidth - 170) + 'px';
-        menu.style.top = Math.min(y, innerHeight - 160) + 'px';
-        const item = (label, fn) => {
-            const b = document.createElement('button');
-            b.className = 'ctx-item';
-            b.textContent = label;
-            b.addEventListener('click', () => { closeSftpMenu(); fn(); });
-            menu.appendChild(b);
-        };
-        item('新建文件夹', sftpMkdirPrompt);
-        item('上传文件', () => $('sftp-file-input').click());
-        item('上传文件夹', () => { const i = $('sftp-folder-input'); if (i) { i.click(); } });
-        document.body.appendChild(menu);
-        sftpMenuEl = menu;
-        setTimeout(() => document.addEventListener('click', closeSftpMenu, { once: true }), 0);
-    }
-
-    // 长按 (移动端): 行 = 文件菜单, 空白 = 目录菜单
-    let sftpPressTimer = null;
-    let sftpPressXY = null;
-    function sftpPressStart(e) {
-        if (e.touches.length !== 1) { return; }
-        const t = e.touches[0];
-        sftpPressXY = [t.clientX, t.clientY];
-        const originTarget = e.target;
-        sftpPressTimer = setTimeout(function () {
-            sftpPressTimer = null;
-            const row = originTarget.closest ? originTarget.closest('.sftp-row') : null;
-            if (row && row.dataset.path) {
-                const entry = sftpEntries.find(x => x.path === row.dataset.path);
-                if (entry) {
-                    sftpSel = { [entry.path]: entry };
-                    renderSftpSelection();
-                    showSftpMenu({ clientX: sftpPressXY[0], clientY: sftpPressXY[1] }, entry);
-                    return;
-                }
-            }
-            showSftpBlankMenu(sftpPressXY[0], sftpPressXY[1]);
-        }, 500);
-    }
-    function sftpPressCancel() {
-        if (sftpPressTimer) { clearTimeout(sftpPressTimer); sftpPressTimer = null; }
-        sftpPressXY = null;
-    }
-    function sftpPressMove(e) {
-        if (!sftpPressTimer || !sftpPressXY || !e.touches.length) { return; }
-        const t = e.touches[0];
-        if (Math.abs(t.clientX - sftpPressXY[0]) > 10 || Math.abs(t.clientY - sftpPressXY[1]) > 10) {
-            sftpPressCancel();
-        }
-    }
-
-    async function sftpChmodPrompt() {
-        const p = selectedSftpPath();
-        if (!p) { alert('请先选中文件或文件夹'); return; }
-        const mode = window.prompt('权限 (八进制, 如 644 / 755):');
         if (!mode) { return; }
         try {
             await api('/api/ssh/sftp/chmod', {
                 method: 'POST',
-                body: JSON.stringify({ hostId: sftpHostId, path: p, mode: mode }),
+                body: JSON.stringify({ hostId: S.state.hostId, path: p, mode: mode }),
             });
-            await sftpNavigate(sftpPath);
-        } catch (err) { alert('chmod 失败: ' + err.message); }
+            toastMsg('已修改权限');
+            await navigate(S.state.path);
+        } catch (err) { toastMsg('chmod 失败: ' + err.message); }
     }
 
-    async function sftpEditSelected() {
-        const p = selectedSftpPath();
+    async function deleteSelected() {
+        const paths = Object.keys(S.state.sel);
+        if (!paths.length) { toastMsg('请先选中'); return; }
+        if (!window.confirm('删除选中的 ' + paths.length + ' 项？(不可恢复)')) { return; }
+        for (const p of paths) {
+            try {
+                await api('/api/ssh/sftp/delete', {
+                    method: 'POST',
+                    body: JSON.stringify({ hostId: S.state.hostId, path: p }),
+                });
+            } catch (err) { toastMsg('删除失败: ' + err.message); }
+        }
+        S.state.sel = {};
+        await navigate(S.state.path || '.');
+    }
+
+    function mkdirPrompt() {
+        const name = window.prompt('新建文件夹名称:');
+        if (!name) { return; }
+        api('/api/ssh/sftp/mkdir', {
+            method: 'POST',
+            body: JSON.stringify({ hostId: S.state.hostId,
+                                   path: S.joinRemote(S.state.path, name) }),
+        })
+            .then(() => { toastMsg('已创建 ' + name); return navigate(S.state.path); })
+            .catch(err => toastMsg('新建失败: ' + err.message));
+    }
+
+    // ---- 文本编辑 ----
+    async function editSelected() {
+        const p = S.selectedPath();
         if (!p) { alert('请先选中文件'); return; }
         try {
             const data = await api('/api/ssh/sftp/read', {
                 method: 'POST',
-                body: JSON.stringify({ hostId: sftpHostId, path: p }),
+                body: JSON.stringify({ hostId: S.state.hostId, path: p }),
             });
             openEditModal(p, data.content, data.mtime, data.encoding);
         } catch (err) { alert('读取失败: ' + err.message); }
     }
 
     function openEditModal(path, content, mtime, encoding) {
-        editingFile = { hostId: sftpHostId, path: path, baseMtime: mtime,
+        editingFile = { hostId: S.state.hostId, path: path, baseMtime: mtime,
                         encoding: encoding || 'utf-8' };
         let modal = document.getElementById('sftp-edit-modal');
         if (!modal) {
@@ -559,60 +298,66 @@ window.SSHSftpUI = (function (ctx) {
                 }),
             });
             modal.style.display = 'none';
-            if (typeof toastMsg === 'function') { toastMsg('已保存 (SSH)'); }
+            toastMsg('已保存 (SSH)');
         } catch (err) {
             modal.querySelector('#sftp-edit-error').textContent = err.message;
             modal.querySelector('#sftp-edit-error').style.display = '';
         }
     }
 
-    function joinRemote(dir, name) {
-        return (dir === '/' ? '' : dir) + '/' + name;
-    }
-
+    // ---- 绑定 ----
     function bind() {
-        SSHHostStore.subscribe(function () { renderSftpHostOptions(); });
-        $('sftp-close-btn').addEventListener('click', toggleSftpPanel);
-        $('sftp-toggle').addEventListener('click', toggleSftpPanel);
+        SftpMenu.init({
+            toastMsg: toastMsg,
+            actions: {
+                download: () => SftpTransfer.downloadSelected(),
+                edit: editSelected,
+                rename: renameSelected,
+                chmod: chmodSelected,
+                del: deleteSelected,
+                mkdir: mkdirPrompt,
+                uploadFile: () => $('sftp-file-input').click(),
+                uploadFolder: () => { const i = $('sftp-folder-input'); if (i) { i.click(); } },
+            },
+        });
+        SftpTransfer.init({
+            api: api, toastMsg: toastMsg, alert: alert, navigate: navigate,
+        });
+        SftpSelect.init({ menu: SftpMenu });
+
+        SSHHostStore.subscribe(function () { renderHostOptions(); });
+        $('sftp-close-btn').addEventListener('click', togglePanel);
+        $('sftp-toggle').addEventListener('click', togglePanel);
         // 移动端工具条只留菜单+状态, SFTP 入口放到侧栏脚部
         const sftpFoot = $('sftp-foot-toggle');
-        if (sftpFoot) { sftpFoot.addEventListener('click', toggleSftpPanel); }
-        $('sftp-up').addEventListener('click', () => sftpNavigate(parentPath(sftpPath)));
+        if (sftpFoot) { sftpFoot.addEventListener('click', togglePanel); }
+        $('sftp-up').addEventListener('click', () => navigate(S.parentPath(S.state.path)));
         const sftpPathEl = $('sftp-path');
         sftpPathEl.title = '点击复制路径';
         sftpPathEl.style.cursor = 'pointer';
         sftpPathEl.addEventListener('click', function () {
-            if (!sftpPath || sftpPath === '.') { return; }
-            navigator.clipboard.writeText(sftpPath)
+            if (!S.state.path || S.state.path === '.') { return; }
+            navigator.clipboard.writeText(S.state.path)
                 .then(() => toastMsg('路径已复制'))
                 .catch(() => toastMsg('复制失败'));
         });
         const pinBtn = $('sftp-pin');
-        if (pinBtn) { pinBtn.addEventListener('click', toggleSftpPin); }
-        $('sftp-list').addEventListener('mousedown', sftpMarqueeStart);   // FM-17 桌面框选
-        $('sftp-list').addEventListener('contextmenu', function (ev) {
-            if (ev.target.closest('.sftp-row')) { return; }   // 行内菜单由 sftpRow 自己处理
-            ev.preventDefault();
-            showSftpBlankMenu(ev.clientX, ev.clientY);
-        });
-        $('sftp-list').addEventListener('touchstart', sftpPressStart, { passive: true });
-        $('sftp-list').addEventListener('touchmove', sftpPressMove, { passive: true });
-        $('sftp-list').addEventListener('touchend', sftpPressCancel);
-        $('sftp-list').addEventListener('touchcancel', sftpPressCancel);
+        if (pinBtn) { pinBtn.addEventListener('click', togglePin); }
+        SftpSelect.bind($('sftp-list'));
         $('sftp-upload-btn').addEventListener('click', () => $('sftp-file-input').click());
-        $('sftp-file-input').addEventListener('change', sftpUploadFiles);
+        $('sftp-file-input').addEventListener('change', SftpTransfer.uploadFiles);
         const filesBtn = $('sftp-upload-files');
         if (filesBtn) { filesBtn.addEventListener('click', () => $('sftp-file-input').click()); }
         const folderBtn = $('sftp-upload-folder');
         if (folderBtn) { folderBtn.addEventListener('click', () => $('sftp-folder-input').click()); }
         const folderInput = $('sftp-folder-input');
-        if (folderInput) { folderInput.addEventListener('change', sftpUploadFiles); }
-        $('sftp-mkdir').addEventListener('click', sftpMkdirPrompt);
-        $('sftp-edit').addEventListener('click', sftpEditSelected);
-        $('sftp-chmod').addEventListener('click', sftpChmodPrompt);
-        $('sftp-download').addEventListener('click', sftpDownloadSelected);
-        $('sftp-to-local').addEventListener('click', sftpToLocalSelected);
+        if (folderInput) { folderInput.addEventListener('change', SftpTransfer.uploadFiles); }
+        $('sftp-mkdir').addEventListener('click', mkdirPrompt);
+        $('sftp-edit').addEventListener('click', editSelected);
+        $('sftp-chmod').addEventListener('click', chmodSelected);
+        $('sftp-download').addEventListener('click', () => SftpTransfer.downloadSelected());
+        $('sftp-to-local').addEventListener('click', () => SftpTransfer.toLocalSelected());
     }
 
-    return { bind: bind, renderHostOptions: renderSftpHostOptions };
+    return { bind: bind, renderHostOptions: renderHostOptions };
 })(window.SSHUiCtx);

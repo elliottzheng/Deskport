@@ -13,7 +13,7 @@ window.TermFeatures = (function () {
         var searchAddons = {};
         var logState = {};            // uid: {enabled, chunks[]}
         var splitMode = false;
-        var multiExecSet = new Set(); // multi-exec 勾选的 ssh 会话 uid
+        // multi-exec 勾选状态归 term-sidebar.js 持有 (勾选框就在侧栏里)
         var manager = null;           // init(manager) 时注入
 
         // 控制键按钮 data-key → 发送序列 (两页 #control-keys 共用)
@@ -159,60 +159,9 @@ window.TermFeatures = (function () {
             };
         }
 
-        // ------------------------------------------------------------------
-        // 侧边栏渲染
-        // ------------------------------------------------------------------
-
-        function renderSidebar() {
-            const list = document.getElementById('session-list');
-            if (!list || !manager) { return; }
-            list.innerHTML = '';
-            manager.sessions.forEach(function (s) {
-                const li = document.createElement('li');
-                li.className = 'session-item' + (s === manager.getActive() ? ' active' : '');
-                li.innerHTML =
-                    (s.kind === 'ssh'
-                        ? '<label class="me-check" title="勾选多个 SSH 会话后，可在侧栏广播框批量发送命令"><input type="checkbox"' +
-                          (multiExecSet.has(s.uid) ? ' checked' : '') + '></label>'
-                        : '') +
-                    '<span class="session-badge ' + s.kind + (s.remote ? ' remote' : '') + '">' +
-                        (s.remote ? '远端' : (s.kind === 'ssh' ? 'SSH' : '本地')) + '</span>' +
-                    '<span class="session-name">' + TermClient.escapeHtml(displayName(s)) + '</span>' +
-                    '<span class="session-state">' + TermClient.stateText(s) + '</span>' +
-                    '<button class="session-close" title="关闭终端">&times;</button>';
-                const meBox = li.querySelector('.me-check input');
-                if (meBox) {
-                    meBox.addEventListener('click', function (e) {
-                        e.stopPropagation();
-                        toggleMultiExec(s.uid);
-                    });
-                }
-                li.addEventListener('click', function () { manager.switchSession(s); });
-                const nameEl = li.querySelector('.session-name');
-                if (nameEl) {
-                    var tip = [];
-                    if (s.foreground) { tip.push(s.foreground); }
-                    if (s.foregroundCwd) { tip.push(s.foregroundCwd); }
-                    else if (s.cwd) { tip.push(s.cwd); }
-                    nameEl.title = (tip.join(' · ') + '（双击重命名）').trim();
-                    nameEl.addEventListener('dblclick', function (e) {
-                        e.stopPropagation();
-                        renameSession(s);
-                    });
-                }
-                li.querySelector('.session-close').addEventListener('click', function (e) {
-                    e.stopPropagation();
-                    manager.closeSession(s);
-                });
-                list.appendChild(li);
-            });
-        }
-
-        function toggleMultiExec(uid) {
-            if (multiExecSet.has(uid)) { multiExecSet.delete(uid); }
-            else { multiExecSet.add(uid); }
-            renderSidebar();
-        }
+        // 侧栏渲染已拆到 term-sidebar.js; 这里只做转发, 保持既有调用点不变
+        function renderSidebar() { TermSidebar.render(); }
+        function toggleMultiExec(uid) { TermSidebar.toggle(uid); }
 
         // ------------------------------------------------------------------
         // L2: 搜索 / 日志 / 分屏 / multi-exec
@@ -237,6 +186,11 @@ window.TermFeatures = (function () {
 
         function init(m) {
             manager = m;
+            TermSidebar.init({
+                manager: m,
+                displayName: displayName,
+                renameSession: renameSession,
+            });
             var pageActive = true;
             // 前台进程 / 目录短名定时刷新（仅当前视图可见时）
             setInterval(function () {
@@ -410,7 +364,7 @@ window.TermFeatures = (function () {
                     const text = meInput.value;
                     if (!text) { return; }
                     let sent = 0;
-                    multiExecSet.forEach(function (uid) {
+                    TermSidebar.uids().forEach(function (uid) {
                         const s = manager.sessions.find(x => x.uid === uid);
                         if (s && s.ws && s.ws.readyState === 1) { s.ws.send(text + '\r'); sent += 1; }
                     });

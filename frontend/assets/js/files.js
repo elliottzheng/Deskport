@@ -216,6 +216,7 @@ createApp({
     },
     methods: Object.assign({},
         window.FilesMethodsCore,
+        window.FilesMethodsSelect,
         window.FilesMethodsOps,
         window.FilesMethodsUi,
         window.FilesMethodsAi),

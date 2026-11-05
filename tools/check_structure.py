@@ -14,17 +14,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUDGET = {'.py': 400, '.js': 500, '.css': 500}
 
 # 存量例外: 只减不增（行数上限）
-# 2026-11-05 补登: read_lines 曾恒返回 0, 预算检查空转, 这些文件从未真正受检。
-# 上限取当前行数; 拆完后从本表移除 (拆分计划见 docs/design-review.md)。
-LEGACY = {
-    'modules/termcore.py': 568,
-    'modules/ssh_sftp.py': 503,
-    'modules/plugins.py': 439,
-    'frontend/assets/js/term-client.js': 682,
-    'frontend/assets/js/term-features.js': 467,
-    'frontend/assets/js/ssh-sftp-ui.js': 618,
-    'frontend/assets/js/files-methods-core.js': 523,
-}
+# 2026-11-05: read_lines 曾恒返回 0 导致预算检查空转, 暴露的 7 个超预算文件
+# 已全部拆完并从本表移除 (过程见 docs/design-review.md 与各 refactor 提交)。
+# 本表当前为空 —— 新增文件必须直接符合预算, 不允许再登记例外。
+LEGACY = {}
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run'}
 FEATURES = {'aihandoff', 'command', 'control', 'files', 'screen', 'ssh', 'tasks',
@@ -39,6 +32,8 @@ INFRA = {'state', 'internal_api', 'events', 'fsutil', 'textio', 'media', 'contra
          'decision', 'termcore', 'termprobe', 'wsproto'}
 ALLOWED_WINDOW = {'termManager', 'termUI', 'createSshSession', 'SSHUI',
                   'AppShell', 'AppShellV2', 'Icons', 'SftpMemory',
+                  'SftpState', 'SftpMenu', 'SftpSelect', 'SftpTransfer',
+                  'FilesMethodsSelect', 'TermSidebar', 'TermGeometry',
                   'TermClient', 'TermFeatures', 'toggleMultiExec', 'WPCommon',
                   'FilesMethodsCore', 'FilesMethodsOps', 'FilesMethodsUi', 'FilesMethodsAi',
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
