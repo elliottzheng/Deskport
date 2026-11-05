@@ -142,6 +142,11 @@ window.TermClient = (function () {
                         const s = options.restoreItem(buildSessionUI, it);
                         if (!s) { return; }
                         s.needReplay = true;
+                        // 服务端标签优先: 远端会话带 [机器名] 前缀, 否则侧栏里
+                        // 远端 pwsh 和本地 pwsh 长得一模一样, 用户分不出来
+                        s.label = it.label || s.label;
+                        s.remote = !!it.remote;
+                        s.offline = !!it.offline;
                         s.cwd = it.cwd || s.cwd;
                         s.cwdLabel = it.cwdLabel || s.cwdLabel;
                         s.foreground = it.foreground || '';
@@ -158,13 +163,13 @@ window.TermClient = (function () {
                     if (activeSession) { onChange(); return; }
                     // 单用户: 上次前台会话优先接管。attached 可能来自 bfcache 里的旧页面,
                     // 不应当成"其他设备"而拒绝恢复; 新附着会向旧连接发 preempted。
-                    // remote (联邦远端会话) 不自动附着: 远端离线时自动重连会变成
-                    // 无限重试, 表现为终端页疯狂滚动; 点侧栏才连。
+                    // remote (联邦远端会话): 离线时不自动附着 (自动重连会变成无限
+                    // 重试, 表现为终端页疯狂滚动); 在线时可以, 点过一次即被记住
                     const rememberedId = localStorage.getItem(ACTIVE_SESSION_KEY);
                     const remembered = items.find(function (it) {
-                        return it.id === rememberedId && !it.remote; });
+                        return it.id === rememberedId && (!it.remote || !it.offline); });
                     const first = remembered || items.find(function (it) {
-                        return !it.attached && !it.remote; });
+                        return !it.attached && (!it.remote || !it.offline); });
                     if (!first) {
                         setStatus('检测到会话正在其他窗口使用, 点击侧栏会话可接管');
                         onChange();
