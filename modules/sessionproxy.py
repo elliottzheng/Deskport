@@ -165,8 +165,10 @@ def _registerTerminal(app, sock):
             url, headers = found
             data, status = _proxyJsonData(url, headers, 'DELETE')
             return jsonify(data), status
-        data, status = _proxyJson('local', '/sessions/' + sessionID, 'DELETE')
-        return jsonify(data), status
+        # _proxyJson 已返回 (Response, status); 再 jsonify 一层会把 Response
+        # 当数据序列化而 500 (联邦分支用 _proxyJsonData 拿原始数据, 两条分支
+        # 返回值形态不同, 曾因此不一致)
+        return _proxyJson('local', '/sessions/' + sessionID, 'DELETE')
 
     sock.route('/api/terminal/ws')(wsTerminal)
     # legacy 兼容：RemoteConnecter 插件（RemoteVSCode 等）写死 /terminal/api/ws
