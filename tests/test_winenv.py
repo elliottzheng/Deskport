@@ -4,6 +4,12 @@
 背景: 会话守护进程长期运行, `os.environ` 是它启动那一刻的快照。用户在系统
 设置里改过环境变量后快照不更新, 表现为"桌面 Terminal 能看到, 平台里新建的
 会话看不到"。
+
+Windows 语义 (本模块的核心):
+    - 用户/系统环境变量的权威来源是注册表, 进程创建时 OS 再注入一批易变变量;
+    - Path / PATHEXT 是"系统段 + 用户段"拼接, 不是用户段覆盖系统段 ——
+      覆盖会丢掉 %SystemRoot%\\system32, 新终端里 cmd.exe 都会找不到;
+    - 其余键用户段覆盖系统段 (如 TEMP)。
 """
 import winreg
 
@@ -11,8 +17,12 @@ import pytest
 
 from modules import winenv
 
+SYSTEM_NAME = 'SYSTEM'
+USER_NAME = 'USER'
+
+
 class _Hive:
-    """支持 with 语句的假 HKEY; 身份用 name 区分。"""
+    """支持 with 语句的假 HKEY; with 出来后是它的名字字符串。"""
 
     def __init__(self, name):
         self.name = name
@@ -24,29 +34,27 @@ class _Hive:
         return False
 
 
-SYSTEM_SENTINEL = _Hive('SYSTEM')
-USER_SENTINEL = _Hive('USER')
-
-
 @pytest.fixture()
 def fakeRegistry(monkeypatch):
-    """替换注册表读取: OpenKey 返回哨兵, EnumValue 按哨兵选表。
+    """替换注册表读取: OpenKey 返回假 HKEY, EnumValue 按名字选表。
 
     不能只换 OpenKey —— winreg.EnumValue 会校验参数是真 PyHKEY, 假对象直接
-    TypeError, 所以两个一起换。
+    TypeError, 所以两个一起换。注意 with 语句交出的是 name 字符串,
+    fakeEnum 要比字符串。
     """
-    system = {'Path': r'C:\Windows\system32', 'TEMP': r'C:\Windows\Temp',
-              'OS': 'Windows_NT', 'NUMBER_OF_PROCESSORS': '16'}
-    user = {'Path': r'%USERPROFILE%\bin;C:\Windows\system32',
-            'OneDrive': r'C:\Users\x\OneDrive'}
+    system = {'Path': r'%SystemRoot%\system32;%SystemRoot%',
+              'TEMP': r'C:\Windows\Temp', 'OS': 'Windows_NT',
+              'NUMBER_OF_PROCESSORS': '16', 'PATHEXT': '.COM;.EXE;.BAT'}
+    user = {'Path': r'%USERPROFILE%\bin', 'OneDrive': r'C:\Users\x\OneDrive',
+            'TEMP': r'C:\Users\x\AppData\Local\Temp'}
 
     monkeypatch.setattr(winenv.winreg, 'OpenKey',
-                        lambda root, sub: (SYSTEM_SENTINEL
+                        lambda root, sub: (_Hive(SYSTEM_NAME)
                                            if root == winreg.HKEY_LOCAL_MACHINE
-                                           else USER_SENTINEL))
+                                           else _Hive(USER_NAME)))
 
     def fakeEnum(key, i):
-        table = system if key == SYSTEM_SENTINEL else user
+        table = system if key == SYSTEM_NAME else user
         items = sorted(table.items())
         if i >= len(items):
             raise OSError('no more values')
@@ -56,40 +64,74 @@ def fakeRegistry(monkeypatch):
     return system, user
 
 
-def test_registry_wins_over_stale_snapshot(fakeRegistry, monkeypatch):
-    """注册表定义过的键, 必须用注册表的值覆盖守护进程的陈旧快照。"""
+SYSTEM_PLUS_USER = (r'C:\Windows\system32;C:\Windows;' + r'C:\Users\ZYL\bin')
+
+
+def test_path_is_concatenated_not_overridden(fakeRegistry, monkeypatch):
+    """Path = 系统段 + 用户段。用户段覆盖系统段会丢掉 system32。"""
     monkeypatch.setenv('Path', 'STALE-PATH')
+    monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
+    env = winenv.freshEnvironment()
+    assert env['Path'] == SYSTEM_PLUS_USER
+
+
+def test_registry_wins_over_stale_snapshot(fakeRegistry, monkeypatch):
+    """注册表定义过的键, 用注册表的值, 不用守护进程的陈旧快照。"""
     monkeypatch.setenv('OneDrive', '')
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
-    monkeypatch.setenv('SYSTEMROOT', r'C:\Windows')      # 易变变量, 注册表没有
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    # 注册表值覆盖陈旧快照; %USERPROFILE% 按合并后的环境展开
-    assert env['Path'] == r'C:\Users\ZYL\bin;C:\Windows\system32'
     assert env['OneDrive'] == r'C:\Users\x\OneDrive'
-    assert env['SYSTEMROOT'] == r'C:\Windows'
+    # TEMP 不在拼接集, 用户段覆盖系统段
+    assert env['TEMP'] == r'C:\Users\x\AppData\Local\Temp'
 
 
-def test_user_hive_overrides_system(fakeRegistry, monkeypatch):
+def test_system_only_keys_survive(fakeRegistry, monkeypatch):
+    """只在系统段有的键必须活下来 (PATHEXT/OS 等)。"""
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
+    env = winenv.freshEnvironment()
+    assert env['PATHEXT'] == '.COM;.EXE;.BAT'
+    assert env['OS'] == 'Windows_NT'
+
+
+def test_user_hive_overrides_system_for_non_additive(fakeRegistry, monkeypatch):
     monkeypatch.delenv('Path', raising=False)
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    assert env['Path'] == r'C:\Users\ZYL\bin;C:\Windows\system32'
-    assert env['OS'] == 'Windows_NT'
+    assert env['Path'] == SYSTEM_PLUS_USER
+    assert env['TEMP'] == r'C:\Users\x\AppData\Local\Temp'
 
 
 def test_expand_vars_uses_merged_env(fakeRegistry, monkeypatch):
     """REG_EXPAND_SZ 存的是未展开的 %VAR%, 要按合并后的环境展开。"""
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
     monkeypatch.delenv('Path', raising=False)
     env = winenv.freshEnvironment()
-    assert env['Path'].startswith(r'C:\Users\ZYL\bin;')
+    assert env['Path'] == SYSTEM_PLUS_USER
 
 
-def test_expand_vars_unknown_left_alone(fakeRegistry):
+def test_expand_vars_unknown_left_alone(fakeRegistry, monkeypatch):
     _system, user = fakeRegistry
     user['Path'] = r'%NOT_A_REAL_VAR%\x'
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    assert env['Path'] == r'%NOT_A_REAL_VAR%\x'
+    assert env['Path'] == (r'C:\Windows\system32;C:\Windows;'
+                           + r'%NOT_A_REAL_VAR%\x')
+
+
+def test_system_segment_not_dropped(fakeRegistry, monkeypatch):
+    """系统段里独有的条目必须在最终 PATH 里 —— 本模块回归最多的坑。"""
+    system, _user = fakeRegistry
+    system['Path'] = r'%SystemRoot%\system32;D:\only-in-system'
+    monkeypatch.setenv('SystemRoot', r'C:\Windows')
+    monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
+    env = winenv.freshEnvironment()
+    assert env['Path'].startswith(r'C:\Windows\system32;')
+    assert r'D:\only-in-system' in env['Path']
+    assert env['Path'].endswith(r'C:\Users\ZYL\bin')
 
 
 def test_session_noise_not_leaked(fakeRegistry, monkeypatch):
@@ -119,8 +161,10 @@ def test_volatile_vars_present(fakeRegistry, monkeypatch):
     assert env['USERNAME'] == 'ZYL'
 
 
-def test_real_registry_read_does_not_raise():
-    """不打桩直接读真实注册表: 不能抛异常, 且 PATH 非空。"""
+def test_real_registry_keeps_system_root(fakeRegistry, monkeypatch):
+    """不打桩读真实注册表: PATH 必须含 system32, 否则新终端全是坏壳。"""
+    monkeypatch.undo()          # 撤掉桩, 用真注册表
     env = winenv.freshEnvironment()
-    assert env.get('Path') or env.get('PATH')
+    path = (env.get('Path') or env.get('PATH') or '').lower()
+    assert 'system32' in path, '真实 PATH 缺 system32: %s' % path[:200]
     assert env.get('SystemRoot') or env.get('SYSTEMROOT')

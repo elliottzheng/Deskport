@@ -51,6 +51,11 @@ _ENV_NOISE = {
 
 _VAR_RE = re.compile(r'%([A-Za-z_][A-Za-z0-9_]*)%')
 
+# Windows 对少数键是"拼接"而非"覆盖": 生效值 = 系统段 + 用户段。
+# 用 dict.update 让用户段覆盖系统段会丢掉 %SystemRoot%\system32 —— 曾因此
+# 让新终端里 cmd.exe / powershell 全部找不到 (实测踩过)。
+_ENV_ADDITIVE = {'Path', 'PATHEXT'}
+
 
 def _readHive(root, sub):
     out = {}
@@ -67,6 +72,15 @@ def _readHive(root, sub):
     except OSError:
         pass          # 无权限/键不存在: 该层为空, 不影响其它层
     return out
+
+
+def _mergeLayer(env, layer):
+    """把一层注册表合并进 env: 拼接键追加, 其余覆盖。"""
+    for name, value in layer.items():
+        if name in _ENV_ADDITIVE and env.get(name):
+            env[name] = env[name] + ';' + value
+        else:
+            env[name] = value
 
 
 def _expand(value, env):
@@ -87,7 +101,7 @@ def freshEnvironment():
     """返回一份按 Windows 语义重建的环境字典 (每次调用都重新读注册表)。"""
     env = {}
     for root, sub in _ENV_HIVES:
-        env.update(_readHive(root, sub))
+        _mergeLayer(env, _readHive(root, sub))
     for key in _ENV_VOLATILE:
         if key in os.environ and key not in env:
             env[key] = os.environ[key]
