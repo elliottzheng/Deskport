@@ -1,21 +1,14 @@
 // App 壳：单文档、多视图（iframe 常驻），导航不重载
 window.AppShellV2 = (function () {
-    var VIEWS = {
-        home: { href: '/', label: '控制台', icon: 'grid' },
-        tasks: { href: '/tasks', label: '任务', icon: 'task' },
-        files: { href: '/files', label: '文件', icon: 'folder' },
-        session: { label: '会话', icon: 'terminal' },
-        screen: { href: '/screen', label: '屏幕', icon: 'screen' },
-        command: { href: '/command', label: '命令', icon: 'play' },
-        settings: { href: '/settings', label: '设置', icon: 'settings' },
-    };
-    var TABS = [
-        { view: 'home', label: '控制台', icon: 'grid' },
-        { view: 'files', label: '文件', icon: 'folder' },
-        { view: 'session', label: '会话', icon: 'terminal' },
-        { view: 'more', label: '更多', icon: 'more' },
-    ];
-    var NAV = ['home', 'tasks', 'files', 'session', 'screen', 'command'];
+    // 导航配置唯一来源在 nav.js (WP_NAV); 这里只做派生, 不再各自维护一份
+    var VIEWS = {};
+    Object.keys(window.WP_NAV.views).forEach(function (key) {
+        VIEWS[key] = Object.assign({}, window.WP_NAV.views[key]);
+    });
+    var TABS = window.WP_NAV.primary.map(function (view) {
+        return { view: view, label: VIEWS[view].label, icon: VIEWS[view].icon };
+    }).concat([{ view: 'more', label: '更多', icon: 'more' }]);
+    var NAV = window.WP_NAV.primary.concat(window.WP_NAV.more);
 
     // 插件导航：服务端注入。原生插件作为壳内视图（iframe），legacy 走新标签页。
     var PLUGIN_NAV = (window.__WP_PLUGIN_NAV__ || []).filter(function (p) {

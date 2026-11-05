@@ -5,22 +5,23 @@ window.AppShell = (function () {
     var BRAND = ((document.querySelector('meta[name="wp-brand"]') || {}).content
                  || 'Deskport').trim() || 'Deskport';
     window.WP_BRAND = BRAND;
-    var PRIMARY = [
-        { href: '/', icon: 'grid', label: '控制台' },
-        { href: '/files', icon: 'folder', label: '文件' },
-        { href: '/terminal', icon: 'terminal', label: '会话', match: ['/terminal', '/ssh'] }
-    ];
+    // 导航配置唯一来源在 nav.js (WP_NAV); 这里只做派生
+    var PRIMARY = window.WP_NAV.primary.map(function (view) {
+        var d = window.WP_NAV.views[view];
+        var item = { href: d.href || '/terminal', icon: d.icon, label: d.label };
+        if (view === 'session') { item.match = ['/terminal', '/ssh']; }
+        return item;
+    });
     var sessionHref = '/terminal';
 
     function hrefOf(item) {
         return item.href === '/terminal' ? sessionHref : item.href;
     }
 
-    var MORE = [
-        { href: '/screen', icon: 'screen', label: '屏幕' },
-        { href: '/command', icon: 'play', label: '命令' },
-        { href: '/settings', icon: 'settings', label: '设置' }
-    ];
+    var MORE = window.WP_NAV.more.map(function (view) {
+        var d = window.WP_NAV.views[view];
+        return { href: d.href, icon: d.icon, label: d.label };
+    });
 
     // 插件导航：服务端注入，legacy 插件整页跳转（external），原生插件走壳内视图
     var PLUGIN_NAV = (window.__WP_PLUGIN_NAV__ || []).filter(function (p) {

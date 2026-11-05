@@ -33,7 +33,7 @@ INFRA = {'state', 'internal_api', 'events', 'fsutil', 'textio', 'media', 'contra
 ALLOWED_WINDOW = {'termManager', 'termUI', 'createSshSession', 'SSHUI',
                   'AppShell', 'AppShellV2', 'Icons', 'SftpMemory',
                   'SftpState', 'SftpMenu', 'SftpSelect', 'SftpTransfer',
-                  'FilesMethodsSelect', 'TermSidebar', 'TermGeometry',
+                  'FilesMethodsSelect', 'TermSidebar', 'TermGeometry', 'WP_NAV',
                   'TermClient', 'TermFeatures', 'toggleMultiExec', 'WPCommon',
                   'FilesMethodsCore', 'FilesMethodsOps', 'FilesMethodsUi', 'FilesMethodsAi',
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
