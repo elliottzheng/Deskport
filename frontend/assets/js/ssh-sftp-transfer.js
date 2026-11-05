@@ -80,13 +80,27 @@ window.SftpTransfer = (function () {
         });
         uploading = true;
         const BATCH = 20;
+        // 总字节数已知, 可以算出跨批次的整体百分比
+        const totalBytes = items.reduce(function (s, it) { return s + (it.file.size || 0); }, 0);
+        let sentBytes = 0;
         let done = 0;
         const failed = [];
+        const box = WPCommon.uploadBox;
+        box.open('SFTP 上传');
         try {
             for (let i = 0; i < items.length; i += BATCH) {
                 const slice = items.slice(i, i + BATCH);
-                toastMsg('上传中 ' + (done + 1) + '-' + (done + slice.length)
-                         + ' / ' + items.length);
+                const sliceBytes = slice.reduce(function (s, it) { return s + (it.file.size || 0); }, 0);
+                const baseSent = sentBytes;
+                const current = slice[0];
+                box.progress({
+                    file: slice.length > 1
+                        ? current.rel + ' 等 ' + slice.length + ' 个'
+                        : current.rel,
+                    label: done + 1 + '-' + (done + slice.length) + ' / ' + items.length
+                           + ' · ' + WPCommon.fmtSize(totalBytes),
+                    loaded: baseSent, total: totalBytes || 1,
+                });
                 const fd = new FormData();
                 fd.append('hostId', state().hostId);
                 fd.append('remoteDir', state().path);
@@ -94,27 +108,42 @@ window.SftpTransfer = (function () {
                     fd.append('files', it.file, it.file.name);
                     fd.append('paths', it.rel);
                 });
-                const r = await fetch('/api/ssh/sftp/upload-batch',
-                                      { method: 'POST', body: fd });
-                const data = await r.json().catch(function () { return {}; });
-                if (!r.ok) {
-                    failed.push(slice.map(function (it) {
-                        return it.rel + ': ' + (data.error || ('HTTP ' + r.status));
-                    }));
-                } else if (data.failed && data.failed.length) {
+                const data = await WPCommon.postProgress('/api/ssh/sftp/upload-batch', fd,
+                    function (loaded, total) {
+                        // 批内进度线性折算到整体
+                        var frac = total ? Math.min(1, loaded / total) : 1;
+                        box.progress({
+                            file: slice.length > 1
+                                ? current.rel + ' 等 ' + slice.length + ' 个'
+                                : current.rel,
+                            label: done + 1 + '-' + (done + slice.length) + ' / ' + items.length
+                                   + ' · ' + WPCommon.fmtSize(totalBytes),
+                            loaded: baseSent + Math.round(sliceBytes * frac),
+                            total: totalBytes || 1,
+                        });
+                    }, 0);
+                sentBytes += sliceBytes;
+                done += slice.length;
+                if (data.failed && data.failed.length) {
                     data.failed.forEach(function (f) {
                         failed.push((f.name || '') + ': ' + (f.error || '失败'));
                     });
                 }
-                done += slice.length;
+                box.progress({
+                    file: '', label: done + ' / ' + items.length,
+                    loaded: sentBytes, total: totalBytes || 1,
+                });
             }
-            toastMsg(failed.length
-                     ? ('上传完成，' + failed.length + ' 个失败')
-                     : ('已上传 ' + items.length + ' 个文件'));
             if (failed.length) {
+                box.finish(false, '上传完成，' + failed.length + ' 个失败');
                 alertMsg('部分上传失败:\n' + failed.slice(0, 8).join('\n'));
+            } else {
+                box.finish(true, '已上传 ' + items.length + ' 个文件');
             }
             await navigate(state().path || '.');
+        } catch (err) {
+            box.finish(false, '上传失败: ' + err.message);
+            alertMsg('上传失败: ' + err.message);
         } finally {
             uploading = false;
         }

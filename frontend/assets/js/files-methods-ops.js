@@ -91,24 +91,42 @@ window.FilesMethodsOps = {
                 this.toastMsg('请先进入某个磁盘或文件夹再上传');
                 return;
             }
+            const box = WPCommon.uploadBox, post = WPCommon.postProgress;
             const saveDir = this.useTempDir ? '' : this.currentPath;
-            for (const file of files) {
-                this.busy = true;
+            this.busy = true;
+            box.open('上传文件');
+            let okCount = 0;
+            const failed = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const label = files.length > 1
+                    ? (i + 1) + '/' + files.length + ' · ' + WPCommon.fmtSize(file.size)
+                    : WPCommon.fmtSize(file.size);
+                box.progress({ file: file.name, label: label, percent: 0 });
                 try {
                     const fd = new FormData();
                     fd.append('file', file);
                     fd.append('path', saveDir);
                     fd.append('execute', this.executeAfter ? 'true' : 'false');
                     fd.append('tempdir', this.useTempDir ? 'true' : 'false');
-                    const r = await fetch('/api/files/upload', { method: 'POST', body: fd });
-                    const data = await r.json();
-                    if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                    this.toastMsg('已上传: ' + (data.warn || data.filename));
+                    const data = await post('/api/files/upload', fd, function (loaded, total) {
+                        box.progress({ file: file.name, label: label,
+                                       percent: Math.round(loaded / total * 100) });
+                    });
+                    okCount += 1;
+                    box.progress({ file: file.name, label: label, percent: 100 });
+                    if (data.warn) { this.toastMsg(data.warn); }
                 } catch (err) {
-                    this.toastMsg('上传失败: ' + err.message);
-                } finally {
-                    this.busy = false;
+                    failed.push(file.name + ': ' + err.message);
+                    box.progress({ file: file.name, label: label, percent: 100 });
                 }
+            }
+            this.busy = false;
+            if (failed.length) {
+                box.finish(false, '上传失败 ' + failed.length + ' 个');
+                this.toastMsg('上传失败: ' + failed[0]);
+            } else {
+                box.finish(true, '已上传 ' + okCount + ' 个文件');
             }
             await this.refresh();
         },
@@ -192,25 +210,40 @@ window.FilesMethodsOps = {
             this.toastMsg('请先进入某个磁盘或文件夹再上传');
             return;
         }
+        const box = WPCommon.uploadBox, post = WPCommon.postProgress;
         this.busy = true;
+        box.open('拖入上传');
         let okCount = 0;
         const failed = [];
-        for (const file of files) {
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const label = files.length > 1
+                ? (i + 1) + '/' + files.length + ' · ' + WPCommon.fmtSize(file.size)
+                : WPCommon.fmtSize(file.size);
+            box.progress({ file: file.name, label: label, percent: 0 });
             try {
                 const fd = new FormData();
                 fd.append('file', file);
                 fd.append('path', this.useTempDir ? '' : this.currentPath);
-                const r = await fetch('/api/files/upload', { method: 'POST', body: fd });
-                if (r.ok) { okCount += 1; }
-                else {
-                    const d = await r.json().catch(() => ({}));
-                    failed.push(file.name + ': ' + (d.error || ('HTTP ' + r.status)));
-                }
-            } catch (err) { failed.push(file.name + ': ' + err.message); }
+                const data = await post('/api/files/upload', fd, function (loaded, total) {
+                    box.progress({ file: file.name, label: label,
+                                   percent: Math.round(loaded / total * 100) });
+                });
+                okCount += 1;
+                box.progress({ file: file.name, label: label, percent: 100 });
+                if (data.warn) { this.toastMsg(data.warn); }
+            } catch (err) {
+                failed.push(file.name + ': ' + err.message);
+                box.progress({ file: file.name, label: label, percent: 100 });
+            }
         }
         this.busy = false;
-        this.toastMsg('拖入上传完成 ' + okCount + '/' + files.length
-                      + (failed.length ? ' (失败: ' + failed[0] + ')' : ''));
+        if (failed.length) {
+            box.finish(false, '拖入上传失败 ' + failed.length + ' 个');
+            this.toastMsg('拖入上传失败: ' + failed[0]);
+        } else {
+            box.finish(true, '已上传 ' + okCount + ' 个文件');
+        }
         await this.refresh();
     },
 

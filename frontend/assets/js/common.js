@@ -99,12 +99,116 @@
         return new Promise(function (resolve) { confirmResolve = resolve; });
     }
 
+    // ---- 上传进度卡片 ----
+    // fetch 不暴露上传进度, 所以需要进度条的上传走 XMLHttpRequest。
+    // 卡片 DOM 只建一次复用 (与 confirm 同一个坑: 重建会让 getElementById
+    // 拿到 orphan 节点)。
+    var uplEl = null;
+    var uplHideTimer = null;
+
+    function uplEnsure() {
+        if (uplEl) { return; }
+        uplEl = document.createElement('div');
+        uplEl.className = 'upl-box';
+        uplEl.id = 'wp-upl';
+        uplEl.innerHTML =
+            '<div class="upl-title" id="wp-upl-title"></div>' +
+            '<div class="upl-file" id="wp-upl-file"></div>' +
+            '<div class="upl-bar"><i id="wp-upl-fill"></i></div>' +
+            '<div class="upl-row">' +
+            '<span id="wp-upl-left"></span><span id="wp-upl-pct"></span></div>';
+        document.body.appendChild(uplEl);
+    }
+
+    function fmtPct(loaded, total) {
+        if (!total) { return '0%'; }
+        return Math.min(100, Math.round(loaded / total * 100)) + '%';
+    }
+
+    function uploadOpen(title) {
+        uplEnsure();
+        clearTimeout(uplHideTimer);
+        uplEl.className = 'upl-box';
+        uplEl.style.display = 'block';
+        uplEl.querySelector('#wp-upl-title').textContent = title || '上传中';
+        uplEl.querySelector('#wp-upl-file').textContent = '';
+        uplEl.querySelector('#wp-upl-fill').style.width = '0';
+        uplEl.querySelector('#wp-upl-left').textContent = '';
+        uplEl.querySelector('#wp-upl-pct').textContent = '0%';
+    }
+
+    function uploadProgress(opts) {
+        if (!uplEl) { return; }
+        opts = opts || {};
+        uplEl.classList.remove('is-ok', 'is-err');
+        if (opts.file) {
+            uplEl.querySelector('#wp-upl-file').textContent = opts.file;
+            uplEl.querySelector('#wp-upl-file').title = opts.file;
+        }
+        if (opts.label) { uplEl.querySelector('#wp-upl-left').textContent = opts.label; }
+        var pct = opts.percent;
+        if (pct === undefined && opts.loaded !== undefined && opts.total) {
+            pct = Math.round(opts.loaded / opts.total * 100);
+        }
+        uplEl.querySelector('#wp-upl-pct').textContent = (pct || 0) + '%';
+        uplEl.querySelector('#wp-upl-fill').style.width = (pct || 0) + '%';
+    }
+
+    function uploadFinish(ok, text) {
+        if (!uplEl) { return; }
+        uplEl.classList.toggle('is-ok', !!ok);
+        uplEl.classList.toggle('is-err', !ok);
+        uplEl.querySelector('#wp-upl-title').textContent = text || (ok ? '已完成' : '失败');
+        uplEl.querySelector('#wp-upl-fill').style.width = '100%';
+        uplEl.querySelector('#wp-upl-pct').textContent = ok ? '100%' : '';
+        clearTimeout(uplHideTimer);
+        uplHideTimer = setTimeout(function () {
+            uplEl.style.display = 'none';
+            uplEl.classList.remove('is-ok', 'is-err');
+        }, 2600);
+    }
+
+    function uploadClose() {
+        if (uplEl) { uplEl.style.display = 'none'; }
+        clearTimeout(uplHideTimer);
+    }
+
+    // 用 XMLHttpRequest POST 表单并回调上传进度 (fetch 不支持上传进度)
+    function postProgress(url, formData, onProgress, timeoutMs) {
+        return new Promise(function (resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', url);
+            xhr.timeout = timeoutMs || 0;
+            xhr.upload.onprogress = function (e) {
+                if (e.lengthComputable && onProgress) {
+                    onProgress(e.loaded, e.total);
+                }
+            };
+            xhr.onload = function () {
+                var data = {};
+                try { data = JSON.parse(xhr.responseText); } catch (err) { /* 非 JSON */ }
+                if (xhr.status >= 200 && xhr.status < 300) { resolve(data); }
+                else { reject(new Error(data.error || ('HTTP ' + xhr.status))); }
+            };
+            xhr.onerror = function () { reject(new Error('网络错误')); };
+            xhr.ontimeout = function () { reject(new Error('请求超时')); };
+            xhr.send(formData);
+        });
+    }
+
     window.WPCommon = {
         fmtSize: fmtSize,
         fmtTime: fmtTime,
         fmtAgo: fmtAgo,
         escapeHtml: escapeHtml,
         confirm: confirmDialog,
+        uploadBox: {
+            open: uploadOpen,
+            progress: uploadProgress,
+            finish: uploadFinish,
+            close: uploadClose,
+        },
+        postProgress: postProgress,
     };
 
     // ---- 统一 tooltip：把分散的原生 title 升级成可读的悬浮说明 ----

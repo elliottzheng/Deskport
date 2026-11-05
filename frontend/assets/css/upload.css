@@ -1,0 +1,62 @@
+/* 上传进度卡片 — 本地上传/拖拽上传/SFTP 上传共用 (fetch 不暴露上传进度,
+   走 XMLHttpRequest 的 upload.onprogress) */
+/* ====== 上传进度卡片 ====== */
+.upl-box {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 400;
+    width: 320px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-float);
+    padding: 12px 14px;
+    display: none;
+}
+.upl-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.upl-file {
+    font-size: 12px;
+    color: var(--text-3);
+    margin: var(--sp-1) 0 var(--sp-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.upl-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--bg-2);
+    overflow: hidden;
+}
+.upl-bar > i {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--brand);
+    border-radius: 999px;
+    transition: width .12s ease;
+}
+.upl-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--sp-2);
+    font-size: 12px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+}
+.upl-box.is-ok  .upl-bar > i { background: var(--ok); }
+.upl-box.is-ok  .upl-title { color: var(--ok); }
+.upl-box.is-err .upl-bar > i { background: var(--err); }
+.upl-box.is-err .upl-title { color: var(--err); }
+.upl-box.is-done .upl-file { color: var(--text-2); }
+
+@media (max-width: 640px) {
+    .upl-box {
+        left: var(--sp-4);
+        right: var(--sp-4);
+        width: auto;
+        bottom: calc(var(--sp-4) + env(safe-area-inset-bottom, 0px));
+    }
+}
