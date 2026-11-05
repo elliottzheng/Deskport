@@ -176,8 +176,7 @@ window.TermFeatures = (function () {
                           (multiExecSet.has(s.uid) ? ' checked' : '') + '></label>'
                         : '') +
                     '<span class="session-badge ' + s.kind + (s.remote ? ' remote' : '') + '">' +
-                        (s.remote ? TermClient.escapeHtml(s.machine || '远端')
-                                  : (s.kind === 'ssh' ? 'SSH' : '本地')) + '</span>' +
+                        (s.remote ? '远端' : (s.kind === 'ssh' ? 'SSH' : '本地')) + '</span>' +
                     '<span class="session-name">' + TermClient.escapeHtml(displayName(s)) + '</span>' +
                     '<span class="session-state">' + TermClient.stateText(s) + '</span>' +
                     '<button class="session-close" title="关闭终端">&times;</button>';
