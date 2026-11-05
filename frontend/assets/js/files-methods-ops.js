@@ -85,6 +85,12 @@ window.FilesMethodsOps = {
             const files = Array.from(ev.target.files || []);
             ev.target.value = '';
             if (!files.length) { return; }
+            // 「此电脑」根视图没有真实目录, 后端会 400; 这里提前说明, 别让用户
+            // 选完文件才看到一句"无效的保存目录"
+            if (!this.canUpload) {
+                this.toastMsg('请先进入某个磁盘或文件夹再上传');
+                return;
+            }
             const saveDir = this.useTempDir ? '' : this.currentPath;
             for (const file of files) {
                 this.busy = true;
@@ -182,8 +188,13 @@ window.FilesMethodsOps = {
         this.dragOver = false;
         const files = Array.from((ev.dataTransfer && ev.dataTransfer.files) || []);
         if (!files.length) { return; }
+        if (!this.canUpload) {
+            this.toastMsg('请先进入某个磁盘或文件夹再上传');
+            return;
+        }
         this.busy = true;
         let okCount = 0;
+        const failed = [];
         for (const file of files) {
             try {
                 const fd = new FormData();
@@ -191,10 +202,15 @@ window.FilesMethodsOps = {
                 fd.append('path', this.useTempDir ? '' : this.currentPath);
                 const r = await fetch('/api/files/upload', { method: 'POST', body: fd });
                 if (r.ok) { okCount += 1; }
-            } catch (err) { /* 单个失败继续 */ }
+                else {
+                    const d = await r.json().catch(() => ({}));
+                    failed.push(file.name + ': ' + (d.error || ('HTTP ' + r.status)));
+                }
+            } catch (err) { failed.push(file.name + ': ' + err.message); }
         }
         this.busy = false;
-        this.toastMsg('拖入上传完成 ' + okCount + '/' + files.length);
+        this.toastMsg('拖入上传完成 ' + okCount + '/' + files.length
+                      + (failed.length ? ' (失败: ' + failed[0] + ')' : ''));
         await this.refresh();
     },
 

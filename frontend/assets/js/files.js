@@ -119,6 +119,11 @@ createApp({
     computed: {
         drives() { return this.drivesCache; },
         quickList() { return this.pins; },
+        // 「此电脑」根视图没有真实目录, 后端会以 400 拒绝; 提前禁用并说明,
+        // 而不是让用户选完文件才看到"无效的保存目录"
+        canUpload() {
+            return !!this.currentPath && this.currentPath !== '/' && this.loc !== 'inbox';
+        },
         visibleEntries() {
             let list = this.entries;
             if (!this.showHidden) {

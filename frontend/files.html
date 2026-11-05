@@ -63,7 +63,9 @@
                     <button class="btn btn-secondary" v-if="clipboard && loc !== 'inbox'" @click="pasteClipboard">
                         粘贴到此处 ({{ clipboard.paths.length }})
                     </button>
-                    <button class="btn btn-primary" v-if="loc !== 'inbox'" @click="pickLocalFile" :disabled="loading">
+                    <button class="btn btn-primary" v-if="loc !== 'inbox'" @click="pickLocalFile"
+                            :disabled="loading || !canUpload"
+                            :title="canUpload ? '上传文件到当前目录' : '请先进入某个磁盘或文件夹再上传 (此电脑视图没有可保存的目录)'">
                         <i data-icon="upload"></i>
                         本地上传
                     </button>

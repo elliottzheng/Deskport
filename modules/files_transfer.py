@@ -150,8 +150,14 @@ def upload():
         saveDir = tempfile.gettempdir()
     if not file or file.filename == '':
         return jsonify({'error': '未选择文件'}), 400
-    if not saveDir or saveDir == '/':
+    # 「此电脑」根视图 (path='/') 没有可保存的目录; 相对路径会落到守护进程的
+    # cwd (曾表现为 500 No such file / 写在 Git 安装目录里), 一律明确拒绝
+    if not saveDir or saveDir in ('/', '.'):
         return jsonify({'error': '无效的保存目录'}), 400
+    if not os.path.isabs(saveDir):
+        return jsonify({'error': '保存目录必须是绝对路径: %s' % saveDir}), 400
+    if not os.path.isdir(saveDir):
+        return jsonify({'error': '保存目录不存在: %s' % saveDir}), 400
     savePath = os.path.join(saveDir, file.filename)
     try:
         file.save(savePath)
