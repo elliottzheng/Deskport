@@ -62,6 +62,8 @@ createApp({
             toastTimer: null,
             previewTarget: null,
             previewMode: '',
+            previewIsMd: false,
+            previewMdHtml: '',
             previewContent: '',
             previewSrc: '',
             previewTruncated: false,

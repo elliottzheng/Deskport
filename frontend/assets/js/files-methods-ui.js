@@ -115,9 +115,12 @@ window.FilesMethodsUi = {
                 this.previewSrc = '/api/files/thumb?path=' + encodeURIComponent(e.path);   // FM-13 预览用缩略图
                 return;
             }
-            this.previewMode = 'text';
+            // Markdown 默认进渲染视图; previewContent 始终保留源码, 供切换编辑
+            this.previewIsMd = this.isMarkdownEntry(e);
+            this.previewMode = this.previewIsMd && !forceText ? 'markdown' : 'text';
             this.previewTarget = e;
             this.previewContent = '加载中…';
+            this.previewMdHtml = '';
             try {
                 const r = await fetch('/api/files/read', {
                     method: 'POST',
@@ -130,10 +133,28 @@ window.FilesMethodsUi = {
                 this.previewTruncated = !!data.truncated;
                 this.previewLossy = !!data.lossy;
                 this.previewEncoding = data.encoding || 'utf-8';
+                if (this.previewMode === 'markdown') { this.renderPreviewMd(); }
             } catch (err) {
                 this.previewContent = '';
                 this.previewError = '无法预览：' + err.message;
             }
+        },
+        isMarkdownEntry(e) {
+            return e.type === 'file' && ['md', 'markdown'].includes(this.extOf(e));   // extOf 不带点
+        },
+        renderPreviewMd() {
+            // html:false 让 markdown-it 把源里的 HTML 当文本转义, 防 XSS;
+            // 链接的 javascript: 等协议由 markdown-it 默认 validateLink 拦截
+            this.previewMdHtml = window.markdownit
+                ? window.markdownit({ html: false, linkify: true }).render(this.previewContent || '')
+                : '';
+        },
+        showMdPreview() {
+            this.renderPreviewMd();          // 从(可能编辑过的)源码重新渲染
+            this.previewMode = 'markdown';
+        },
+        showMdSource() {
+            this.previewMode = 'text';       // 复用文本编辑路径 (textarea)
         },
         async savePreview() {
             if (this.previewLossy) { this.toastMsg('二进制文件只读，不能保存'); return; }
