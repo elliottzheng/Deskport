@@ -82,7 +82,11 @@ def download():
         return jsonify({'error': '文件不存在'}), 404
     print('[download] %s size=%d ua=%s' % (os.path.basename(path), os.path.getsize(path), ua),
           flush=True)
-    return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+    # inline=1: 给 <img> 预览用原图 (缩略图放大会糊); 子资源加载不受
+    # Content-Disposition 影响, 但语义上不该标成附件
+    inline = request.args.get('inline') == '1'
+    return send_file(path, as_attachment=not inline,
+                     download_name=os.path.basename(path))
 
 
 @blueprint.route('/api/files/rename', methods=['POST'])

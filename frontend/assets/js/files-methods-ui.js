@@ -112,9 +112,11 @@ window.FilesMethodsUi = {
             if (!forceText && this.isImageEntry(e)) {
                 this.previewMode = 'image';
                 this.previewTarget = e;
-                this.previewSrc = '/api/files/thumb?path=' + encodeURIComponent(e.path);   // FM-13 预览用缩略图
-                // 图片默认全屏: 手机上弹窗内看图太小 (用户反馈)。必须在双击的
-                // user-activation 内发起 Fullscreen 请求, 过了 fetch 就失效了
+                // 两段式: 缩略图先秒开, 原图 (inline) 加载完自动替换。
+                // 缩略图放大会糊 —— 全屏预览必须用原图
+                this.previewShownSrc = '/api/files/thumb?path=' + encodeURIComponent(e.path);
+                this.previewFullSrc = '/api/files/download?path=' + encodeURIComponent(e.path)
+                                      + '&inline=1';
                 this.previewFullscreen = true;
                 this.$nextTick(() => { WPCommon.fullscreenToggle(this.$refs.previewBox); });
                 return;
@@ -187,7 +189,11 @@ window.FilesMethodsUi = {
                 alert('保存失败: ' + err.message);
             }
         },
-        closePreview() { this.previewTarget = null; },
+        closePreview() {
+            this.previewTarget = null;
+            this.previewShownSrc = '';
+            this.previewFullSrc = '';
+        },
 
         // ---- FM-13 缩略图 ----
         isImageEntry(e) {

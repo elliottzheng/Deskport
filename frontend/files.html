@@ -267,8 +267,11 @@
                 <div class="modal-title">{{ previewTarget.name }}
                     <span class="preview-truncated" v-if="previewTruncated">（超过 2MB，仅显示前 2MB）</span>
                 </div>
-                <img v-if="previewMode === 'image'" class="preview-img" :src="previewSrc" alt="预览"
+                <img v-if="previewMode === 'image'" class="preview-img" :src="previewShownSrc" alt="预览"
                      title="点击进入/退出全屏" @click="togglePreviewFullscreen">
+                <img v-if="previewMode === 'image' && previewShownSrc !== previewFullSrc"
+                     :src="previewFullSrc" style="display:none" alt=""
+                     @load="previewShownSrc = previewFullSrc">
                 <div v-else-if="previewMode === 'markdown'" class="preview-md" v-html="previewMdHtml"></div>
                 <textarea v-else class="preview-text" v-model="previewContent" spellcheck="false"></textarea>
                 <p class="load-error" v-if="previewError" style="margin-top:10px">{{ previewError }}</p>
