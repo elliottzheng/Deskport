@@ -22,6 +22,22 @@ HOST = '127.0.0.1'
 USER_PASSWORD = ('test', 'pass123')
 USER_KBI = 'kbi'
 
+_hostKey = None
+_hostKeyLock = threading.Lock()
+
+
+def serverHostKey():
+    """进程内唯一主机密钥。
+
+    真实 sshd 的主机密钥跨连接稳定; 早期实现每次连接新生成一个, 导致
+    TOFU(首次自动信任 -> 重连判"密钥已变更")必然失败, 也与真实行为不符。
+    """
+    global _hostKey
+    with _hostKeyLock:
+        if _hostKey is None:
+            _hostKey = paramiko.RSAKey.generate(2048)
+        return _hostKey
+
 
 class FakeSFTPHandle(paramiko.SFTPHandle):
     """文件句柄: 基于本地真实文件的读写。"""
@@ -196,7 +212,7 @@ def shellEchoThread(channel):
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         transport = paramiko.Transport(self.request)
-        transport.add_server_key(paramiko.RSAKey.generate(2048))
+        transport.add_server_key(serverHostKey())
         server = FakeServer(self.server.root)
         try:
             transport.start_server(server=server)

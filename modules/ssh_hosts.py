@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import os
 import secrets
 import threading
 import time
@@ -21,51 +22,85 @@ def _knownHostsPath():
 
 # ---- 连接注册表 ----
 class HostRepository:
-    """主机/凭据仓储：JSON 文件读写，原子写由 state 统一负责。"""
+    """主机/凭据仓储：JSON 文件读写，原子写由 state 统一负责。
+
+    两个设计要点:
+
+    1. 按 mtime 缓存（与 config.load 同一范式），不用一次性 loaded 标志：
+       主机 CRUD 走 web 进程，而 /api/ssh/ws 由 sessiond 进程处理，两边是
+       不同进程的各自实例。若只加载一次，web 里新加的主机对 sessiond 永远
+       不可见，表现为"加完主机却连不上"，且要重启守护进程才好。
+    2. 读-改-写全程持锁（RLock）：load() 若整体替换 self.store，会把另一线程
+       正在进行的增删冲掉。曾由并发回归测试暴露（16 条残留）。
+    """
 
     def __init__(self, path=None):
         self.path = path
         self.store = {'hosts': []}
-        self.loaded = False
+        self.mtime = None
+        self.lock = threading.RLock()
 
     def filePath(self):
         return self.path or config.statePath('ssh_hosts.json')
 
-    def load(self):
-        if self.loaded:
+    def _fileMtime(self):
+        try:
+            return os.stat(self.filePath()).st_mtime_ns
+        except OSError:
+            return None
+
+    def _readFileLocked(self):
+        """文件变更才重读; 读取失败保留上次已知内容（不清空，与 federation 一致）。"""
+        mtime = self._fileMtime()
+        if mtime is not None and self.mtime == mtime:
             return
-        self.loaded = True
         try:
             with open(self.filePath(), encoding='utf-8') as f:
                 data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get('hosts'), list):
-                self.store = data
         except (OSError, ValueError):
-            pass
+            return
+        if isinstance(data, dict) and isinstance(data.get('hosts'), list):
+            self.store = data
+            self.mtime = mtime
 
-    def save(self):
+    def _writeLocked(self):
         from modules import state
         state.atomicWriteJson(self.filePath(), self.store)
+        self.mtime = self._fileMtime()
+
+    def load(self):
+        with self.lock:
+            self._readFileLocked()
+
+    def save(self):
+        with self.lock:
+            self._writeLocked()
 
     def find(self, hostId):
-        self.load()
-        return next((h for h in self.store.get('hosts', []) if h['id'] == hostId), None)
+        with self.lock:
+            self._readFileLocked()
+            return next((h for h in self.store.get('hosts', []) if h['id'] == hostId), None)
 
     def all(self):
-        self.load()
-        return list(self.store.get('hosts', []))
+        with self.lock:
+            self._readFileLocked()
+            return list(self.store.get('hosts', []))
 
     def upsert(self, entry):
-        self.load()
-        existing = self.find(entry['id'])
-        if existing is None:
-            self.store['hosts'].append(entry)
-        else:
-            self.store['hosts'][self.store['hosts'].index(existing)] = entry
+        with self.lock:
+            self._readFileLocked()
+            hosts = self.store.setdefault('hosts', [])
+            existing = next((h for h in hosts if h['id'] == entry['id']), None)
+            if existing is None:
+                hosts.append(entry)
+            else:
+                hosts[hosts.index(existing)] = entry
 
     def remove(self, hostId):
-        self.load()
-        self.store['hosts'] = [h for h in self.store['hosts'] if h['id'] != hostId]
+        with self.lock:
+            self._readFileLocked()
+            self.store['hosts'] = [h for h in self.store.get('hosts', [])
+                                   if h['id'] != hostId]
 
 
 class ConnectionRegistry:
