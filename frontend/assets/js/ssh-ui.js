@@ -111,7 +111,8 @@ const SSHUI = (function () {
         const id = $('ssh-host-id').value;
         if (!id) { return; }
         const h = hosts.find(x => x.id === id);
-        if (!window.confirm('确定删除连接「' + (h ? h.name : id) + '」？活跃连接将被断开。')) { return; }
+        if (!await WPCommon.confirm('确定删除连接「' + (h ? h.name : id) + '」？活跃连接将被断开。',
+                                    { okText: '删除', danger: true })) { return; }
         try {
             await api('/api/ssh/hosts/' + id, { method: 'DELETE' });
             $('ssh-host-modal').style.display = 'none';
@@ -158,16 +159,19 @@ const SSHUI = (function () {
                     '主机: ' + data.host + ':' + data.port + '\n' +
                     '指纹: ' + data.fingerprint + '\n\n' +
                     (changed ? '确认无中间人攻击并继续？(将更新已存指纹)' : '信任并保存该指纹？');
-                if (window.confirm(msg)) {
-                    api('/api/ssh/hostkey/trust', {
-                        method: 'POST',
-                        body: JSON.stringify({ host: data.host, port: data.port,
-                                               fingerprint: data.fingerprint }),
-                    }).then(() => {
+                WPCommon.confirm(msg, { title: 'SSH 主机密钥', okText: '信任', danger: changed })
+                    .then(function (ok) {
+                        if (!ok) { return; }
+                        return api('/api/ssh/hostkey/trust', {
+                            method: 'POST',
+                            body: JSON.stringify({ host: data.host, port: data.port,
+                                                   fingerprint: data.fingerprint }),
+                        });
+                    })
+                    .then(function () {
                         createSshSession(h.id, h.name);
                         setSidebar(true);
                     });
-                }
             })
             .catch(err => alert('主机密钥检查失败: ' + err.message));
     }
@@ -242,19 +246,23 @@ const SSHUI = (function () {
     function showHostKeyChanged(session, obj) {
         const h = hosts.find(x => x.id === (session && session.hostId));
         const name = h ? (h.host + ':' + (h.port || 22)) : ((session && session.label) || '主机');
-        if (!window.confirm('安全告警：' + name + '\n' + ((obj && obj.msg) || '主机密钥与已存指纹不符') +
-            '\n可能存在中间人攻击，已停止自动重连。\n\n确认无误并重新信任该主机当前指纹？')) {
-            return;
-        }
-        if (!h) { alert('未找到主机条目，无法更新指纹'); return; }
-        fetch('/api/ssh/hostkey/check?hostId=' + encodeURIComponent(h.id))
-            .then(r => r.json())
-            .then(data => api('/api/ssh/hostkey/trust', {
-                method: 'POST',
-                body: JSON.stringify({ host: data.host, port: data.port, fingerprint: data.fingerprint }),
-            }))
-            .then(() => alert('已更新指纹，可从主机列表重新连接'))
-            .catch(err => alert('更新指纹失败: ' + err.message));
+        WPCommon.confirm('安全告警：' + name + '\n' + ((obj && obj.msg) || '主机密钥与已存指纹不符') +
+            '\n可能存在中间人攻击，已停止自动重连。\n\n确认无误并重新信任该主机当前指纹？',
+            { title: '主机密钥已变更', okText: '重新信任', danger: true })
+            .then(async function (ok) {
+                if (!ok) { return; }
+                if (!h) { alert('未找到主机条目，无法更新指纹'); return; }
+                try {
+                    const data = await fetch('/api/ssh/hostkey/check?hostId='
+                        + encodeURIComponent(h.id)).then(r => r.json());
+                    await api('/api/ssh/hostkey/trust', {
+                        method: 'POST',
+                        body: JSON.stringify({ host: data.host, port: data.port,
+                                               fingerprint: data.fingerprint }),
+                    });
+                    alert('已更新指纹，可从主机列表重新连接');
+                } catch (err) { alert('更新指纹失败: ' + err.message); }
+            });
     }
 
     function showAuthPrompt(session, frame) {

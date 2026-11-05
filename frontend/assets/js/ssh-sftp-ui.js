@@ -86,10 +86,12 @@ window.SSHSftpUI = (function (ctx) {
             btn.addEventListener('click', function () { navigate(p); });
             btn.addEventListener('contextmenu', function (ev) {
                 ev.preventDefault();
-                if (confirm('取消固定 ' + p + ' ？')) {
-                    SftpMemory.unpin(S.state.hostId, p);
-                    renderQuick();
-                }
+                WPCommon.confirm('取消固定 ' + p + ' ？', { okText: '取消固定', danger: true })
+                    .then(function (ok) {
+                        if (!ok) { return; }
+                        SftpMemory.unpin(S.state.hostId, p);
+                        renderQuick();
+                    });
             });
             box.appendChild(btn);
         });
@@ -219,7 +221,8 @@ window.SSHSftpUI = (function (ctx) {
     async function deleteSelected() {
         const paths = Object.keys(S.state.sel);
         if (!paths.length) { toastMsg('请先选中'); return; }
-        if (!window.confirm('删除选中的 ' + paths.length + ' 项？(不可恢复)')) { return; }
+        if (!await WPCommon.confirm('删除选中的 ' + paths.length + ' 项？(不可恢复)',
+                                    { okText: '删除', danger: true })) { return; }
         for (const p of paths) {
             try {
                 await api('/api/ssh/sftp/delete', {

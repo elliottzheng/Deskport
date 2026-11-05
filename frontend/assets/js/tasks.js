@@ -262,7 +262,8 @@
             },
             async closeSession() {
                 if (!this.selectedId) { return; }
-                if (!window.confirm('结束这个会话？之后不能再继续追问。')) { return; }
+                if (!await WPCommon.confirm('结束这个会话？之后不能再继续追问。',
+                                            { okText: '结束', danger: true })) { return; }
                 await fetch('/api/tasks/' + this.selectedId + '/close', { method: 'POST' });
                 await this.loadEvents();
             },
