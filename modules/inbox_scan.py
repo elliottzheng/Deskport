@@ -28,7 +28,27 @@ KIND_MAP = {
     'media': {'.mp4', '.mov', '.avi', '.mkv', '.mp3', '.wav', '.m4a'},
 }
 
-_hashCache = {}
+class _DigestCache:
+    """有界内存摘要缓存: 按 (path, size, mtime) 键记忆, 不落盘。
+
+    原先是模块级裸字典 + 在调用点里判长度清空; 收进类后"满了怎么办"
+    只有一个实现。
+    """
+
+    def __init__(self, limit=2000):
+        self.limit = limit
+        self.map = {}
+
+    def get(self, key):
+        return self.map.get(key)
+
+    def put(self, key, value):
+        if len(self.map) > self.limit:
+            self.map.clear()
+        self.map[key] = value
+
+
+_hashCache = _DigestCache()
 
 # 微信/浏览器重复保存时的副本后缀: (1)/(2)、全角（1）、 - 副本、副本
 _COPY_SUFFIX = re.compile(
@@ -99,53 +119,79 @@ def _sha256(path, limit=HASH_LIMIT):
             for chunk in iter(lambda: f.read(1024 * 1024), b''):
                 h.update(chunk)
         digest = h.hexdigest()
-        if len(_hashCache) > 2000:
-            _hashCache.clear()
-        _hashCache[key] = digest
+        _hashCache.put(key, digest)
         return digest
     except OSError:
         return None
 
 
 FINGERPRINT_BYTES = 64 * 1024
-_fpCache = {}
-_fpLoaded = False
-_fpDirty = False
-_fpLastSave = 0.0
 
 
-def _loadFingerprints():
-    """把上次算过的指纹从状态目录读回，重启后不必重新读盘/过杀软。"""
-    global _fpLoaded
-    if _fpLoaded:
-        return
-    _fpLoaded = True
-    try:
-        with open(config.statePath('inbox-fingerprints.json'), encoding='utf-8') as f:
-            for path, size, mtime, digest in json.load(f):
-                _fpCache[(path, int(size), int(mtime))] = digest
-    except (OSError, ValueError, TypeError):
-        _fpCache.clear()
+class _FingerprintCache:
+    """内容指纹缓存: 内存字典 + 落盘, 重启不重算。
+
+    原先是 4 个模块级全局 (_fpCache/_fpLoaded/_fpDirty/_fpLastSave), 每个
+    函数各自 global 声明, 状态散落三处。收进类后只有一个持有者
+    (与 tasks_store._LazyRepo 同一做法)。
+
+    pathFn 延迟求值: config.stateDir 可能随配置变化, 不能在 import 时定格。
+    """
+
+    SAVE_INTERVAL = 30.0
+    LIMIT = 5000
+
+    def __init__(self, pathFn):
+        self.pathFn = pathFn
+        self.map = {}
+        self.loaded = False
+        self.dirty = False
+        self.lastSave = 0.0
+
+    def load(self):
+        """把上次算过的指纹从状态目录读回，重启后不必重新读盘/过杀软。"""
+        if self.loaded:
+            return
+        self.loaded = True
+        try:
+            with open(self.pathFn(), encoding='utf-8') as f:
+                for path, size, mtime, digest in json.load(f):
+                    self.map[(path, int(size), int(mtime))] = digest
+        except (OSError, ValueError, TypeError):
+            self.map.clear()
+
+    def get(self, key):
+        self.load()
+        return self.map.get(key)
+
+    def put(self, key, digest):
+        self.load()
+        if len(self.map) > self.LIMIT:
+            self.map.clear()
+        self.map[key] = digest
+        self.dirty = True
+        self.save()
+
+    def save(self, force=False):
+        if not self.dirty:
+            return
+        now = time.time()
+        if not force and now - self.lastSave < self.SAVE_INTERVAL:
+            return
+        try:
+            target = self.pathFn()
+            tmp = target + '.tmp'
+            payload = [[k[0], k[1], k[2], v] for k, v in self.map.items()]
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, target)
+            self.dirty = False
+            self.lastSave = now
+        except OSError:
+            pass
 
 
-def _saveFingerprints(force=False):
-    global _fpDirty, _fpLastSave
-    if not _fpDirty:
-        return
-    now = time.time()
-    if not force and now - _fpLastSave < 30:
-        return
-    try:
-        target = config.statePath('inbox-fingerprints.json')
-        tmp = target + '.tmp'
-        payload = [[k[0], k[1], k[2], v] for k, v in _fpCache.items()]
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp, target)
-        _fpDirty = False
-        _fpLastSave = now
-    except OSError:
-        pass
+_fpCache = _FingerprintCache(lambda: config.statePath('inbox-fingerprints.json'))
 
 
 def _fingerprint(path):
@@ -155,8 +201,6 @@ def _fingerprint(path):
     做全量 SHA-256 会让冷启动扫盘耗时数分钟(实测 544 个副本共 2.19GB)；
     头+尾采样已足够区分实际内容不同的文件。指纹落盘缓存, 重启不重算。
     """
-    global _fpDirty
-    _loadFingerprints()
     try:
         st = os.stat(path)
         size = st.st_size
@@ -174,11 +218,7 @@ def _fingerprint(path):
             elif size > FINGERPRINT_BYTES:
                 h.update(f.read())
         digest = h.hexdigest()
-        if len(_fpCache) > 5000:
-            _fpCache.clear()
-        _fpCache[key] = digest
-        _fpDirty = True
-        _saveFingerprints()
+        _fpCache.put(key, digest)
         return digest
     except OSError:
         return None
@@ -268,7 +308,7 @@ def inboxRecent():
     limit = min(int(request.args.get('limit') or 80), 300)
     t0 = time.perf_counter()
     items = _dedupe(_scanFiles())
-    _saveFingerprints(force=True)
+    _fpCache.save(force=True)
     total = len(items)
     log.info('inbox scan items=%d total=%d %.0fms', len(items), total,
              (time.perf_counter() - t0) * 1000)
