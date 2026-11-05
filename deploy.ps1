@@ -31,12 +31,20 @@ if (Test-Path $cfgPath) {
 $webPort = if ($cfg -and $cfg.port) { [int]$cfg.port } else { 6789 }
 $localPort = if ($cfg -and $cfg.sessiondUrl) { ([uri]$cfg.sessiondUrl).Port } else { 6791 }
 $sshPort = if ($cfg -and $cfg.sshSessiondUrl) { ([uri]$cfg.sshSessiondUrl).Port } else { 6792 }
-$daemonFiles = @('sessiond.py', 'modules\termcore.py', 'modules\terminal.py',
-                 'modules\ssh.py', 'modules\internal_api.py')
-$localFiles = @('sessiond.py', 'modules\termcore.py', 'modules\terminal.py',
-                'modules\internal_api.py')
-$sshFiles = @('sessiond.py', 'modules\termcore.py', 'modules\ssh.py',
-              'modules\internal_api.py')
+# 守护进程的代码面: sessiond.py + 整个 modules/ 目录。
+# 早期是硬编码文件清单, 模块经过多轮拆分后已跟不上 —— 曾漏掉 winenv.py,
+# 导致"环境变量修复"部署后没重启守护进程, 修复根本没生效 (deploy 报
+# local=False ssh=False)。现在按目录整体判断, 只有特性文件区分 local/ssh。
+$allModules = Get-ChildItem (Join-Path $src 'modules\*.py') | ForEach-Object { $_.Name }
+$sshOnly = @('ssh.py', 'ssh_base.py', 'ssh_hosts.py', 'ssh_terminal.py',
+             'ssh_sftp.py', 'ssh_sftp_base.py', 'ssh_sftp_ops.py',
+             'ssh_sftp_transfer.py')
+$localOnly = @('terminal.py')
+$daemonFiles = @('sessiond.py') + ($allModules | ForEach-Object { 'modules\' + $_ })
+$localFiles = @('sessiond.py') + ($allModules | Where-Object { $sshOnly -notcontains $_ } |
+                                  ForEach-Object { 'modules\' + $_ })
+$sshFiles = @('sessiond.py') + ($allModules | Where-Object { $localOnly -notcontains $_ } |
+                                ForEach-Object { 'modules\' + $_ })
 
 function Say($msg) { Write-Output ("[deploy] " + $msg) }
 
