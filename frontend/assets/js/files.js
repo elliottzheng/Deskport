@@ -64,6 +64,7 @@ createApp({
             previewMode: '',
             previewIsMd: false,
             previewMdHtml: '',
+            previewFullscreen: false,
             previewContent: '',
             previewSrc: '',
             previewTruncated: false,
@@ -235,6 +236,8 @@ createApp({
             .then(d => { if (d && d.entries) { this.drivesCache = d.entries; } })
             .catch(() => {});
         fetch('/api/files/pins').then(r => r.json()).then(d => { this.pins = d.pins || []; }).catch(() => {});
+        // 浏览器退出全屏 (Esc) 时同步按钮文案
+        document.addEventListener('fullscreenchange', () => { this.syncFullscreenFlag(); });
         window.addEventListener('scroll', () => { this.ctxMenu = null; }, true);
         window.addEventListener('resize', () => { this.ctxMenu = null; });
 

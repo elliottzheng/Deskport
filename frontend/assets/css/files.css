@@ -449,3 +449,34 @@
 .preview-md th { background: var(--bg-2); font-weight: 600; }
 .preview-md hr { border: 0; border-top: 1px solid var(--border); margin: 1.2em 0; }
 .preview-md img { max-width: 100%; }
+/* ====== 预览弹窗: 大尺寸默认 + 全屏态 ====== */
+/* 预览(图片/Markdown/文本)都值得接近整窗的空间; 420px 的通用弹窗太小,
+   尤其手机上图片只占一小块 (用户反馈) */
+.preview-modal {
+    width: 94vw;
+    max-width: none;
+    height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+.preview-modal:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    background: var(--surface);
+}
+.preview-modal.is-fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
+.preview-modal .preview-img {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    object-fit: contain;
+    background: #0d1117;          /* 图片四周深色, 衬出边缘 */
+    cursor: zoom-in;
+}
+.preview-modal.is-fullscreen .preview-img { cursor: zoom-out; }
+.preview-modal .preview-md,
+.preview-modal .preview-text { flex: 1; min-height: 0; height: auto; }
+.preview-modal .preview-text { font-size: 14px; line-height: 1.6; }
+.preview-modal.is-fullscreen .preview-md,
+.preview-modal.is-fullscreen .preview-text { height: auto; }

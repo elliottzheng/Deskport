@@ -262,15 +262,20 @@
 
         <!-- 文件预览弹窗 (文本可编辑 / 图片大图) -->
         <div class="modal-mask" v-if="previewTarget" @click.self="closePreview">
-            <div class="modal preview-modal">
+            <div class="modal preview-modal" ref="previewBox"
+                 :class="{ 'is-fullscreen': previewFullscreen }">
                 <div class="modal-title">{{ previewTarget.name }}
                     <span class="preview-truncated" v-if="previewTruncated">（超过 2MB，仅显示前 2MB）</span>
                 </div>
-                <img v-if="previewMode === 'image'" class="preview-img" :src="previewSrc" alt="预览">
+                <img v-if="previewMode === 'image'" class="preview-img" :src="previewSrc" alt="预览"
+                     title="点击进入/退出全屏" @click="togglePreviewFullscreen">
                 <div v-else-if="previewMode === 'markdown'" class="preview-md" v-html="previewMdHtml"></div>
                 <textarea v-else class="preview-text" v-model="previewContent" spellcheck="false"></textarea>
                 <p class="load-error" v-if="previewError" style="margin-top:10px">{{ previewError }}</p>
                 <div class="modal-actions" style="margin-top:14px">
+                    <button class="btn btn-ghost" @click="togglePreviewFullscreen">
+                        {{ previewFullscreen ? '退出全屏' : '全屏' }}
+                    </button>
                     <button class="btn btn-ghost" v-if="previewMode === 'markdown'" @click="showMdSource">编辑源码</button>
                     <button class="btn btn-ghost" v-else-if="previewIsMd" @click="showMdPreview">渲染预览</button>
                     <button class="btn btn-primary" v-if="previewMode === 'text'" @click="savePreview">保存修改</button>

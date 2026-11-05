@@ -71,6 +71,8 @@ window.AppShellV2 = (function () {
         var frame = document.createElement('iframe');
         frame.className = 'shell-frame';
         frame.setAttribute('title', key);
+        // 预览等子页功能要用 Fullscreen API 占满真窗口, 必须显式授权
+        frame.setAttribute('allow', 'fullscreen');
         var src = frameSrc(key);
         frame.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'embed=1';
         frame.addEventListener('load', function () {

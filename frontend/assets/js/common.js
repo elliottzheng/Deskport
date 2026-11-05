@@ -196,12 +196,28 @@
         });
     }
 
+    // ---- 全屏: 让 iframe 里的弹窗占满真窗口 ----
+    // iframe 需带 allow="fullscreen" (shell.js 创建时已加), 否则浏览器拒绝
+    function fullscreenToggle(el) {
+        var doc = document;
+        var target = el || doc.documentElement;
+        if (doc.fullscreenElement) { return doc.exitFullscreen(); }
+        var req = target.requestFullscreen || target.webkitRequestFullscreen;
+        if (!req) { return Promise.reject(new Error('浏览器不支持全屏')); }
+        return req.call(target).catch(function (e) {
+            var m = '无法进入全屏: ' + (e && e.message || e);
+            try { if (window.WPCommon && WPCommon.toast) { /* 页面未接 toast 时静默 */ } } catch (err) {}
+            throw new Error(m);
+        });
+    }
+
     window.WPCommon = {
         fmtSize: fmtSize,
         fmtTime: fmtTime,
         fmtAgo: fmtAgo,
         escapeHtml: escapeHtml,
         confirm: confirmDialog,
+        fullscreenToggle: fullscreenToggle,
         uploadBox: {
             open: uploadOpen,
             progress: uploadProgress,

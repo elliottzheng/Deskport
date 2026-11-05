@@ -113,9 +113,14 @@ window.FilesMethodsUi = {
                 this.previewMode = 'image';
                 this.previewTarget = e;
                 this.previewSrc = '/api/files/thumb?path=' + encodeURIComponent(e.path);   // FM-13 预览用缩略图
+                // 图片默认全屏: 手机上弹窗内看图太小 (用户反馈)。必须在双击的
+                // user-activation 内发起 Fullscreen 请求, 过了 fetch 就失效了
+                this.previewFullscreen = true;
+                this.$nextTick(() => { WPCommon.fullscreenToggle(this.$refs.previewBox); });
                 return;
             }
             // Markdown 默认进渲染视图; previewContent 始终保留源码, 供切换编辑
+            this.previewFullscreen = false;
             this.previewIsMd = this.isMarkdownEntry(e);
             this.previewMode = this.previewIsMd && !forceText ? 'markdown' : 'text';
             this.previewTarget = e;
@@ -155,6 +160,15 @@ window.FilesMethodsUi = {
         },
         showMdSource() {
             this.previewMode = 'text';       // 复用文本编辑路径 (textarea)
+        },
+        togglePreviewFullscreen() {
+            const self = this;
+            WPCommon.fullscreenToggle(this.$refs.previewBox)
+                .catch(err => this.toastMsg(err.message));
+        },
+        syncFullscreenFlag() {
+            // 用户按 Esc 或浏览器退出全屏时, 让按钮文案跟上实际状态
+            this.previewFullscreen = !!document.fullscreenElement;
         },
         async savePreview() {
             if (this.previewLossy) { this.toastMsg('二进制文件只读，不能保存'); return; }
