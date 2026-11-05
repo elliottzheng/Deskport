@@ -91,15 +91,26 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 
 ## 六、门禁
 
-`tools/check_structure.py`：
+`tools/check_structure.py`（后端）：
 
 - 检查 Python / JS 行数预算；
 - 检查存量例外是否变长；
 - 扫描重复的 `fmtSize` / `fmtTime` / `escapeHtml`；
 - 扫描新增 `window.*` 赋值；
-- 扫描功能模块之间的横向 import。
+- 扫描功能模块之间的横向 import；
+- pyflakes 覆盖 `app.py` / `auth.py` / `config.py` / `sessiond.py` / `watchdog.py`
+  与 `modules/`、`tools/`、`tests/`：未定义名是错误，未使用 import 是 warning
+  （有意为之的副作用 import 用 `# noqa: F401` 标注）。
 
-`deploy.ps1` 的预检会调用它；本地提交前也应运行。
+`tools/check_frontend.py`（前端，静态检查抓不到的前后端漂移）：
+
+- `node --check` 全量 JS、CSS 花括号配平；
+- HTML 引用的 `/assets/...` 是否真实存在；
+- JS 里 `getElementById` / `querySelector('#x')` 的 id 是否在 HTML 或 JS 里定义；
+- JS 调用的函数名是否有声明（共享顶层作用域，含 HTML 内联脚本）；
+- JS 请求的 `/api/...` 是否在后端登记了路由。
+
+`deploy.ps1` 的预检会调用结构门禁；本地提交前两个都应运行。
 
 ## 七、例外登记
 

@@ -100,6 +100,13 @@ def scan_undefined_names(errors, warnings):
     mod_dir = os.path.join(ROOT, 'modules')
     targets += [os.path.join('modules', n) for n in sorted(os.listdir(mod_dir))
                 if n.endswith('.py')]
+    # tools/ 与 tests/ 同样过 pyflakes: 它们是发布门禁与回归集的一部分,
+    # 未定义名往往要等跑测试/发布时才炸, 不如在静态阶段拦住
+    for extra in ('tools', 'tests'):
+        d = os.path.join(ROOT, extra)
+        if os.path.isdir(d):
+            targets += [os.path.join(extra, n) for n in sorted(os.listdir(d))
+                        if n.endswith('.py')]
     try:
         proc = subprocess.run([sys.executable, '-m', 'pyflakes', *targets],
                               cwd=ROOT, capture_output=True, text=True, timeout=60)

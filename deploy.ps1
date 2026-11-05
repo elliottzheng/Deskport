@@ -139,6 +139,10 @@ Say 'structure check...'
 & $py (Join-Path $src 'tools\check_structure.py')
 if ($LASTEXITCODE -ne 0) { Say 'structure check failed'; exit 1 }
 
+Say 'frontend check...'
+& $py (Join-Path $src 'tools\check_frontend.py')
+if ($LASTEXITCODE -ne 0) { Say 'frontend check failed'; exit 1 }
+
 if ($DryRun) { Say 'DryRun OK'; exit 0 }
 
 # 守护进程代码有改动 = 需要重启 sessiond, 会杀死所有终端/SSH 会话。

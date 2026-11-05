@@ -183,6 +183,7 @@ Deskport 暴露的是完整的本机控制能力，请把它当作“远程管�
 ```powershell
 .venv\Scripts\python.exe -m pytest tests -q
 .venv\Scripts\python.exe tools/check_structure.py
+.venv\Scripts\python.exe tools/check_frontend.py
 ```
 
 终端/SSH 端到端验证需要启动 `app.py` 与两个 `sessiond.py`，见 [docs/ops.md](docs/ops.md)。

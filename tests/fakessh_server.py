@@ -82,7 +82,6 @@ class FakeSFTPInterface(paramiko.SFTPServerInterface):
         try:
             for name in os.listdir(full):
                 p = os.path.join(full, name)
-                size = os.path.getsize(p) if os.path.isfile(p) else 0
                 out.append(paramiko.SFTPAttributes.from_stat(os.stat(p), name))
         except OSError:
             return paramiko.SFTP_NO_SUCH_FILE

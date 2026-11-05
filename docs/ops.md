@@ -59,6 +59,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 
 # 结构门禁
 .venv\Scripts\python.exe tools/check_structure.py
+# 前端静态门禁（资源/id/调用目标/API 端点）
+.venv\Scripts\python.exe tools/check_frontend.py
 
 # 冒烟（需服务已启动；默认读取 config.json 的端口与密码）
 .venv\Scripts\python.exe tests\smoke.py
