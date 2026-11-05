@@ -174,7 +174,7 @@ def _registerTerminal(app, sock):
         return wsTerminal(ws)
     sock.route('/terminal/api/ws')(wsTerminalLegacy)
     app.add_url_rule('/api/terminal/sessions', 'proxyTerminalSessions', terminalSessions)
-    app.add_url_rule('/api/terminal/sessions/<sessionId>', 'proxyTerminalKill',
+    app.add_url_rule('/api/terminal/sessions/<sessionID>', 'proxyTerminalKill',
                      terminalKill, methods=['DELETE'])
 
 
@@ -186,12 +186,12 @@ def _registerSsh(app, sock):
     def sshSessions():
         return _proxyJson('ssh', '/sessions')
 
-    def sshKill(sessionId):
-        return _proxyJson('ssh', '/sessions/' + sessionId, 'DELETE')
+    def sshKill(sessionID):
+        return _proxyJson('ssh', '/sessions/' + sessionID, 'DELETE')
 
     sock.route('/api/ssh/ws')(wsSsh)
     app.add_url_rule('/api/ssh/sessions', 'proxySshSessions', sshSessions)
-    app.add_url_rule('/api/ssh/sessions/<sessionId>', 'proxySshKill',
+    app.add_url_rule('/api/ssh/sessions/<sessionID>', 'proxySshKill',
                      sshKill, methods=['DELETE'])
 
 
