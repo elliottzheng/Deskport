@@ -11,7 +11,7 @@ from urllib.parse import quote
 import paramiko
 import pytest
 
-from modules import ssh_sftp
+from modules import ssh_sftp_base, ssh_sftp_transfer
 
 
 class _WriteHandle:
@@ -106,8 +106,10 @@ def sftp_env(tmp_path, monkeypatch):
     def fakeSession(hostId):
         yield fake
 
-    monkeypatch.setattr(ssh_sftp, '_sftpSession', fakeSession)
-    monkeypatch.setattr(ssh_sftp, '_openSftp', lambda hostId: fake)
+    # 通道/连接在 base, 逐级建目录在 ops, 打包预算在 transfer —— patch 真实持有者
+    monkeypatch.setattr(ssh_sftp_base, '_sftpSession', fakeSession)
+    monkeypatch.setattr(ssh_sftp_transfer, '_openSftp', lambda hostId: fake)
+    monkeypatch.setattr(ssh_sftp_base, '_openSftp', lambda hostId: fake)
 
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
@@ -177,14 +179,15 @@ def test_upload_batch_without_files_is_400(sftp_env):
 def test_upload_batch_continues_after_io_error(sftp_env, monkeypatch):
     client, fake = sftp_env
 
-    realEnsure = ssh_sftp._ensureRemoteDir
+    # upload-batch 在 transfer 模块, ensureRemoteDir 的绑定也在那里
+    realEnsure = ssh_sftp_transfer.ensureRemoteDir
 
     def flaky(sftp, path):
         realEnsure(sftp, path)
         if path.endswith('/bad'):
             raise IOError('disk full')
 
-    monkeypatch.setattr(ssh_sftp, '_ensureRemoteDir', flaky)
+    monkeypatch.setattr(ssh_sftp_transfer, 'ensureRemoteDir', flaky)
 
     resp = client.post('/api/ssh/sftp/upload-batch', data={
         'hostId': 'h', 'remoteDir': '.',
@@ -246,7 +249,7 @@ def test_zip_requires_paths(sftp_env):
 def test_zip_budget_exceeded_is_413(sftp_env, monkeypatch):
     client, fake = sftp_env
     fake.files['/big.bin'] = b'x' * 64
-    monkeypatch.setattr(ssh_sftp, 'ZIP_SIZE_BUDGET', 16)
+    monkeypatch.setattr(ssh_sftp_transfer, 'ZIP_SIZE_BUDGET', 16)
 
     paths = json.dumps(['/big.bin'])
     resp = client.get('/api/ssh/sftp/download-zip?hostId=h&paths=' + quote(paths))
