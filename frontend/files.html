@@ -267,11 +267,14 @@
                 <div class="modal-title">{{ previewTarget.name }}
                     <span class="preview-truncated" v-if="previewTruncated">（超过 2MB，仅显示前 2MB）</span>
                 </div>
-                <img v-if="previewMode === 'image'" class="preview-img" :src="previewShownSrc" alt="预览"
-                     title="点击进入/退出全屏" @click="togglePreviewFullscreen">
+                <!-- 预载原图的 img 必须放在条件链之外: 若夹在 v-if/v-else-if/v-else
+                     中间会打断链条, 原图加载完(两 src 相等)时会落到 v-else 的 textarea,
+                     表现为全屏图片底下多出一个文本框 -->
                 <img v-if="previewMode === 'image' && previewShownSrc !== previewFullSrc"
                      :src="previewFullSrc" style="display:none" alt=""
                      @load="previewShownSrc = previewFullSrc">
+                <img v-if="previewMode === 'image'" class="preview-img" :src="previewShownSrc" alt="预览"
+                     title="点击进入/退出全屏" @click="togglePreviewFullscreen">
                 <div v-else-if="previewMode === 'markdown'" class="preview-md" v-html="previewMdHtml"></div>
                 <textarea v-else class="preview-text" v-model="previewContent" spellcheck="false"></textarea>
                 <p class="load-error" v-if="previewError" style="margin-top:10px">{{ previewError }}</p>
