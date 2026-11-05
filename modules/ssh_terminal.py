@@ -8,6 +8,7 @@ import paramiko
 from flask import request
 
 import modules.termcore as termcore
+from modules import wsproto
 from modules.termcore import TermSession, newSessionID
 from modules import ssh_hosts as hosts
 from modules.ssh_base import AUTH_TIMEOUT, HostKeyChangedError
@@ -72,7 +73,7 @@ def _interactiveAuth(ws, transport, username):
                 raise paramiko.SSHException('认证中断')
             if msg is None:
                 continue
-            payload, isCtrl = termcore._decodeFrame(msg)
+            payload, isCtrl = wsproto.decodeFrame(msg)
             if isCtrl and payload.get('type') == 'ssh-auth-answer':
                 return [str(a) for a in payload.get('answers', [])]
         raise paramiko.SSHException('认证超时')
@@ -88,7 +89,7 @@ def wsSshTerminal(ws):
     if sessionID:
         existing = termcore.getSession(sessionID)
         if existing is not None and existing.alive and existing.kind == 'ssh':
-            termcore.attachAndPump(ws, existing, resumed=True, wantReplay=wantReplay)
+            wsproto.attachAndPump(ws, existing, resumed=True, wantReplay=wantReplay)
             return
 
     hostEntry = hosts.findHost(hostId)
@@ -146,4 +147,4 @@ def wsSshTerminal(ws):
     backend = SSHBackend(channel)
     session = TermSession(newSessionID(), 'ssh', label, backend, hostId=hostId)
     termcore.newSession(session)
-    termcore.attachAndPump(ws, session, resumed=False, wantReplay=False)
+    wsproto.attachAndPump(ws, session, resumed=False, wantReplay=False)

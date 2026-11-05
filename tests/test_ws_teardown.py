@@ -2,7 +2,7 @@
 """WS 收尾：先 close 帧，再 SHUT_WR，阻断 teardown 补写 HTTP 头。"""
 import socket
 
-from modules.termcore import sealSocketAfterClose
+from modules.wsproto import sealSocketAfterClose
 
 
 class FakeSock:

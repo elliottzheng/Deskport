@@ -10,7 +10,7 @@ import shutil
 from flask import jsonify, request
 
 import config
-from modules import termcore
+from modules import termcore, wsproto
 from modules import federation as federationModule
 from modules.termcore import ConPTYBackend
 
@@ -70,4 +70,4 @@ def wsLocalTerminal(ws):
             cwd=cwd)
         termcore.newSession(session)
 
-    termcore.attachAndPump(ws, session, resumed=resumed, wantReplay=wantReplay)
+    wsproto.attachAndPump(ws, session, resumed=resumed, wantReplay=wantReplay)

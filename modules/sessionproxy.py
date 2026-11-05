@@ -18,7 +18,7 @@ from simple_websocket import Client, ConnectionClosed
 
 import modules.federation as federation
 import modules.internal_api as internal_api
-from modules.termcore import sealSocketAfterClose
+from modules.wsproto import sealSocketAfterClose
 
 log = logging.getLogger('sessionproxy')
 

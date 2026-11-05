@@ -33,6 +33,10 @@ FEATURES = {'aihandoff', 'command', 'control', 'files', 'screen', 'ssh', 'tasks'
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
                            ('tasks_api', 'tasks_runner'), ('tasks_api', 'tasks_store'),
                            ('tasks_runner', 'tasks_store')}
+# 基础设施层: 可被任何层依赖, 但自己不得 import 特性层 (依赖只能向上)
+# termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性
+INFRA = {'state', 'internal_api', 'events', 'fsutil', 'textio', 'media', 'contracts',
+         'decision', 'termcore', 'termprobe', 'wsproto'}
 ALLOWED_WINDOW = {'termManager', 'termUI', 'createSshSession', 'SSHUI',
                   'AppShell', 'AppShellV2', 'Icons', 'SftpMemory',
                   'TermClient', 'TermFeatures', 'toggleMultiExec', 'WPCommon',
@@ -102,6 +106,27 @@ def scan_feature_imports(warnings):
                 warnings.append('%s → %s 横向 import（应下沉共享层）' % (src, dst))
 
 
+def scan_infra_dependencies(warnings):
+    """基础设施层不得 import 特性层（防止共享内核被业务倒灌）。"""
+    mod_dir = os.path.join(ROOT, 'modules')
+    for name in sorted(os.listdir(mod_dir)):
+        if not name.endswith('.py') or name == '__init__.py':
+            continue
+        src = name[:-3]
+        if src not in INFRA:
+            continue
+        text, _ = read_lines(os.path.join(mod_dir, name))
+        pairs = []
+        for m in re.finditer(r'^\s*(?:from|import)\s+modules\.(\w+)', text, re.M):
+            pairs.append(m.group(1))
+        for m in re.finditer(r'^\s*from\s+modules\s+import\s+([^\n#]+)', text, re.M):
+            for part in m.group(1).split(','):
+                pairs.append(part.strip().split(' as ')[0].strip())
+        for dst in pairs:
+            if dst in FEATURES:
+                warnings.append('基础设施 %s → 特性 %s（依赖倒灌，应下沉或反转）' % (src, dst))
+
+
 def scan_undefined_names(errors, warnings):
     """pyflakes：未定义名是错误；未使用 import/重复定义是 warning（noqa 行跳过）。"""
     targets = ['app.py', 'auth.py', 'config.py', 'sessiond.py', 'watchdog.py']
@@ -163,6 +188,7 @@ def main():
     scan_budget(errors, warnings)
     scan_duplicate_helpers(warnings)
     scan_feature_imports(warnings)
+    scan_infra_dependencies(warnings)
     scan_window_globals(warnings)
     scan_undefined_names(errors, warnings)
     for w in warnings:
