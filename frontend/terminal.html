@@ -24,26 +24,11 @@
                     <button id="sidebar-add" title="新建终端">+</button>
                 </div>
             </div>
-            <div class="sidebar-quicknav">
-                    <a href="/">控制台</a>
-                    <a href="/files">文件</a>
-                    <a href="/settings">设置</a>
-                </div>
             <ul id="session-list"></ul>
             <div class="sidebar-foot">
                 <div class="foot-row">
-                    <button class="foot-btn" data-act="search">搜索</button>
-                    <button class="foot-btn" data-act="log">日志</button>
                     <button class="foot-btn" data-act="vkeys" id="vkeys-toggle">虚拟键:开</button>
                 </div>
-                <div class="foot-nav">
-                    <a href="/">概览</a>
-                    <a href="/screen">屏幕</a>
-                    <a href="/files">文件</a>
-                    <a href="/command">命令</a>
-                    <a href="/ssh">SSH</a>
-                </div>
-                <a class="foot-logout" href="/logout">退出登录</a>
             </div>
         </aside>
         <div id="sidebar-backdrop"></div>
@@ -53,10 +38,6 @@
                 <button id="sidebar-toggle" title="显示或隐藏左侧会话列表">
                     <i data-icon="menu"></i>
                 </button>
-                <span class="session-switch" id="session-switch">
-                    <a class="is-active" href="/terminal">本地</a>
-                    <a href="/ssh">SSH</a>
-                </span>
                 <button class="preset-command is-default" data-cmd="pwsh.exe">
                     <span class="preset-name">pwsh7</span>
                     <span class="preset-tag">默认</span>
@@ -81,7 +62,7 @@
                     <option value="">本机</option>
                 </select>
                 <button id="connect">新建</button>
-                <span id="status" title="单击显示或隐藏底部控制键；会话保留在电脑上">未连接</span>
+                <span id="status" title="会话保留在电脑上；控制键开关在侧栏底部">未连接</span>
             </div>
             <div id="search-bar" style="display:none">
                 <input id="search-input" placeholder="搜索终端内容…" spellcheck="false">

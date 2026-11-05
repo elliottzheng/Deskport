@@ -45,8 +45,6 @@ window.SSHSftpUI = (function (ctx) {
         const panel = $('sftp-panel');
         const opening = panel.style.display !== 'flex';
         panel.style.display = opening ? 'flex' : 'none';
-        const foot = $('sftp-foot-toggle');
-        if (foot) { foot.textContent = opening ? 'SFTP 文件:开' : 'SFTP 文件:关'; }
         if (!opening) { return; }
         // 默认目标: 当前活跃 SSH 会话的主机; 否则第一台主机
         if (!S.state.hostId) {
@@ -331,9 +329,6 @@ window.SSHSftpUI = (function (ctx) {
         SSHHostStore.subscribe(function () { renderHostOptions(); });
         $('sftp-close-btn').addEventListener('click', togglePanel);
         $('sftp-toggle').addEventListener('click', togglePanel);
-        // 移动端工具条只留菜单+状态, SFTP 入口放到侧栏脚部
-        const sftpFoot = $('sftp-foot-toggle');
-        if (sftpFoot) { sftpFoot.addEventListener('click', togglePanel); }
         $('sftp-up').addEventListener('click', () => navigate(S.parentPath(S.state.path)));
         const sftpPathEl = $('sftp-path');
         sftpPathEl.title = '点击复制路径';

@@ -252,16 +252,8 @@ window.TermFeatures = (function () {
             applyKeysDefault = function () { _applyKeysDefault(); syncVkeysLabel(); };
             applyKeysDefault();
             window.addEventListener('resize', applyKeysDefault);   // 无记忆时跟随视口/设备
-            statusEl.title = '单击 显示/隐藏控制键';
-            statusEl.addEventListener('click', function () {
-                controlKeys.classList.toggle('hidden');
-                localStorage.setItem(KEYS_PREF_KEY, controlKeys.classList.contains('hidden') ? '0' : '1');
-                const active = manager.getActive();
-                if (active) {
-                    try { manager.fitSession(active); } catch (err) { /* ignore */ }
-                    manager.sendResize();
-                }
-            });
+            // 控制键开关收敛到侧栏 vkeys 一处 (原先点状态栏也能切, 三处入口)
+            statusEl.title = '会话保留在电脑上；控制键开关在侧栏底部';
 
             // 窗口变化 → 前台 fit 重算 → onResize 自动发 resize 帧
             window.addEventListener('resize', function () {
@@ -379,8 +371,6 @@ window.TermFeatures = (function () {
                 const t = e.target.closest('[data-act]');
                 if (!t) { return; }
                 const act = t.getAttribute('data-act');
-                if (act === 'search') { const b = document.getElementById('search-toggle'); if (b) { b.click(); } }
-                if (act === 'log') { const b = document.getElementById('log-toggle'); if (b) { b.click(); } }
                 if (act === 'vkeys') {
                     const ck = document.getElementById('control-keys');
                     ck.classList.toggle('hidden');

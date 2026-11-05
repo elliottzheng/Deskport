@@ -75,16 +75,18 @@
     document.getElementById('cmd').addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { createSessionFromInput(); }
     });
-    // 侧栏"+"与预设终端按钮 (旧内联 onclick 已迁移到显式绑定)
-    // 移动端(≤640): "+" 弹出程序选择对话框 (TER-01); 桌面保持默认 pwsh7 直建
+    // 侧栏"+"只负责"在当前选中的机器上建默认终端", 与顶栏自定义输入框解耦
+    // (原先读 #cmd 的值, 同一个按钮会随顶栏输入内容变行为); 移动端弹程序选择框
     const picker = document.getElementById('prog-picker');
     document.getElementById('sidebar-add').addEventListener('click', function () {
-        if (window.matchMedia('(hover: none) and (pointer: coarse)').matches && picker) {
+        const touch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        if (touch && picker) {
             picker.style.display = 'flex';
             document.getElementById('picker-custom-row').style.display = 'none';
             return;
         }
-        createSessionFromInput();
+        const m = currentMachine();
+        manager.createSession('', null, { machine: m.id, machineName: m.name });
     });
     if (picker) {
         picker.addEventListener('click', function (e) {
@@ -115,7 +117,11 @@
         });
     }
     document.querySelectorAll('.preset-command[data-cmd]').forEach(function (btn) {
-        btn.addEventListener('click', function () { manager.createSession(btn.getAttribute('data-cmd')); });
+        btn.addEventListener('click', function () {
+            const m = currentMachine();
+            manager.createSession(btn.getAttribute('data-cmd'),
+                                  null, { machine: m.id, machineName: m.name });
+        });
     });
 
     ui.init(manager);

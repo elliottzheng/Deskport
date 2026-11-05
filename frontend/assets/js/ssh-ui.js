@@ -13,7 +13,8 @@ const SSHUI = (function () {
     const escapeHtml = WPCommon.escapeHtml;
 
     function init() {
-        $('ssh-host-add').addEventListener('click', function () { openHostForm(); });
+        const hostAdd = $('ssh-host-add');          // 侧栏顶部的 + 已是唯一入口
+        if (hostAdd) { hostAdd.addEventListener('click', function () { openHostForm(); }); }
         $('ssh-host-save').addEventListener('click', saveHost);
         $('ssh-host-delete').addEventListener('click', deleteHost);
         $('ssh-host-cancel').addEventListener('click', () => { $('ssh-host-modal').style.display = 'none'; });

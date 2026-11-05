@@ -46,12 +46,6 @@
         cursor: pointer;
     }
     .foot-btn:active { border-color: var(--brand); color: var(--brand); }
-    .foot-nav { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
-    .foot-nav a {
-        font-size: 12px; color: var(--text-2); text-decoration: none;
-        padding: 4px 10px; background: var(--bg-2); border-radius: 6px;
-    }
-    .foot-logout { display: inline-block; margin-top: var(--sp-3); font-size: 12px; color: var(--text-3); }
     /* 程序选择弹窗 */
     .picker-list { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-3); }
     .picker-item {
@@ -70,17 +64,6 @@
     #bar #session-switch a { padding: 8px 12px; font-size: 13px; }
 }
 
-/* 会话侧栏顶部快捷返回：移动端抽屉是覆盖层，必须在首屏给出口 */
-.sidebar-quicknav {
-    display: flex; gap: 6px; padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-}
-.sidebar-quicknav a {
-    flex: 1; text-align: center; font-size: 12px; padding: 7px 6px;
-    border-radius: 8px; background: var(--bg-2); color: var(--text-2);
-    text-decoration: none;
-}
-.sidebar-quicknav a:active { background: var(--brand-bg); color: var(--brand); }
 /* 深色细滚动条：原生白条在深色终端里像一条"缝隙"，且会盖住内容 */
 #terminal .xterm-viewport {
     scrollbar-width: thin;
