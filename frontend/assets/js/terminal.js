@@ -14,9 +14,61 @@
         restoreItem: function (build, it) { return build(it.cmd, it.id); }
     });
 
+    // 联邦: 远端机器列表填充到"新建"旁的选择器与移动端 picker
+    function currentMachine() {
+        const picker = document.getElementById('prog-picker');
+        const pickerOpen = picker && picker.style.display === 'flex';
+        const chip = pickerOpen
+            ? document.querySelector('#picker-machines .machine-chip.is-active') : null;
+        if (chip) {
+            return { id: chip.getAttribute('data-machine') || '', name: chip.textContent || '本机' };
+        }
+        const sel = document.getElementById('new-session-machine');
+        const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+        return { id: sel ? (sel.value || '') : '', name: opt ? opt.textContent : '本机' };
+    }
+
+    async function loadMachines() {
+        try {
+            const r = await fetch('/api/settings/federation');
+            const data = await r.json().catch(() => ({}));
+            const machines = data.machines || [{ id: '', name: '本机' }];
+            const sel = document.getElementById('new-session-machine');
+            const box = document.getElementById('picker-machines');
+            machines.forEach(function (m, i) {
+                if (i === 0) { return; }
+                if (sel) {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = m.name;
+                    sel.appendChild(opt);
+                }
+                if (box) {
+                    const chip = document.createElement('button');
+                    chip.type = 'button';
+                    chip.className = 'machine-chip';
+                    chip.setAttribute('data-machine', m.id);
+                    chip.textContent = m.name;
+                    box.appendChild(chip);
+                }
+            });
+            if (box) {
+                box.addEventListener('click', function (e) {
+                    const chip = e.target.closest('.machine-chip');
+                    if (!chip) { return; }
+                    box.querySelectorAll('.machine-chip').forEach(function (c) {
+                        c.classList.remove('is-active');
+                    });
+                    chip.classList.add('is-active');
+                });
+            }
+        } catch (err) { /* 联邦不可用时仅本机 */ }
+    }
+
     function createSessionFromInput() {
         const input = document.getElementById('cmd');
-        manager.createSession(input ? input.value : '');
+        const m = currentMachine();
+        manager.createSession(input ? input.value : '', null, { machine: m.id, machineName: m.name });
     }
 
     document.getElementById('connect').addEventListener('click', createSessionFromInput);
@@ -44,14 +96,16 @@
                     document.getElementById('picker-custom-cmd').focus();
                     return;
                 }
-                manager.createSession(cmd);
+                const m = currentMachine();
+                manager.createSession(cmd, null, { machine: m.id, machineName: m.name });
                 picker.style.display = 'none';
                 return;
             }
             if (e.target.id === 'picker-custom-go') {
                 const v = document.getElementById('picker-custom-cmd').value.trim();
                 if (v) {
-                    manager.createSession(v);
+                    const m = currentMachine();
+                    manager.createSession(v, null, { machine: m.id, machineName: m.name });
                     document.getElementById('picker-custom-cmd').value = '';
                     picker.style.display = 'none';
                 }
@@ -75,6 +129,7 @@
         }
     } catch (err) { /* 忽略脏数据 */ }
 
+    loadMachines();
     manager.restoreSessions();
 
     // App 壳内：文件页“在终端中打开”通过 postMessage 触发起会话

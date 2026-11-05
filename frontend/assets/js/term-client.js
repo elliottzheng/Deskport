@@ -210,6 +210,11 @@ window.TermClient = (function () {
             } else {
                 url = proto + '://' + location.host + '/api/terminal/ws?cmd=' + encodeURIComponent(session.cmd);
                 if (session.cwd) { url += '&cwd=' + encodeURIComponent(session.cwd); }
+                // 联邦远端: 新建与断线重连都带 machine, 服务端优先按机器路由
+                // (重连时 query 里同时有 session, 远端据此恢复自己的本地会话)
+                if (session.machine) {
+                    url += '&machine=' + encodeURIComponent(session.machine);
+                }
             }
             if (session.sessionID) { url += '&session=' + encodeURIComponent(session.sessionID); }
             if (session.needReplay) {

@@ -251,6 +251,28 @@ def setInboxSettings(enabled, dirs):
         _cache['data'] = None
 
 
+def setFederationToken(token):
+    """写回本机联邦令牌; 空串 = 不允许被其他 Deskport 联邦接入。"""
+    from modules import state
+    cfg = load()
+    cfg['federationToken'] = (token or '').strip()
+    state.atomicWriteJson(CONFIG_PATH, cfg)
+    with _cacheLock:
+        _cache['mtime'] = None
+        _cache['data'] = None
+
+
+def setRemotes(remotes):
+    """写回远端机器列表（保留其他配置键）; remotes 为 [{id,name,base,token}]。"""
+    from modules import state
+    cfg = load()
+    cfg['remotes'] = list(remotes)
+    state.atomicWriteJson(CONFIG_PATH, cfg)
+    with _cacheLock:
+        _cache['mtime'] = None
+        _cache['data'] = None
+
+
 def stateDir():
     r"""SSH 运行时状态目录: %APPDATA%\<stateDirName> (自动创建; 名字取自 config.json)"""
     base = os.environ.get('APPDATA') or os.path.expanduser('~')

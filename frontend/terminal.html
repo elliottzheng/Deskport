@@ -77,6 +77,9 @@
                     <i data-icon="split"></i>
                 </button>
                 <input id="cmd" value="" placeholder="自定义终端程序 (留空默认 pwsh7)" spellcheck="false" autocomplete="off">
+                <select id="new-session-machine" class="select machine-select" title="选择在哪台机器上新建会话">
+                    <option value="">本机</option>
+                </select>
                 <button id="connect">新建</button>
                 <span id="status" title="单击显示或隐藏底部控制键；会话保留在电脑上">未连接</span>
             </div>
@@ -110,6 +113,10 @@
     <div class="modal-mask" id="prog-picker" style="display:none">
         <div class="modal">
             <div class="modal-title">新建终端会话</div>
+            <div class="picker-machines" id="picker-machines">
+                <span class="picker-machines-label">在哪台机器上新建</span>
+                <button type="button" class="machine-chip is-active" data-machine="">本机</button>
+            </div>
             <div class="picker-list">
                 <button class="picker-item" data-cmd="pwsh.exe">pwsh 7（默认）</button>
                 <button class="picker-item" data-cmd="cmd.exe">cmd</button>

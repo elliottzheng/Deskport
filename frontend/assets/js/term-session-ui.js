@@ -8,6 +8,9 @@ window.TermSessionUI = (function () {
             // 没装 pwsh 的机器由服务端回落 powershell.exe
             const command = kind === 'ssh' ? (opts.label || 'SSH')
                 : ((cmd || '').trim() || 'pwsh.exe');
+            // 联邦远端新建: 标签带 [机器名], 侧栏徽标显示"远端"
+            const machine = opts.machine || '';
+            const machineName = opts.machineName || machine;
             const termHost = document.getElementById('terminal');
             const container = document.createElement('div');
             container.className = 'session-terminal';
@@ -40,7 +43,9 @@ window.TermSessionUI = (function () {
                 foregroundCwd: '',
                 foregroundCwdLabel: '',
                 kick: opts.kick || null,
-                label: opts.label || command,
+                label: opts.label || (machine ? ('[' + machineName + '] ' + command) : command),
+                machine: opts.machine || '',        // 联邦远端机器 id; 空 = 本机
+                remote: !!opts.machine,
                 title: '',          // 应用通过 OSC 0/2 设置的终端标题; 空则回退 label
                 term: term,
                 fit: fit,

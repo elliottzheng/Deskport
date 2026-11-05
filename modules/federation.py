@@ -129,3 +129,11 @@ def killUpstreamFor(sessionId):
         return None
     return (remote['base'] + '/api/terminal/sessions/' + sessionId,
             _headers(remote))
+
+
+def machineOptions():
+    """新建会话的机器选项: 本机 + 各远端（id 为空串表示本机）。"""
+    out = [{'id': '', 'name': '本机'}]
+    for r in remotes():
+        out.append({'id': r['id'], 'name': r['name']})
+    return out

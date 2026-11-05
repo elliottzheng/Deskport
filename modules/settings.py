@@ -1,15 +1,20 @@
 # -*- coding: utf-8 -*-
-"""应用设置：收件箱扫描开关与目录。"""
+"""应用设置：收件箱扫描开关与目录、多机联邦。"""
 import os
+import re
 
 from flask import Blueprint, jsonify, request
 
 import config
+from modules import federation
 
 blueprint = Blueprint('settings', __name__)
 
 MAX_DIRS = 20
 MAX_BRAND = 24
+MAX_REMOTES = 20
+TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{8,64}$')
+REMOTE_ID_RE = re.compile(r'^[a-z0-9_-]{1,20}$')
 
 
 @blueprint.route('/api/settings/brand', methods=['GET'])
@@ -61,3 +66,53 @@ def setInboxSettings():
             dirs.append(path)
     config.setInboxSettings(enabled, dirs)
     return jsonify({'ok': True, 'enabled': enabled, 'dirs': dirs})
+
+
+@blueprint.route('/api/settings/federation', methods=['GET'])
+def getFederationSettings():
+    return jsonify({
+        'token': config.getFederationToken(),
+        'remotes': config.getRemotes(),
+        'machines': federation.machineOptions(),
+    })
+
+
+@blueprint.route('/api/settings/federation/token', methods=['POST'])
+def setFederationToken():
+    data = request.get_json(force=True, silent=True) or {}
+    token = (data.get('token') or '').strip()
+    if token and not TOKEN_RE.match(token):
+        return jsonify({'error': '令牌需为 8-64 位字母、数字、- 或 _'}), 400
+    config.setFederationToken(token)
+    return jsonify({'ok': True, 'token': token})
+
+
+@blueprint.route('/api/settings/federation/remotes', methods=['POST'])
+def setRemotes():
+    data = request.get_json(force=True, silent=True) or {}
+    raw = data.get('remotes')
+    if not isinstance(raw, list):
+        return jsonify({'error': 'remotes 必须是数组'}), 400
+    if len(raw) > MAX_REMOTES:
+        return jsonify({'error': '最多 %d 台远端' % MAX_REMOTES}), 400
+    cleaned, seen = [], set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get('id') or '').strip().lower()
+        name = str(item.get('name') or '').strip()
+        base = str(item.get('base') or '').strip().rstrip('/')
+        token = str(item.get('token') or '').strip()
+        if not REMOTE_ID_RE.match(rid) or rid in seen:
+            return jsonify({'error': 'id 需为 1-20 位小写字母/数字/-/_ 且不重复: %r' % rid}), 400
+        if not name or len(name) > 24:
+            return jsonify({'error': '名称需为 1-24 个字符'}), 400
+        if not base.startswith(('http://', 'https://')):
+            return jsonify({'error': '地址需以 http:// 或 https:// 开头: %s' % base}), 400
+        if token and len(token) > 128:
+            return jsonify({'error': '令牌过长'}), 400
+        cleaned.append({'id': rid, 'name': name, 'base': base, 'token': token})
+        seen.add(rid)
+    config.setRemotes(cleaned)
+    return jsonify({'ok': True, 'remotes': cleaned,
+                    'machines': federation.machineOptions()})

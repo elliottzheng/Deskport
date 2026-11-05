@@ -78,6 +78,39 @@
     </div>
 
     <div class="card settings-card">
+        <div class="card-title">多机联邦</div>
+        <p class="settings-note">把其他电脑的 Deskport 加进来：终端页新建会话时可选在那台机器上开，它的会话也会出现在侧栏。本机令牌用于被别的机器添加。</p>
+
+        <label class="field-label">本机联邦令牌</label>
+        <div class="fed-token-row">
+            <input class="input" v-model="fedToken" placeholder="留空 = 不允许被其他机器连接"
+                   spellcheck="false" autocomplete="off">
+            <button type="button" class="btn btn-secondary" @click="genToken">生成</button>
+        </div>
+        <p class="settings-hint">对方在它的设置里添加本机时，填这个令牌。</p>
+        <button class="btn btn-primary settings-submit" @click="saveToken" :disabled="fedBusy">
+            {{ fedBusy ? '保存中…' : '保存本机令牌' }}
+        </button>
+
+        <div class="settings-subhead">远端机器</div>
+        <div class="fed-remote" v-for="(r, i) in fedRemotes" :key="r.id">
+            <div class="fed-remote-head">
+                <span class="fed-remote-idx">{{ i + 1 }} · {{ r.id }}</span>
+                <button type="button" class="btn btn-ghost" @click="fedRemotes.splice(i, 1)">删除</button>
+            </div>
+            <input class="input" v-model.trim="r.name" placeholder="名称，如 B 机" maxlength="24" spellcheck="false">
+            <input class="input" v-model.trim="r.base" placeholder="地址，如 http://10.126.126.3:6789" spellcheck="false">
+            <input class="input" v-model.trim="r.token" placeholder="对方的本机联邦令牌" spellcheck="false">
+        </div>
+        <button type="button" class="btn btn-secondary settings-submit" @click="addRemote">添加一台机器</button>
+        <p v-if="fedError" class="load-error" style="margin-top:12px">{{ fedError }}</p>
+        <p v-if="fedOk" class="settings-ok">{{ fedOk }}</p>
+        <button class="btn btn-primary settings-submit" @click="saveRemotes" :disabled="fedBusy">
+            {{ fedBusy ? '保存中…' : '保存远端列表' }}
+        </button>
+    </div>
+
+    <div class="card settings-card">
         <div class="card-title">品牌名称</div>
         <p class="settings-note">显示在顶栏、登录页和 PWA 名称；保存后刷新页面生效。</p>
         <input class="input" v-model.trim="brandName" maxlength="24" placeholder="Deskport" spellcheck="false">

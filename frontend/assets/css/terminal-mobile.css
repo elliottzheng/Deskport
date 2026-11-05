@@ -130,3 +130,28 @@
 
 /* 方向键与翻页键之间留一个视觉间隔 */
 .control-key[data-key="pgup"] { margin-left: 10px; }
+
+/* 联邦: 移动端新建会话选择目标机器 */
+.picker-machines {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin-top: var(--sp-3);
+}
+.picker-machines-label { font-size: 12px; color: var(--text-3); }
+.machine-chip {
+    height: 32px;
+    padding: 0 12px;
+    background: var(--surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    font-size: 13px;
+    cursor: pointer;
+}
+.machine-chip.is-active {
+    border-color: var(--brand);
+    background: var(--brand-bg);
+    color: var(--brand);
+}

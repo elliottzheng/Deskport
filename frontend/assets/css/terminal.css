@@ -233,3 +233,19 @@ body { padding-bottom: 0 !important; overflow: hidden; }
     line-height: 1.5;
     color: var(--text-3);
 }
+
+/* 联邦: 新建会话时选择目标机器 */
+.machine-select {
+    flex-shrink: 0;
+    height: 34px;
+    max-width: 150px;
+    padding: 0 var(--sp-2);
+    background: var(--surface);
+    color: var(--text-1);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+}
+.machine-select:hover, .machine-select:focus { border-color: var(--brand); }

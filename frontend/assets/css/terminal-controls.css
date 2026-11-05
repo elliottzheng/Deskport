@@ -27,9 +27,10 @@
 /* ====== 窄屏 ====== */
 @media (hover: none) and (pointer: coarse) {
     #bar { flex-wrap: wrap; row-gap: 6px; }
-    #connect { order: 8; margin-left: auto; }
-    #cmd { order: 9; flex: 1 1 55%; max-width: none; }
-    #status { order: 10; flex: 0 1 auto; }
+    #cmd { order: 8; flex: 1 1 55%; max-width: none; }
+    #new-session-machine { order: 9; flex: 1 1 30%; max-width: none; }
+    #connect { order: 10; margin-left: auto; }
+    #status { order: 11; flex: 0 1 auto; }
     .preset-command { height: 34px; padding: 0 10px; }
     .control-key { height: 40px; }   /* 触控目标加大 */
     #sidebar {

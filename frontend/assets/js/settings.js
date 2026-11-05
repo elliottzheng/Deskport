@@ -22,11 +22,17 @@ createApp({
             brandError: '',
             brandOk: '',
             brandBusy: false,
+            fedToken: '',
+            fedRemotes: [],
+            fedError: '',
+            fedOk: '',
+            fedBusy: false,
         };
     },
     mounted() {
         this.loadInbox();
         this.loadBrand();
+        this.loadFederation();
     },
     methods: {
         async loadBrand() {
@@ -120,6 +126,81 @@ createApp({
                 this.inboxError = err.message;
             } finally {
                 this.inboxBusy = false;
+            }
+        },
+        async loadFederation() {
+            try {
+                const r = await fetch('/api/settings/federation');
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.fedToken = data.token || '';
+                this.fedRemotes = (data.remotes || []).map(function (x) {
+                    return { id: x.id, name: x.name, base: x.base, token: x.token || '' };
+                });
+            } catch (err) {
+                this.fedError = '加载联邦设置失败: ' + err.message;
+            }
+        },
+        genToken() {
+            const arr = new Uint8Array(24);
+            crypto.getRandomValues(arr);
+            this.fedToken = Array.from(arr, function (b) {
+                return b.toString(36).padStart(2, '0');
+            }).join('').slice(0, 32);
+        },
+        async saveToken() {
+            if (this.fedBusy) { return; }
+            this.fedError = '';
+            this.fedOk = '';
+            this.fedBusy = true;
+            try {
+                const r = await fetch('/api/settings/federation/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: this.fedToken.trim() }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.fedToken = data.token || '';
+                this.fedOk = this.fedToken ? '本机联邦令牌已保存' : '本机联邦已关闭（留空）';
+                setTimeout(() => { this.fedOk = ''; }, 2500);
+            } catch (err) {
+                this.fedError = err.message;
+            } finally {
+                this.fedBusy = false;
+            }
+        },
+        addRemote() {
+            const arr = new Uint8Array(4);
+            crypto.getRandomValues(arr);
+            const id = 'r' + Array.from(arr, function (b) {
+                return b.toString(36).padStart(2, '0');
+            }).join('').slice(0, 6);
+            this.fedRemotes.push({ id: id, name: '', base: '', token: '' });
+        },
+        async saveRemotes() {
+            if (this.fedBusy) { return; }
+            this.fedError = '';
+            this.fedOk = '';
+            for (const r of this.fedRemotes) {
+                if (!r.name || !r.base) { this.fedError = '每台机器都需要名称和地址'; return; }
+            }
+            this.fedBusy = true;
+            try {
+                const r = await fetch('/api/settings/federation/remotes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ remotes: this.fedRemotes }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.fedRemotes = data.remotes || [];
+                this.fedOk = '远端列表已保存，新建会话时即可选择机器';
+                setTimeout(() => { this.fedOk = ''; }, 2500);
+            } catch (err) {
+                this.fedError = err.message;
+            } finally {
+                this.fedBusy = false;
             }
         },
         async submit() {
