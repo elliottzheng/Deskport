@@ -73,11 +73,28 @@ function Stop-Port([int]$port) {
     }
 }
 
+function Test-DaemonStale([int]$port, [string[]]$files) {
+    # 守护进程是否在跑旧代码: 它加载的任一文件比进程启动时间还新, 就是旧代码。
+    # 只看"本次发布改没改文件"不够 —— 上一次用旧清单漏判时, 文件已同步但守护
+    # 进程仍在跑旧代码, 之后每次发布都报 False, 修复一直不生效 (踩过)。
+    $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+         Select-Object -First 1
+    if (-not $c) { return $true }              # 没在跑 = 必须拉起
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)" -ErrorAction SilentlyContinue
+    if (-not $p) { return $true }
+    foreach ($f in $files) {
+        $item = Get-Item (Join-Path $dst $f) -ErrorAction SilentlyContinue
+        if ($item -and $item.LastWriteTime -gt $p.CreationDate) { return $true }
+    }
+    return $false
+}
+
 function Start-Vbs([string]$name) {
     $path = Join-Path $dst $name
     if (Test-Path $path) {
         Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $path + '"') `
-                      -WorkingDirectory $dst
+                      -WorkingDirectory $dst `
+                      -WindowStyle Hidden
         Say ("started " + $name)
     } else {
         Say ("missing " + $name)
@@ -211,8 +228,8 @@ foreach ($f in $sshFiles) {
     if ($before[$f] -ne (Hash-File (Join-Path $dst $f))) { $sshChanged = $true }
 }
 # 守护进程没在跑也必须拉起来, 否则新 web 的代理会 503
-if (-not (Test-Http ("http://127.0.0.1:{0}/health" -f $localPort))) { $localChanged = $true }
-if (-not (Test-Http ("http://127.0.0.1:{0}/health" -f $sshPort))) { $sshChanged = $true }
+$localChanged = $localChanged -or (Test-DaemonStale $localPort $localFiles)
+$sshChanged = $sshChanged -or (Test-DaemonStale $sshPort $sshFiles)
 Say ("daemon restart needed: local=" + $localChanged + " ssh=" + $sshChanged)
 
 # ---------------- 4. restart daemons if needed ----------------
