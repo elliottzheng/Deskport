@@ -117,5 +117,11 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 | 日期 | 文件 | 违反哪条 | 原因 | 复核 |
 |---|---|---|---|---|
 | 2026-10-23 | 存量 god files | 文件预算 | v2 快速迭代遗留 | 按上表逐个拆 |
+| 2026-11-05 | `modules/termcore.py` 568 | 文件预算 / 高内聚 | 混了 backend、注册表、生命周期、Win32 探测、WS 帧协议 5 个变化理由；`read_lines` 空转导致从未受检 | 拆为 wsproto / termprobe / termcore，见 `docs/design-review.md` P1-1 |
+| 2026-11-05 | `modules/ssh_sftp.py` 503 | 文件预算 / 高内聚 | CRUD 与批量传输打包两个变化理由未按三段制拆 | 拆为 ssh_sftp_base / _ops / _transfer，见 P1-2 |
+| 2026-11-05 | `modules/plugins.py` 439 | 文件预算 / 高内聚 | 发现、动态导入、导航推导、登记查询 4 个变化理由 | 拆为 plugins_base / _discover / _load / _nav，见 P1-3 |
+| 2026-11-05 | `frontend/assets/js/ssh-sftp-ui.js` 618 | 文件预算 | 选中/框选、快速访问、导航、传输混在一起 | 见 P1-2 同批 |
+| 2026-11-05 | `frontend/assets/js/files-methods-core.js` 523 | 文件预算 | 文件方法核心，浏览/选择/动作待再分 | 随 files 系列一起复核 |
+| 2026-11-05 | `frontend/assets/js/term-features.js` 467 | 存量只减不增 | 原上限 464，实际已 467（门禁空转未被发现） | 随 termcore 拆分一起收 |
 
 新增例外必须写进本表，否则视为违规。
