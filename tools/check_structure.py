@@ -29,7 +29,7 @@ ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
 # 基础设施层: 可被任何层依赖, 但自己不得 import 特性层 (依赖只能向上)
 # termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性
 INFRA = {'state', 'internal_api', 'events', 'fsutil', 'textio', 'media', 'contracts',
-         'decision', 'termcore', 'termprobe', 'wsproto'}
+         'decision', 'termcore', 'termprobe', 'wsproto', 'winenv'}
 ALLOWED_WINDOW = {'termManager', 'termUI', 'createSshSession', 'SSHUI',
                   'AppShell', 'AppShellV2', 'Icons', 'SftpMemory',
                   'SftpState', 'SftpMenu', 'SftpSelect', 'SftpTransfer',

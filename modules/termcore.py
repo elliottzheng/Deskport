@@ -30,7 +30,7 @@ import uuid
 from collections import deque
 
 import config
-from modules import termprobe
+from modules import termprobe, winenv
 
 log = logging.getLogger('termcore')
 
@@ -52,10 +52,13 @@ class ConPTYBackend:
 
     def spawn(self):
         from winpty import PtyProcess
+        # 环境按 Windows 语义从注册表重建, 不用守护进程的 os.environ ——
+        # 后者是它启动那一刻的快照, 用户后来改的环境变量看不到 (见 winenv)
+        env = winenv.freshEnvironment()
+        env['TERM'] = 'xterm-256color'
         self.proc = PtyProcess.spawn(
             self.cmd, cwd=self.cwd or os.path.expanduser('~'),
-            env={**os.environ, 'TERM': 'xterm-256color'},
-            dimensions=(24, 80))
+            env=env, dimensions=(24, 80))
 
     def read(self):
         try:
