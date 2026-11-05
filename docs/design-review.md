@@ -196,19 +196,25 @@ Adapter，职责真实存在。问题只在**导航数据应该只有一个来�
 
 ---
 
-## 五、建议（按优先级）
+## 五、处置结果（2026-11-05 全部完成）
 
-| # | 事项 | 依据 | 代价 |
-|---|---|---|---|
-| **P0** | `read_lines` 修复（**已完成**） | 门禁空转，6 个文件超预算未被发现 | 1 行 |
-| **P1-1** | 拆 `termcore.py`：`wsproto`（帧编解码/控制帧/回放）+ `termprobe`（Win32 前台探测）+ `termcore`（backend/实体/注册表/生命周期） | 5 个变化理由；`_decodeFrame` 私有名被跨模块调用 | 中 |
-| **P1-2** | 拆 `ssh_sftp.py`：`ssh_sftp_base`（blueprint + 上下文管理器）+ `ssh_sftp_ops`（CRUD）+ `ssh_sftp_transfer`（流式传输与打包） | 2 个变化理由，漏三段制 | 中 |
-| **P1-3** | 拆 `plugins.py`：`plugins_base` + `plugins_discover` + `plugins_load` + `plugins_nav` | 4 个变化理由 | 中 |
-| **P2-1** | 导航配置单一来源：服务端下发的 `__WP_PLUGIN_NAV__` 已是一处，把 `PRIMARY/MORE/VIEWS/NAV` 也收敛到 `messages.js` 或服务端一处 | 两份定义已漂移；原则 2 + 已否决「复制动作表」 | 小 |
-| **P2-2** | `common.js` 增 `confirm()`，逐步替换原生 `confirm` | 第 3 处使用点 | 小 |
-| **P3-1** | `inbox_scan` 的 5 个裸缓存变量封装成类，与 `_LazyRepo` 一致 | 同类问题两种解法 | 小 |
-| **P3-2** | `files_archive` 与 `ssh_sftp` 的 zip 策略（budget / 名称净化 / 重名）抽到 `fsutil` 或新 `ziputil` | 两处 zip 实现，策略重复 | 小 |
-| **P3-3** | `termcore` 更名或在文档中明确其"跨特性共享内核"地位 | 名字误导归属 | 极小 |
+> 原建议表按优先级全部执行完毕，下面是落地结果与实测证据。
+
+| # | 事项 | 结果 |
+|---|---|---|
+| **P0** | `read_lines` 修复 | 已修。预算检查恢复生效，一次性暴露 7 个超预算文件 |
+| **P1-1** | 拆 `termcore.py` | 已拆为 `termprobe` 72 / `wsproto` 231 / `termcore` 299。顺带修掉全项目唯一一处跨模块私有访问（`ssh_terminal` 原用 `termcore._decodeFrame`）。dev 实测建会话/回显/ping-pong/resize/断线重连 resumed/回放含旧输出全通过 |
+| **P1-2** | 拆 `ssh_sftp.py` | 已拆为 `ssh_sftp_base` 85 / `_ops` 145 / `_transfer` 309 / `ssh_sftp` 21。14/14 路由经 URL map 断言确认注册；真实服务器只读验证 list/mkdir/read 正常 |
+| **P1-3** | 拆 `plugins.py` | 已拆为 `plugins_base` 71 / `plugins_discover` 92 / `plugins_load` 207 / `plugins_nav` 96 / `plugins` 25。造原生+legacy 两个插件实测加载/路由前缀/标签推导/openWith 去重 |
+| **P2-1** | 导航配置单一来源 | 已收敛到 `frontend/assets/js/nav.js`（`window.WP_NAV`），两壳只做派生。旧壳补上了缺失的「任务」 |
+| **P2-2** | `common.js` 增 `confirm()` | 已加 `WPCommon.confirm()`，迁移 6 处原生调用。实现中抓到并修掉一个真 bug（关闭后重建 DOM 导致 `getElementById` 拿到 orphan 按钮） |
+| **P3-1** | `inbox_scan` 缓存封装 | 5 个裸全局收敛为 `_DigestCache` / `_FingerprintCache`。其余模块级全局复核后保留（带锁的单职责注册表） |
+| **P3-2** | zip 策略共享 | **未做**。`files_archive`（本地路径）与 `ssh_sftp`（SFTP handle）的 IO 源不同，强行共享只会多一层间接；两处的 budget/重名策略各自 ≤30 行且已命名常量化。判断为不值得，留待真出现第三处再抽 |
+| **P3-3** | `termcore` 定位澄清 | 已在 `termcore.py` 模块 docstring 明确「跨特性共享内核（terminal 与 ssh 共用），不是 terminal 的私有实现」，并登记进门禁的 `INFRA` 层（基础设施不得 import 特性层） |
+
+### 遗留的一个真 bug（排查中发现，已修）
+
+`HostRepository` 原来用一次性 `loaded` 标志：主机 CRUD 走 web 进程，`/api/ssh/ws` 由 sessiond 进程处理，两边是各自进程的实例。于是 web 里新加的主机对 sessiond 永远不可见，表现为"加完主机却连不上"，要重启守护进程才好。已改为 mtime 缓存（与 `config.load` 同一范式），并补了并发回归测试——第一版只给读写加锁，`load()` 仍整体替换 `self.store`，测试当场抓到 16 条残留。
 
 ---
 

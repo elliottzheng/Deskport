@@ -57,6 +57,18 @@ for module in BLUEPRINT_MODULES:
 | `modules/ssh.py` | `register(app, sock)` | 需要统一 `Sock` 注册 WS，并按配置决定是否代理到 sessiond |
 | `modules/terminal.py` | `register(app, sock)` | 同上，本机终端 |
 
+### 跨特性共享内核（2026-11-05 明确）
+
+`termcore` 不属于 terminal，而是 local/ssh 共用的内核；`wsproto` 是它的协议层，`termprobe` 是纯查询探针。三者归「基础设施层」：可被任何特性依赖，但自己不得 import 特性层（`tools/check_structure.py` 的 `scan_infra_dependencies` 已把这条编码进门禁）。
+
+```
+基础设施层   config / state / internal_api / events / fsutil / textio / media /
+             contracts / decision / termcore / termprobe / wsproto
+特性层       terminal / ssh / files / tasks / control / screen / command / aihandoff / plugins
+```
+
+依赖方向：特性 → 基础设施；基础设施 → 基础设施。反向或横向即在门禁报 warning。
+
 ## 页面路由表与静态资源
 
 页面是 `frontend/` 下的静态 HTML，由守卫保护。`/app` 是唯一壳入口（`app.html`），其余旧深链 302 到 `/app?view=...`，仅 `?embed=1` 时为壳内 iframe 直出：

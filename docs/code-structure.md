@@ -59,7 +59,9 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 
 ### 存量例外（只减不增）
 
-本轮存量例外已清零；新增文件必须直接符合预算。
+**例外表已清空**（`tools/check_structure.py` 的 `LEGACY` 为 `{}`），新增文件必须直接符合预算。
+
+2026-11-05：`tools/check_structure.py` 的 `read_lines()` 先 `f.read()` 再迭代同一句柄，行数恒为 0，**预算检查自写成以来从未生效**。修复后一次性暴露 7 个超预算文件，已全部拆完（过程见 `docs/design-review.md`）。这一条值得记住：门禁本身失效时，它报的"干净"没有任何意义。
 
 已完成：`modules/tasks.py`（988）已拆为 `tasks_store` 281 / `tasks_runner` 308 / `tasks_api` 328 / `tasks_legacy` 112，从例外表移除。
 已完成：前端 `common.js` 统一 `fmtSize` / `fmtTime` / `fmtAgo` / `escapeHtml`，页面不再各自实现。
@@ -74,6 +76,16 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 已完成：`frontend/assets/js/files.js`（1459）已拆为 `files-env` 30 / `files-methods-core` 462 / `-ops` 201 / `-ui` 163 / `-ai` 368 / `files.js` 247。
 已完成：`modules/files.py`（731）已拆为 `files_base` 12 / `files_browse` 252 / `files_transfer` 209 / `files_archive` 248 / `files_pins` 84 / `files` 7。
 已完成：`modules/ssh.py`（773）已拆为 `ssh_base` 19 / `ssh_hosts` 283 / `ssh_terminal` 149 / `ssh_sftp` 336 / `ssh` 23。
+已完成（2026-11-05）：`modules/termcore.py`（568，5 个变化理由）→ `termprobe` 72 / `wsproto` 231 / `termcore` 299。
+已完成（2026-11-05）：`modules/ssh_sftp.py`（503，CRUD 与批量传输混在一起）→ `ssh_sftp_base` 85 / `_ops` 145 / `_transfer` 309 / `ssh_sftp` 21（装配）。
+已完成（2026-11-05）：`modules/plugins.py`（439，4 个变化理由）→ `plugins_base` 71 / `plugins_discover` 92 / `plugins_load` 207 / `plugins_nav` 96 / `plugins` 25（装配）。
+已完成（2026-11-05）：前端 `ssh-sftp-ui.js`（618）→ `state` 61 / `menu` 71 / `select` 124 / `transfer` 129 / `ui` 363。
+已完成（2026-11-05）：前端 `files-methods-core.js`（523）→ `core` 364 / `select` 167（按对象混入拆块）。
+已完成（2026-11-05）：前端 `term-features.js`（467，超存量上限）→ `features` 421 / `term-sidebar` 71。
+已完成（2026-11-05）：前端 `term-client.js`（517）→ `client` 400 / `term-geometry` 166。
+已完成（2026-11-05）：前端导航配置收敛到 `nav.js`（`window.WP_NAV`），`app-shell.js` 与 `shell.js` 只做派生——原先两份定义已漂移（新壳有 tasks 旧壳没有）。
+已完成（2026-11-05）：`modules/inbox_scan.py` 的 5 个模块级裸缓存全局封装为 `_DigestCache` / `_FingerprintCache`（与 `tasks_store._LazyRepo` 同一做法）。
+已完成（2026-11-05）：`common.js` 增 `WPCommon.confirm()`，替换 6 处原生 `confirm()`。
 
 ## 四、共享与去重
 
@@ -117,11 +129,7 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 | 日期 | 文件 | 违反哪条 | 原因 | 复核 |
 |---|---|---|---|---|
 | 2026-10-23 | 存量 god files | 文件预算 | v2 快速迭代遗留 | 按上表逐个拆 |
-| 2026-11-05 | `modules/termcore.py` 568 | 文件预算 / 高内聚 | 混了 backend、注册表、生命周期、Win32 探测、WS 帧协议 5 个变化理由；`read_lines` 空转导致从未受检 | 拆为 wsproto / termprobe / termcore，见 `docs/design-review.md` P1-1 |
-| 2026-11-05 | `modules/ssh_sftp.py` 503 | 文件预算 / 高内聚 | CRUD 与批量传输打包两个变化理由未按三段制拆 | 拆为 ssh_sftp_base / _ops / _transfer，见 P1-2 |
-| 2026-11-05 | `modules/plugins.py` 439 | 文件预算 / 高内聚 | 发现、动态导入、导航推导、登记查询 4 个变化理由 | 拆为 plugins_base / _discover / _load / _nav，见 P1-3 |
-| 2026-11-05 | `frontend/assets/js/ssh-sftp-ui.js` 618 | 文件预算 | 选中/框选、快速访问、导航、传输混在一起 | 见 P1-2 同批 |
-| 2026-11-05 | `frontend/assets/js/files-methods-core.js` 523 | 文件预算 | 文件方法核心，浏览/选择/动作待再分 | 随 files 系列一起复核 |
-| 2026-11-05 | `frontend/assets/js/term-features.js` 467 | 存量只减不增 | 原上限 464，实际已 467（门禁空转未被发现） | 随 termcore 拆分一起收 |
+（2026-11-05 因 `read_lines` 空转而暴露的 7 个超预算文件，已全部拆完并移出本表；
+当时登记的临时例外已回收，本表重新清零。）
 
 新增例外必须写进本表，否则视为违规。
