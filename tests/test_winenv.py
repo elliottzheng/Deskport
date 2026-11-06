@@ -73,7 +73,7 @@ def test_path_is_concatenated_not_overridden(fakeRegistry, monkeypatch):
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
     monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    assert env['Path'] == SYSTEM_PLUS_USER
+    assert env['PATH'] == SYSTEM_PLUS_USER
 
 
 def test_registry_wins_over_stale_snapshot(fakeRegistry, monkeypatch):
@@ -82,7 +82,7 @@ def test_registry_wins_over_stale_snapshot(fakeRegistry, monkeypatch):
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
     monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    assert env['OneDrive'] == r'C:\Users\x\OneDrive'
+    assert env['ONEDRIVE'] == r'C:\Users\x\OneDrive'
     # TEMP 不在拼接集, 用户段覆盖系统段
     assert env['TEMP'] == r'C:\Users\x\AppData\Local\Temp'
 
@@ -100,7 +100,7 @@ def test_user_hive_overrides_system_for_non_additive(fakeRegistry, monkeypatch):
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
     monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    assert env['Path'] == SYSTEM_PLUS_USER
+    assert env['PATH'] == SYSTEM_PLUS_USER
     assert env['TEMP'] == r'C:\Users\x\AppData\Local\Temp'
 
 
@@ -110,7 +110,7 @@ def test_expand_vars_uses_merged_env(fakeRegistry, monkeypatch):
     monkeypatch.setenv('SystemRoot', r'C:\Windows')
     monkeypatch.delenv('Path', raising=False)
     env = winenv.freshEnvironment()
-    assert env['Path'] == SYSTEM_PLUS_USER
+    assert env['PATH'] == SYSTEM_PLUS_USER
 
 
 def test_expand_vars_unknown_left_alone(fakeRegistry, monkeypatch):
@@ -118,7 +118,7 @@ def test_expand_vars_unknown_left_alone(fakeRegistry, monkeypatch):
     user['Path'] = r'%NOT_A_REAL_VAR%\x'
     monkeypatch.setenv('SystemRoot', r'C:\Windows')
     env = winenv.freshEnvironment()
-    assert env['Path'] == (r'C:\Windows\system32;C:\Windows;'
+    assert env['PATH'] == (r'C:\Windows\system32;C:\Windows;'
                            + r'%NOT_A_REAL_VAR%\x')
 
 
@@ -129,9 +129,9 @@ def test_system_segment_not_dropped(fakeRegistry, monkeypatch):
     monkeypatch.setenv('SystemRoot', r'C:\Windows')
     monkeypatch.setenv('USERPROFILE', r'C:\Users\ZYL')
     env = winenv.freshEnvironment()
-    assert env['Path'].startswith(r'C:\Windows\system32;')
-    assert r'D:\only-in-system' in env['Path']
-    assert env['Path'].endswith(r'C:\Users\ZYL\bin')
+    assert env['PATH'].startswith(r'C:\Windows\system32;')
+    assert r'D:\only-in-system' in env['PATH']
+    assert env['PATH'].endswith(r'C:\Users\ZYL\bin')
 
 
 def test_session_noise_not_leaked(fakeRegistry, monkeypatch):
@@ -165,6 +165,6 @@ def test_real_registry_keeps_system_root(fakeRegistry, monkeypatch):
     """不打桩读真实注册表: PATH 必须含 system32, 否则新终端全是坏壳。"""
     monkeypatch.undo()          # 撤掉桩, 用真注册表
     env = winenv.freshEnvironment()
-    path = (env.get('Path') or env.get('PATH') or '').lower()
+    path = (env.get('PATH') or env.get('PATH') or '').lower()
     assert 'system32' in path, '真实 PATH 缺 system32: %s' % path[:200]
     assert env.get('SystemRoot') or env.get('SYSTEMROOT')

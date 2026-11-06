@@ -54,7 +54,7 @@ _VAR_RE = re.compile(r'%([A-Za-z_][A-Za-z0-9_]*)%')
 # Windows 对少数键是"拼接"而非"覆盖": 生效值 = 系统段 + 用户段。
 # 用 dict.update 让用户段覆盖系统段会丢掉 %SystemRoot%\system32 —— 曾因此
 # 让新终端里 cmd.exe / powershell 全部找不到 (实测踩过)。
-_ENV_ADDITIVE = {'Path', 'PATHEXT'}
+_ENV_ADDITIVE = {'PATH', 'PATHEXT'}
 
 
 def _readHive(root, sub):
@@ -74,23 +74,32 @@ def _readHive(root, sub):
     return out
 
 
-def _mergeLayer(env, layer):
-    """把一层注册表合并进 env: 拼接键追加, 其余覆盖。"""
-    for name, value in layer.items():
-        if name in _ENV_ADDITIVE and env.get(name):
-            env[name] = env[name] + ';' + value
-        else:
-            env[name] = value
+def _mergeLayer(env, name, value):
+    """把一个注册表值合并进 env: 拼接键追加, 其余覆盖 (键统一大写)。"""
+    up = name.upper()
+    if up in _ENV_ADDITIVE and env.get(up):
+        env[up] = env[up] + ';' + value
+    else:
+        env[up] = value
 
 
 def _expand(value, env):
-    """展开 %VAR%; 最多几轮, 遇到自引用/未知名就停下。"""
+    """展开 %VAR%; 最多几轮, 遇到自引用/未知名就停下。
+
+    Windows 变量名大小写不敏感, 查找也按不区分大小写处理。
+    """
+    upper = {k.upper(): v for k, v in env.items()}
+
+    def repl(m):
+        name = m.group(1).upper()
+        if name in upper:
+            return str(upper[name])
+        return os.environ.get(m.group(1), m.group(0))
+
     for _ in range(6):
         if '%' not in value:
             break
-        nxt = _VAR_RE.sub(
-            lambda m: str(env.get(m.group(1), os.environ.get(m.group(1), m.group(0)))),
-            value)
+        nxt = _VAR_RE.sub(repl, value)
         if nxt == value:
             break
         value = nxt
@@ -98,15 +107,22 @@ def _expand(value, env):
 
 
 def freshEnvironment():
-    """返回一份按 Windows 语义重建的环境字典 (每次调用都重新读注册表)。"""
+    """返回一份按 Windows 语义重建的环境字典 (每次调用都重新读注册表)。
+
+    键统一大写: Windows 变量名大小写不敏感, 但环境块里若同时出现
+    Path 与 PATH 两个键, 子进程取到哪个是未定义行为 —— 曾因此让
+    powershell.exe 解析不到 (pywinpty 按 PATH 取, 取到了陈旧的守护进程快照)。
+    """
     env = {}
     for root, sub in _ENV_HIVES:
-        _mergeLayer(env, _readHive(root, sub))
+        for name, value in _readHive(root, sub).items():
+            _mergeLayer(env, name, value)
     for key in _ENV_VOLATILE:
         if key in os.environ and key not in env:
             env[key] = os.environ[key]
     for key, value in os.environ.items():
-        if key in env or key in _ENV_NOISE:
+        up = key.upper()
+        if up in env or up in _ENV_NOISE:
             continue
-        env[key] = value          # 守护进程自身的增量 (虚拟环境/临时注入)
+        env[up] = value           # 守护进程自身的增量 (虚拟环境/临时注入)
     return {k: _expand(v, env) for k, v in env.items()}
