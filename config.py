@@ -24,11 +24,13 @@ DEFAULTS = {'port': 6789, 'password': '', 'stateDirName': 'web-platform',
 
 
 def getRemotes():
-    """联邦远端 Deskport 列表: [{id, name, base, token}]。
+    """联邦远端 Deskport 列表: [{id, name, base, token, terminal, apps}]。
 
     base 指向远端 web 根 (如 http://127.0.0.1:6790)；token 须与远端
-    config 的 federationToken 一致。终端会话会被合并进本机列表，
-    WS 按 session id 路由到归属机器。
+    config 的 federationToken 一致。消费策略由 A 机自己决定:
+    - terminal (缺省 true): 是否合并该机终端会话 (拉取/合并/WS 路由)
+    - apps (缺省 [] = 一律不接): 接受该机哪些外部应用, ["*"] 全收;
+      接受/拒绝某个 app 就是有没有它的 id
     """
     raw = load().get('remotes')
     if not isinstance(raw, list):
@@ -41,10 +43,14 @@ def getRemotes():
         base = str(item.get('base') or '').strip().rstrip('/')
         if not re.match(r'^[a-z0-9_-]{1,20}$', rid) or not base.startswith(('http://', 'https://')):
             continue
+        apps = item.get('apps')
+        apps = [str(a).strip() for a in apps if str(a).strip()] if isinstance(apps, list) else []
         out.append({'id': rid,
                     'name': str(item.get('name') or rid)[:24],
                     'base': base,
-                    'token': str(item.get('token') or '')})
+                    'token': str(item.get('token') or ''),
+                    'terminal': item.get('terminal', True) is not False,
+                    'apps': apps})
     return out
 
 

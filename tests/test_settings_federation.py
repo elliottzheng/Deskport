@@ -48,7 +48,8 @@ def test_set_remotes_roundtrip(cfgfile):
     config.setRemotes(remotes)
     assert config.getRemotes() == [{'id': 'win4710', 'name': 'i7-4710MQ',
                                     'base': 'http://10.126.126.3:6789',
-                                    'token': 'vn1WdB7IAKfd'}]
+                                    'token': 'vn1WdB7IAKfd',
+                                    'terminal': True, 'apps': []}]   # 策略缺省: 接终端, 不接应用
     # 其他配置键保留
     assert json.loads(cfgfile.read_text(encoding='utf-8'))['port'] == 6788
     assert federation.machineOptions() == [
@@ -82,15 +83,19 @@ def test_token_api_rejects_bad_shape(client, cfgfile):
 
 def test_remotes_api_roundtrip(client, cfgfile):
     payload = {'remotes': [
-        {'id': 'r-1', 'name': '办公室台式机', 'base': 'http://10.0.0.2:6789', 'token': 'aaaaaaaa'},
+        {'id': 'r-1', 'name': '办公室台式机', 'base': 'http://10.0.0.2:6789', 'token': 'aaaaaaaa',
+         'terminal': False, 'apps': ['yuanchuang']},
         {'id': 'r-2', 'name': '家里服务器', 'base': 'https://home.example.com', 'token': ''},
     ]}
     resp = client.post('/api/settings/federation/remotes', json=payload)
     assert resp.status_code == 200, resp.get_data(as_text=True)
     machines = resp.get_json()['machines']
     assert machines[0] == {'id': '', 'name': '本机'}
-    assert [m['id'] for m in machines[1:]] == ['r-1', 'r-2']
+    assert [m['id'] for m in machines[1:]] == ['r-2']              # terminal=false 不出现在新建会话选项
     assert config.getRemotes()[0]['base'] == 'http://10.0.0.2:6789'
+    assert config.getRemotes()[0]['terminal'] is False             # 策略键原样保留
+    assert config.getRemotes()[0]['apps'] == ['yuanchuang']
+    assert config.getRemotes()[1]['terminal'] is True and config.getRemotes()[1]['apps'] == []
     # 远端令牌不回传到 machines 列表
     assert all('token' not in m for m in machines[1:])
 

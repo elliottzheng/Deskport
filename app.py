@@ -32,6 +32,7 @@ from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
 from modules import plugins as pluginsModule  # noqa: E402
 from modules import external_proxy as externalProxyModule  # noqa: E402
+from modules import federation as federationModule  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
@@ -44,7 +45,7 @@ def _setupLogging():
     handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s [%(name)s] %(message)s', '%Y-%m-%d %H:%M:%S'))
     for name in ('termcore', 'localterm', 'ssh', 'files', 'sessionproxy', 'control',
-                 'plugins', 'external_proxy'):
+                 'plugins', 'external_proxy', 'federation'):
         logger = logging.getLogger(name)
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
@@ -89,7 +90,8 @@ def _makePageHandler(filename):
             return send_from_directory(FRONTEND_DIR, filename)
         brand = html.escape(config.getBrandName())
         page = page.replace('Deskport', brand)
-        navJson = json.dumps(pluginsModule.getNavItems() + externalProxyModule.getNavItems(),
+        navJson = json.dumps(pluginsModule.getNavItems() + externalProxyModule.getNavItems()
+                             + federationModule.externalNavItems(),
                              ensure_ascii=False).replace('<', '\\u003c')
         headInject = ('<head>\n<meta name="wp-brand" content="%s">'
                       '\n<script>window.__WP_PLUGIN_NAV__=%s;</script>' % (brand, navJson))
@@ -225,6 +227,9 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
     # 外部应用反代挂载: prefix 与已注册路由重合时 validatePrefix 抛错, 装配失败;
     # 空配置也要走 register 清空登记, 保证多次 create_app 互不残留
     externalProxyModule.register(app, config.getExternalApps())
+
+    # 联邦: 刷新线程据此把远端广播、且 remotes[].apps 白名单允许的应用挂进来
+    federationModule.bindApp(app)
 
 
 def create_app(pluginRoots=None, pluginNavDir=None):

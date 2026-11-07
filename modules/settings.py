@@ -111,7 +111,17 @@ def setRemotes():
             return jsonify({'error': '地址需以 http:// 或 https:// 开头: %s' % base}), 400
         if token and len(token) > 128:
             return jsonify({'error': '令牌过长'}), 400
-        cleaned.append({'id': rid, 'name': name, 'base': base, 'token': token})
+        # 消费策略 (见 config.getRemotes): terminal 缺省 true; apps 白名单缺省 []
+        terminal = item.get('terminal', True)
+        if not isinstance(terminal, bool):
+            return jsonify({'error': 'terminal 需为布尔'}), 400
+        apps = item.get('apps', [])
+        if not isinstance(apps, list) or len(apps) > 20 or \
+                any(not isinstance(a, str) or not a.strip() or len(a) > 40 for a in apps):
+            return jsonify({'error': 'apps 需为 ≤20 个非空短字符串的白名单'}), 400
+        cleaned.append({'id': rid, 'name': name, 'base': base, 'token': token,
+                        'terminal': terminal,
+                        'apps': [a.strip() for a in apps]})
         seen.add(rid)
     config.setRemotes(cleaned)
     return jsonify({'ok': True, 'remotes': cleaned,
