@@ -31,6 +31,7 @@ from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
 from modules import plugins as pluginsModule  # noqa: E402
+from modules import external_proxy as externalProxyModule  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
@@ -43,7 +44,7 @@ def _setupLogging():
     handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)s [%(name)s] %(message)s', '%Y-%m-%d %H:%M:%S'))
     for name in ('termcore', 'localterm', 'ssh', 'files', 'sessionproxy', 'control',
-                 'plugins'):
+                 'plugins', 'external_proxy'):
         logger = logging.getLogger(name)
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
@@ -88,7 +89,8 @@ def _makePageHandler(filename):
             return send_from_directory(FRONTEND_DIR, filename)
         brand = html.escape(config.getBrandName())
         page = page.replace('Deskport', brand)
-        navJson = json.dumps(pluginsModule.getNavItems(), ensure_ascii=False).replace('<', '\\u003c')
+        navJson = json.dumps(pluginsModule.getNavItems() + externalProxyModule.getNavItems(),
+                             ensure_ascii=False).replace('<', '\\u003c')
         headInject = ('<head>\n<meta name="wp-brand" content="%s">'
                       '\n<script>window.__WP_PLUGIN_NAV__=%s;</script>' % (brand, navJson))
         page = page.replace('<head>', headInject, 1)
@@ -220,6 +222,10 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
     # 插件最后加载：legacy 插件注册根路径，冲突时宿主路由优先
     pluginsModule.load(app, roots=pluginRoots, navDir=pluginNavDir)
 
+    # 外部应用反代挂载: prefix 与已注册路由重合时 validatePrefix 抛错, 装配失败;
+    # 空配置也要走 register 清空登记, 保证多次 create_app 互不残留
+    externalProxyModule.register(app, config.getExternalApps())
+
 
 def create_app(pluginRoots=None, pluginNavDir=None):
     """装配一个独立 Flask 实例；测试可多次调用，互不共享路由状态。"""
@@ -246,5 +252,10 @@ app, sock = create_app()
 
 if __name__ == '__main__':
     port = config.getPort()
+    # Windows: werkzeug 默认 SO_REUSEADDR, 两个实例能静默绑同一端口并随机分配
+    # 连接 (表现为同一 URL 时而 200 时而 404)。独占绑定让重复启动显式失败,
+    # 由看门狗在端口空闲后拉起, 不产生双实例抢连。
+    from werkzeug.serving import BaseWSGIServer
+    BaseWSGIServer.allow_reuse_address = False
     # 生产化运行: 无 debug / 无 reloader (后端调研报告建议)
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

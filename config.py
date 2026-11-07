@@ -284,3 +284,42 @@ def stateDir():
 
 def statePath(filename):
     return os.path.join(stateDir(), filename)
+
+
+def getExternalApps():
+    r"""外部应用反代挂载列表 (modules/external_proxy 用)。
+
+    config.json 形如:
+        "externalApps": {
+          "yuanchuang": {
+            "upstream": "http://127.0.0.1:8765",
+            "prefix": "/yuanchuang",
+            "mode": "namespace",
+            "nav": {"label": "远窗", "icon": "plug"}
+          }
+        }
+    mode: full (上游已配 web_prefix, 整站原样透传) | namespace (页面剥前缀,
+    /_x/* 原样透传)。字段非法的条目跳过; 路由冲突在装配期由
+    external_proxy.validatePrefix 拒绝。
+    """
+    raw = load().get('externalApps')
+    if not isinstance(raw, dict):
+        return []
+    out = []
+    for appId, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        appId = str(appId).strip()
+        upstream = str(entry.get('upstream') or '').strip().rstrip('/')
+        prefix = str(entry.get('prefix') or '').strip()
+        mode = str(entry.get('mode') or 'namespace').strip().lower()
+        if not appId or not prefix.startswith('/') or mode not in ('full', 'namespace'):
+            continue
+        if not upstream.startswith(('http://', 'https://')):
+            continue
+        nav = entry.get('nav') if isinstance(entry.get('nav'), dict) else {}
+        label = str(nav.get('label') or appId).strip()[:24]
+        icon = str(nav.get('icon') or 'plug').strip() or 'plug'
+        out.append({'id': appId, 'upstream': upstream, 'prefix': prefix,
+                    'mode': mode, 'label': label, 'icon': icon})
+    return out

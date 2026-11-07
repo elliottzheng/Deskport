@@ -1,0 +1,183 @@
+# -*- coding: utf-8 -*-
+"""外部应用反代挂载 — 把本机自托管 Web 应用挂到面板子路径下。
+
+两种挂载模式:
+    full      上游已配 web_prefix: /<prefix>/<path> 原样透传到 upstream 同路径;
+    namespace 兼容模式: 页面路径剥前缀转发 (/<prefix>/<x> → /<x>)，同时
+              /_x/<path> 原样透传（远窗 anzhuo 前端引用全在 /_x/ 命名空间）。
+
+安全模型: Deskport 登录守卫罩住全部挂载路由 (auth.before_request 天然覆盖)；
+装配期做 prefix 冲突检测，与本系统路由重合直接拒绝。
+全流式转发: 请求体走 request.stream、响应走 iter_content 生成器
+(is_streamed=True 让 gzipText 跳过, SSE / Range 不被缓冲破坏)。
+"""
+import logging
+import threading
+
+import requests
+from flask import Response, request
+
+_log = logging.getLogger('external_proxy')
+
+# hop-by-hop 头: 逐跳语义, 代理必须剥掉 (RFC 2616 13.5.1 + 常见补充)
+HOP_BY_HOP = {'connection', 'keep-alive', 'transfer-encoding', 'upgrade',
+              'te', 'trailer', 'proxy-authorization', 'proxy-authenticate'}
+FORWARD_METHODS = ('GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS')
+BODY_METHODS = ('POST', 'PUT', 'PATCH', 'DELETE')
+# namespace 模式下原样透传的命名空间前缀 (远窗约定)
+DEFAULT_NS_PREFIX = '/_x'
+
+_apps = []
+_appsLock = threading.RLock()
+
+_sessionLocal = threading.local()
+
+
+def _session():
+    """线程内复用 requests.Session: 上游同一台机器, keep-alive 收益大。"""
+    s = getattr(_sessionLocal, 'session', None)
+    if s is None:
+        s = requests.Session()
+        _sessionLocal.session = s
+    return s
+
+
+def getApps():
+    with _appsLock:
+        return [dict(item) for item in _apps]
+
+
+def isApiPath(path):
+    """挂载路由下的 API 形态 (/<prefix>/api/...): 未登录返回 401 JSON 而非 302。"""
+    with _appsLock:
+        return any(path.startswith(app['prefix'] + '/api/') for app in _apps)
+
+
+def getNavItems():
+    with _appsLock:
+        return [{'id': app['id'], 'label': app['label'], 'icon': app['icon'],
+                 'href': app['prefix'], 'external': True}
+                for app in _apps]
+
+
+def validatePrefix(prefix, app):
+    """prefix 与已注册路由比对: 与任一静态路由重合即冲突, 报清晰错误。
+
+    动态路由 (/<path:filename> 之类) 不参与: werkzeug 按具体度匹配,
+    静态路由必然胜出, 不构成冲突。
+    """
+    if not prefix.startswith('/') or prefix.endswith('/') or '..' in prefix:
+        raise ValueError('externalApp prefix 非法: %r (须以 / 开头、不以 / 结尾)' % prefix)
+    for rule in app.url_map.iter_rules():
+        # 动态路由取其静态段 (/<path:filename> → '') 参与比对:
+        # werkzeug 虽按具体度让静态路由胜出, 但 prefix 覆盖到动态路由的
+        # 静态段意味着语义冲突 (如 prefix=/assets 撞 /assets/<path:filename>)
+        staticPart = rule.rule.split('<')[0].rstrip('/')
+        if not staticPart:
+            continue
+        mine, theirs = prefix.rstrip('/'), staticPart
+        if mine == theirs or mine.startswith(theirs + '/') or theirs.startswith(mine + '/'):
+            raise ValueError(
+                'externalApp prefix %s 与已注册路由 %s 冲突, 拒绝装配' % (prefix, rule.rule))
+
+
+def _dropHopHeaders(headers):
+    """剥 hop-by-hop 头, 同时解析 Connection 列出的逐跳头一并剥掉。"""
+    connTokens = {t.strip().lower()
+                  for t in (headers.get('Connection') or '').split(',') if t.strip()}
+    return {key: value for key, value in headers.items()
+            if key.lower() not in HOP_BY_HOP and key.lower() not in connTokens
+            and key.lower() != 'host'}
+
+
+def makeProxy(prefix, upstream, mode):
+    """构造挂载在 prefix 下的透传视图。mode: 'full' | 'namespace'。"""
+    nsPrefix = DEFAULT_NS_PREFIX
+
+    def resolveTargetPath(path):
+        # namespace 模式: /_x/* 原样透传; 其余 (页面路径) 剥前缀
+        if mode == 'namespace':
+            if path == nsPrefix or path.startswith(nsPrefix + '/'):
+                return path
+            return path[len(prefix):] or '/'
+        return path
+
+    def proxy(**kwargs):
+        path = resolveTargetPath(request.path)
+        target = upstream.rstrip('/') + path
+        if request.query_string:
+            target += '?' + request.query_string.decode('utf-8', 'replace')
+
+        headers = _dropHopHeaders(request.headers)
+        remote = request.remote_addr or ''
+        # 远窗防暴力只认 XFF 最后一段, 必须追加真实来源 IP (原值在前)
+        existingXff = headers.get('X-Forwarded-For')
+        headers['X-Forwarded-For'] = (
+            existingXff + ', ' + remote if existingXff else remote)
+        headers['X-Forwarded-Proto'] = request.scheme
+        headers['X-Forwarded-Host'] = request.host
+
+        data = request.stream if request.method in BODY_METHODS else None
+        try:
+            upstreamResp = _session().request(
+                request.method, target, headers=headers, data=data,
+                stream=True, allow_redirects=False, timeout=(5, None))
+        except requests.RequestException as exc:
+            _log.warning('upstream %s unreachable: %s', upstream, exc)
+            return Response('{"error": "upstream unreachable"}',
+                            status=502, mimetype='application/json')
+
+        respHeaders = [(k, v) for k, v in upstreamResp.headers.items()
+                       if k.lower() not in HOP_BY_HOP]
+
+        def generate():
+            try:
+                for chunk in upstreamResp.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+            finally:
+                upstreamResp.close()
+
+        resp = Response(generate(), status=upstreamResp.status_code)
+        for key, value in respHeaders:
+            resp.headers.add(key, value)
+        return resp
+
+    proxy.__name__ = 'external_' + prefix.strip('/').replace('/', '_')
+    return proxy
+
+
+def register(app, apps):
+    """装配外部应用挂载。apps: config.getExternalApps() 的列表。
+
+    冲突 (prefix 与已有路由或彼此重合) 直接抛 ValueError, 拒绝装配。
+    """
+    global _apps
+    seen = {}
+    for item in apps:
+        prefix = item['prefix']
+        validatePrefix(prefix, app)
+        if prefix in seen:
+            raise ValueError('externalApp prefix %s 重复 (与 %s), 拒绝装配'
+                             % (prefix, seen[prefix]))
+        seen[prefix] = item['id']
+
+    with _appsLock:
+        _apps = [dict(item) for item in apps]
+
+    for item in apps:
+        proxy = makeProxy(item['prefix'], item['upstream'], item['mode'])
+        endpoint = proxy.__name__
+        # strict_slashes=False: /<prefix> 与 /<prefix>/ 都命中（守卫 302 的 next 常带尾斜杠）
+        app.add_url_rule(item['prefix'], endpoint=endpoint, view_func=proxy,
+                         methods=list(FORWARD_METHODS), strict_slashes=False)
+        app.add_url_rule(item['prefix'] + '/<path:filename>', endpoint=endpoint + '_path',
+                         view_func=proxy, methods=list(FORWARD_METHODS))
+        if item['mode'] == 'namespace':
+            app.add_url_rule(DEFAULT_NS_PREFIX, endpoint=endpoint + '_ns',
+                             view_func=proxy, methods=list(FORWARD_METHODS))
+            app.add_url_rule(DEFAULT_NS_PREFIX + '/<path:filename>',
+                             endpoint=endpoint + '_ns_path', view_func=proxy,
+                             methods=list(FORWARD_METHODS))
+        _log.info('external app %s mounted at %s (%s) -> %s',
+                  item['id'], item['prefix'], item['mode'], item['upstream'])

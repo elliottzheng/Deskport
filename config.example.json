@@ -13,5 +13,6 @@
   "pinnedApps": [],
   "sessiondUrl": "",
   "sshSessiondUrl": "",
-  "brandName": "Deskport"
+  "brandName": "Deskport",
+  "externalApps": {}
 }

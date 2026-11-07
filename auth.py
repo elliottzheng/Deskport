@@ -143,6 +143,9 @@ def register(app):
         from modules import plugins as pluginModule
         if pluginModule.isPluginApiPath(path):
             return jsonify({'error': 'unauthorized'}), 401
+        from modules import external_proxy as externalProxyModule
+        if externalProxyModule.isApiPath(path):
+            return jsonify({'error': 'unauthorized'}), 401
         nextPath = path
         if request.query_string:
             nextPath += '?' + request.query_string.decode('utf-8', 'replace')
