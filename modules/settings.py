@@ -69,11 +69,17 @@ def setInboxSettings():
 
 
 @blueprint.route('/api/settings/federation', methods=['GET'])
-def getFederationSettings():
+def federationSettings():
     return jsonify({
         'token': config.getFederationToken(),
         'remotes': config.getRemotes(),
         'machines': federation.machineOptions(),
+        # 各远端当前广播、且本机策略允许的外部应用 (设置页提示白名单可填什么)
+        'discoveredApps': [
+            {'remoteId': a['remoteId'], 'appId': a['appId'],
+             'label': a.get('label') or '', 'prefix': a.get('prefix') or ''}
+            for a in federation.discoveredExternalApps()
+        ],
     })
 
 

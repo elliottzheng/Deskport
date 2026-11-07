@@ -79,15 +79,16 @@
 
     <div class="card settings-card">
         <div class="card-title">多机联邦</div>
-        <p class="settings-note">把其他电脑上的同款实例加进来：终端页新建会话时可选在那台机器上开，它的会话也会出现在侧栏。本机令牌用于被别的机器添加。</p>
+        <p class="settings-note">把其他电脑上的同款实例加进来：终端页新建会话时可选在那台机器上开，它的会话也会出现在侧栏；它挂载的外部应用（如远窗）也会自动出现在本机导航里——接不接受哪台机器的终端/应用，由下面的开关和白名单决定。本机令牌用于被别的机器添加。</p>
 
         <label class="field-label">本机联邦令牌</label>
         <div class="fed-token-row">
             <input class="input" v-model="fedToken" placeholder="留空 = 不允许被其他机器连接"
                    spellcheck="false" autocomplete="off">
             <button type="button" class="btn btn-secondary" @click="genToken">生成</button>
+            <button type="button" class="btn btn-secondary" @click="copyToken">复制</button>
         </div>
-        <p class="settings-hint">对方在它的设置里添加本机时，填这个令牌。</p>
+        <p class="settings-hint">对方设置页的「远端机器」里填这个令牌。它等同于本机 API 的完整控制权，别外传。</p>
         <button class="btn btn-primary settings-submit" @click="saveToken" :disabled="fedBusy">
             {{ fedBusy ? '保存中…' : '保存本机令牌' }}
         </button>
@@ -101,6 +102,15 @@
             <input class="input" v-model.trim="r.name" placeholder="名称，如 B 机" maxlength="24" spellcheck="false">
             <input class="input" v-model.trim="r.base" placeholder="地址，如 http://10.126.126.3:6789" spellcheck="false">
             <input class="input" v-model.trim="r.token" placeholder="对方的本机联邦令牌" spellcheck="false">
+            <label class="fed-check">
+                <input type="checkbox" v-model="r.terminal"> 接受它的终端会话
+            </label>
+            <label class="field-label">接受它的外部应用（逗号分隔应用 id，<code>*</code> = 全部，留空 = 不接）</label>
+            <input class="input" v-model.trim="r.appsText" placeholder="如 yuanchuang；多个用逗号隔开" spellcheck="false">
+            <p class="settings-hint" v-if="fedDiscovered[r.id] && fedDiscovered[r.id].length">
+                它当前广播: {{ fedDiscovered[r.id].join('、') }}
+            </p>
+            <p class="settings-hint" v-else>它当前没有广播外部应用（或按白名单全部被拒）。</p>
         </div>
         <button type="button" class="btn btn-secondary settings-submit" @click="addRemote">添加一台机器</button>
         <p v-if="fedError" class="load-error" style="margin-top:12px">{{ fedError }}</p>

@@ -24,6 +24,7 @@ createApp({
             brandBusy: false,
             fedToken: '',
             fedRemotes: [],
+            fedDiscovered: {},
             fedError: '',
             fedOk: '',
             fedBusy: false,
@@ -128,17 +129,36 @@ createApp({
                 this.inboxBusy = false;
             }
         },
+        toRemoteRow(x) {
+            return { id: x.id, name: x.name, base: x.base, token: x.token || '',
+                     terminal: x.terminal !== false,
+                     appsText: (x.apps || []).join(', ') };
+        },
         async loadFederation() {
             try {
                 const r = await fetch('/api/settings/federation');
                 const data = await r.json().catch(() => ({}));
                 if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                 this.fedToken = data.token || '';
-                this.fedRemotes = (data.remotes || []).map(function (x) {
-                    return { id: x.id, name: x.name, base: x.base, token: x.token || '' };
+                this.fedRemotes = (data.remotes || []).map(x => this.toRemoteRow(x));
+                const seen = {};
+                (data.discoveredApps || []).forEach(function (a) {
+                    const key = a.remoteId;
+                    seen[key] = seen[key] || [];
+                    seen[key].push(a.label ? (a.label + ' (' + a.appId + ')') : a.appId);
                 });
+                this.fedDiscovered = seen;
             } catch (err) {
                 this.fedError = '加载联邦设置失败: ' + err.message;
+            }
+        },
+        async copyToken() {
+            try {
+                await navigator.clipboard.writeText(this.fedToken);
+                this.fedOk = '本机令牌已复制，粘贴到对方机器的「远端机器」里';
+                setTimeout(() => { this.fedOk = ''; }, 2500);
+            } catch (err) {
+                this.fedError = '复制失败，请手动选中令牌复制';
             }
         },
         genToken() {
@@ -176,7 +196,8 @@ createApp({
             const id = 'r' + Array.from(arr, function (b) {
                 return b.toString(36).padStart(2, '0');
             }).join('').slice(0, 6);
-            this.fedRemotes.push({ id: id, name: '', base: '', token: '' });
+            this.fedRemotes.push({ id: id, name: '', base: '', token: '',
+                                   terminal: true, appsText: '' });
         },
         async saveRemotes() {
             if (this.fedBusy) { return; }
@@ -185,17 +206,22 @@ createApp({
             for (const r of this.fedRemotes) {
                 if (!r.name || !r.base) { this.fedError = '每台机器都需要名称和地址'; return; }
             }
+            const payload = this.fedRemotes.map(function (r) {
+                const apps = (r.appsText || '').split(/[,，\s]+/).filter(Boolean);
+                return { id: r.id, name: r.name, base: r.base, token: r.token || '',
+                         terminal: r.terminal !== false, apps: apps };
+            });
             this.fedBusy = true;
             try {
                 const r = await fetch('/api/settings/federation/remotes', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ remotes: this.fedRemotes }),
+                    body: JSON.stringify({ remotes: payload }),
                 });
                 const data = await r.json().catch(() => ({}));
                 if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                this.fedRemotes = data.remotes || [];
-                this.fedOk = '远端列表已保存，新建会话时即可选择机器';
+                this.fedRemotes = (data.remotes || []).map(x => this.toRemoteRow(x));
+                this.fedOk = '远端列表已保存；允许的外部应用会在几秒内自动挂到本机';
                 setTimeout(() => { this.fedOk = ''; }, 2500);
             } catch (err) {
                 this.fedError = err.message;

@@ -202,6 +202,7 @@ def discoveredExternalApps():
                 continue
             for a in cached['apps']:
                 item = dict(a)
+                item['appId'] = item.get('id') or '?'       # 原始 id: 白名单填这个
                 item['remote'] = r['name']
                 item['remoteId'] = r['id']
                 item['base'] = r['base']

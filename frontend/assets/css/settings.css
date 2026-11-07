@@ -44,3 +44,5 @@
 .fed-remote-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-2); }
 .fed-remote-idx { font-size: 12px; color: var(--text-3); font-family: var(--mono); }
 .fed-remote .input { margin-bottom: var(--sp-2); font-size: 13px; }
+.fed-check { display: flex; align-items: center; gap: 8px; margin-bottom: var(--sp-2); font-size: 13px; color: var(--text-1); cursor: pointer; }
+.fed-check input { width: 15px; height: 15px; accent-color: var(--accent, #4a7dff); }
