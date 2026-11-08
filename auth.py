@@ -18,6 +18,7 @@ EXEMPT_PREFIXES = (
     '/api/auth/status',   # 未认证也要可访问: 终端页掉线探测依赖它
     '/assets/css/tokens.css',
     '/assets/css/login.css',
+    '/manifest.webmanifest',
     '/favicon',
 )
 
