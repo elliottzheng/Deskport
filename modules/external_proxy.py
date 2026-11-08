@@ -204,6 +204,10 @@ def _forward(entry):
         target += '?' + request.query_string.decode('utf-8', 'replace')
 
     headers = _dropHopHeaders(request.headers)
+    # 流式转发未知长度的 body 时 requests 会改用 chunked, 转发下来的
+    # Content-Length 必须剥掉: CL 与 TE 并存是非法组合, aiohttp 直接 400
+    if request.method in BODY_METHODS and 'Content-Length' in headers:
+        del headers['Content-Length']
     remote = request.remote_addr or ''
     # 远窗防暴力只认 XFF 最后一段, 必须追加真实来源 IP (原值在前)
     existingXff = headers.get('X-Forwarded-For')
@@ -216,7 +220,10 @@ def _forward(entry):
         # 免去第二层网页登录 —— 否则两台的同名 session Cookie 会互相顶掉)
         headers['X-Deskport-Token'] = entry['token']
 
-    data = request.stream if request.method in BODY_METHODS else None
+    # 请求体: 完整读入再转发 (bytes 语义明确, 不依赖流读取 —— 流式转发在
+    # 部分环境下会卡死在读 body, 整条 POST 挂住; 远窗场景 body 都是表单/JSON
+    # 级小体, 内存代价可忽略)。响应侧仍保持流式 (SSE/大文件下载不受影响)。
+    data = request.get_data(cache=True) if request.method in BODY_METHODS else None
     try:
         upstreamResp = _session().request(
             request.method, target, headers=headers, data=data,
