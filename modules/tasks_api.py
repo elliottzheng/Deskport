@@ -8,7 +8,7 @@ import shutil
 import uuid
 from functools import wraps
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, g, jsonify, request, send_file
 
 from modules.kimi_acp import KimiAcp
 from modules import tasks_runner as runner
@@ -16,6 +16,7 @@ from modules import task_state
 from modules import tasks_store as store
 from modules import fsutil
 from modules import agent_nodes
+from modules import events
 
 blueprint = Blueprint('tasks', __name__)
 log = logging.getLogger('tasks')
@@ -103,6 +104,11 @@ def createTask():
         store.repo.put(task)
         store.repo.save()
     store.repo.append_event(task, 'status', text='任务已创建')
+    tokenName = getattr(g, 'agentTokenName', '')
+    if tokenName:
+        # 外部智能体经令牌通道建任务: 写系统审计（任务卡事件之外独立留痕）
+        events.log('agent.task.create', tokenName, 'ok', prompt[:160],
+                   request.remote_addr)
     runner._startTask(task, manifest)
     return jsonify({'task': store.repo.summary(task)}), 202
 

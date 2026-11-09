@@ -5,7 +5,7 @@ import html
 import threading
 import time
 
-from flask import request, session, redirect, jsonify
+from flask import g, request, session, redirect, jsonify
 
 import config
 from modules import events
@@ -139,12 +139,17 @@ def register(app):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
-        if path.startswith('/api/agent/'):
-            # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行 (modules/agent_api)
+        if path.startswith('/api/agent/') or path.startswith('/api/tasks'):
+            # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行。
+            # /api/tasks 放行后外部智能体可建任务/收事件/回权限（操控本机 Kimi）
             from modules import agent_api as agentModule
-            if agentModule.agentFromRequest() is not None:
+            agent = agentModule.agentFromRequest()
+            if agent is not None:
+                g.agentTokenName = agent.get('name') or ''
                 return None
-            return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401
+            if path.startswith('/api/agent/'):
+                return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401
+            # /api/tasks 未命中令牌 → 落到下方统一 401
         if path.startswith('/api/'):
             return jsonify({'error': 'unauthorized'}), 401
         from modules import plugins as pluginModule
