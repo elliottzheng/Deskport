@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import os
 import posixpath
+import shlex
 import time
 
 import paramiko
@@ -31,7 +32,7 @@ from modules import ssh_hosts as hosts
 from modules.ssh_sftp import _openSftp
 
 DEFAULT_TIMEOUT = 30
-MAX_TIMEOUT = 300
+MAX_TIMEOUT = 600
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 MAX_FILE_BYTES = 8 * 1024 * 1024
 
@@ -154,8 +155,11 @@ def agentExec():
         return err
     data = request.get_json(silent=True) or {}
     command = str(data.get('command') or '').strip()
+    cwd = str(data.get('cwd') or '').strip()
     if not command:
         return jsonify({'error': '缺少 command'}), 400
+    if cwd:
+        command = 'cd ' + shlex.quote(cwd) + ' && (' + command + ')'
     try:
         timeoutSec = int(data.get('timeoutSec') or DEFAULT_TIMEOUT)
     except (TypeError, ValueError):
