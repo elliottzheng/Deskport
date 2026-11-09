@@ -22,6 +22,8 @@ class TaskSummary(TypedDict):
     resultFiles: list[dict]
     error: str
     mode: str
+    node: str
+    remoteCwd: str
     resume: bool
     canContinue: bool
     canResume: bool

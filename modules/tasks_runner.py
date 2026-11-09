@@ -276,7 +276,11 @@ def _resumeWithMessage(task, text):
         store.repo.save()
     def run():
         try:
-            _sessionThread(task, [], True, text)
+            factory = KimiAcp
+            if task.get('engine') == 'remote':
+                from modules.agent_nodes import remoteClientFactory
+                factory = remoteClientFactory(task)
+            _sessionThread(task, [], True, text, clientFactory=factory)
         finally:
             with store.repo.lock:
                 task['resuming'] = False

@@ -195,6 +195,7 @@ def _getConnection(hostEntry):
     else:
         transport.auth_password(username, hostEntry.get('password'))
     registry.put(hostId, client)
+    transport.set_keepalive(30)
     log.info('ssh connect host=%s user=%s@%s:%s fp=%s', hostId,
              username, hostEntry['host'], hostEntry.get('port'), fingerprint[:20])
     return client

@@ -28,7 +28,7 @@
                 <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
                           placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
                           @keydown.ctrl.enter="create"></textarea>
-                <div class="task-files">
+                <div class="task-files" v-if="isLocalRun">
                     <span class="task-file" v-for="p in paths" :key="p">
                         {{ baseName(p) }}
                         <button type="button" title="移除" @click="removePath(p)">&times;</button>
@@ -65,6 +65,14 @@
                     </div>
                 </div>
                 <div class="task-options">
+                    <label class="task-mode">执行位置
+                        <select class="input task-where" v-model="runWhere">
+                            <option value="local">本机</option>
+                            <option v-for="n in nodes" :key="n.name" :value="n.name">{{ n.name }}</option>
+                        </select>
+                    </label>
+                    <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
+                           spellcheck="false" placeholder="远端工作目录，如 /mnt/sda1/yinglin/course">
                     <label class="task-mode">模式
                         <select class="input" v-model="mode">
                             <option value="auto">自动批准（推荐）</option>
@@ -76,8 +84,10 @@
                     <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
                 </div>
                 <div class="task-compose-foot">
-                    <span class="task-hint">在独立工作区执行；输入文件复制一份，不改原件。</span>
-                    <button type="button" class="btn btn-primary" :disabled="busy || !prompt" @click="create">
+                    <span class="task-hint">{{ isLocalRun
+                        ? '在独立工作区执行；输入文件复制一份，不改原件。'
+                        : '在所选节点的远端目录执行；直接使用远端已有文件。' }}</span>
+                    <button type="button" class="btn btn-primary" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
                         {{ busy ? '创建中…' : '开始任务' }}
                     </button>
                 </div>
@@ -90,7 +100,7 @@
                     <span class="task-dot" :class="'is-' + t.status"></span>
                     <span class="task-row-main">
                         <span class="task-row-title">{{ t.title || t.prompt }}</span>
-                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}</span>
+                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}<template v-if="t.node"> · {{ t.node }}</template></span>
                     </span>
                     <span class="task-row-count" v-if="t.resultFiles && t.resultFiles.length">{{ t.resultFiles.length }} 个结果</span>
                 </button>
@@ -104,6 +114,7 @@
                     <div class="task-detail-title">{{ detail.title || detail.prompt }}</div>
                     <div class="task-detail-meta">
                         {{ detail.createdLabel }} · {{ statusLabel(detail.status) }} · {{ modeLabel(detail.mode) }}
+                        <span v-if="detail.node"> · 节点 {{ detail.node }}<template v-if="detail.remoteCwd"> · {{ detail.remoteCwd }}</template></span>
                         <span v-if="detail.lastActiveLabel"> · 最近 {{ detail.lastActiveLabel }}</span>
                     </div>
                 </div>

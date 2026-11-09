@@ -15,6 +15,7 @@ from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
 from modules import fsutil
+from modules import agent_nodes
 
 blueprint = Blueprint('tasks', __name__)
 log = logging.getLogger('tasks')
@@ -53,11 +54,22 @@ def createTask():
     if not isinstance(paths, list) or len(paths) > 20:
         return jsonify({'error': 'paths 必须是数组且不超过 20 项'}), 400
     engine = (data.get('engine') or 'acp').lower()
-    if engine not in ('acp', 'p'):
-        return jsonify({'error': 'engine 只能是 acp / p'}), 400
+    if engine not in ('acp', 'p', 'remote'):
+        return jsonify({'error': 'engine 只能是 acp / p / remote'}), 400
     mode = (data.get('mode') or 'auto').lower()
     if mode not in ('auto', 'default', 'plan', 'yolo'):
         return jsonify({'error': 'mode 只能是 auto / default / plan / yolo'}), 400
+    node = ''
+    remoteCwd = ''
+    if engine == 'remote':
+        node = str(data.get('node') or '').strip()
+        if agent_nodes.findNode(node) is None:
+            return jsonify({'error': 'agent node 不存在',
+                            'nodes': [n['name'] for n in agent_nodes.listNodeNames()]}), 400
+        remoteCwd = str(data.get('cwd') or '').strip()
+        if len(remoteCwd) > 500:
+            return jsonify({'error': 'cwd 过长'}), 400
+        paths = []   # 远端任务不接受本机文件，跨机传输不在本引擎范围
     with store.repo.lock:
         active = sum(1 for t in store.repo.list() if t.get('status') == 'running')
         if active >= runner.MAX_RUNNING:
@@ -84,6 +96,7 @@ def createTask():
         'resultFiles': [], 'error': '', 'sessionId': '', 'engine': engine,
         'mode': mode, 'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
+        'node': node, 'remoteCwd': remoteCwd,
         'sources': manifest,
     }
     with store.repo.lock:

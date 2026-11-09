@@ -206,6 +206,8 @@ class TaskRepository:
             'resultFiles': task.get('resultFiles', []),
             'error': task.get('error', ''),
             'mode': task.get('mode') or 'auto',
+            'node': task.get('node') or '',
+            'remoteCwd': task.get('remoteCwd') or '',
             'resume': bool(task.get('resume')),
             'canContinue': task_state.canContinue(task),
             'canResume': task_state.canResume(task),

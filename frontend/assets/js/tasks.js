@@ -8,6 +8,9 @@
             return {
                 prompt: '',
                 mode: 'auto',
+                runWhere: 'local',
+                nodes: [],
+                remoteCwd: '',
                 paths: [],
                 pathInput: '',
                 pathMenuOpen: false,
@@ -35,6 +38,9 @@
             };
         },
         computed: {
+            isLocalRun() {
+                return this.runWhere === 'local';
+            },
             isRunning() {
                 return !!this.detail && ['queued', 'running'].indexOf(this.detail.status) >= 0;
             },
@@ -88,6 +94,7 @@
         mounted() {
             this.loadRecent();
             this.refresh();
+            this.loadNodes();
             this.listTimer = setInterval(this.refresh, 2000);
             this.detailTimer = setInterval(this.pollDetail, 1000);
         },
@@ -175,10 +182,18 @@
                 this.busy = true;
                 this.error = '';
                 try {
+                    const body = { prompt: prompt, mode: this.mode };
+                    if (this.isLocalRun) {
+                        body.paths = this.paths;
+                    } else {
+                        body.engine = 'remote';
+                        body.node = this.runWhere;
+                        body.cwd = this.remoteCwd;
+                    }
                     const r = await fetch('/api/tasks', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: prompt, paths: this.paths, mode: this.mode }),
+                        body: JSON.stringify(body),
                     });
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
@@ -192,6 +207,14 @@
                 } finally {
                     this.busy = false;
                 }
+            },
+            async loadNodes() {
+                try {
+                    const r = await fetch('/api/tasks/nodes');
+                    if (!r.ok) { return; }
+                    const data = await r.json();
+                    this.nodes = data.nodes || [];
+                } catch (err) { /* 节点列表拉取失败不阻塞页面 */ }
             },
             async sendMessage() {
                 const text = (this.message || '').trim();

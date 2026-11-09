@@ -33,6 +33,7 @@ from modules import terminal as terminalModule  # noqa: E402
 from modules import plugins as pluginsModule  # noqa: E402
 from modules import agent_api as agentApiModule  # noqa: E402
 from modules import agent_sessions as agentSessionsModule  # noqa: E402
+from modules import agent_nodes as agentNodesModule  # noqa: E402
 from modules import external_proxy as externalProxyModule  # noqa: E402
 from modules import federation as federationModule  # noqa: E402
 
@@ -201,7 +202,7 @@ def gzipText(resp):
 # 显式注册表：蓝图模块与 register(app) 模块分开，新增模块必须在这里登记。
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
-                     pluginsModule, agentApiModule)
+                     pluginsModule, agentApiModule, agentNodesModule)
 REGISTER_MODULES = (systemModule, metaModule, tasksModule)
 
 

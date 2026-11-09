@@ -186,6 +186,32 @@ def getSessiondUrl(kind='local'):
     return str(load().get(key) or '').strip().rstrip('/')
 
 
+def getAgentNodes():
+    """远端智能体节点列表: [{name, url, token, via, remote}]。
+
+    name 显示用；url 是 agent node 的 base；token 为 node 的 X-Agent-Token。
+    via 是 SSH 主机 id：给出时请求经 SSH 隧道转发到 remote（缺省
+    127.0.0.1:<url端口>），用于 node 端口被防火墙过滤的内网机器。
+    """
+    raw = load().get('agentNodes')
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get('name') or '').strip()
+        url = str(item.get('url') or '').strip().rstrip('/')
+        if not name or len(name) > 24 or not url.startswith(('http://', 'https://')):
+            continue
+        out.append({'name': name,
+                    'url': url,
+                    'token': str(item.get('token') or ''),
+                    'via': str(item.get('via') or '').strip(),
+                    'remote': str(item.get('remote') or '').strip()})
+    return out
+
+
 def getSessiondPort(kind='local'):
     """守护进程监听端口：配置 URL 的端口优先，否则用默认 6791/6792。"""
     default = 6791 if kind == 'local' else 6792
