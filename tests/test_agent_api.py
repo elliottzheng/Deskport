@@ -54,20 +54,14 @@ def installExecSpy(monkeypatch, calls):
     monkeypatch.setattr(agent_api, '_execOnHost', fakeExec)
 
 
-def test_agent_401_without_token(env, monkeypatch):
+def test_agent_token_rejections(env, monkeypatch):
+    """无令牌与错令牌都 401。"""
     installExecSpy(env.monkeypatch, [])
-    resp = env.client.post('/api/agent/ssh/exec',
-                           data=json.dumps({'host': 'x', 'command': 'ls'}),
-                           content_type='application/json')
-    assert resp.status_code == 401
-
-
-def test_agent_401_with_bad_token(env, monkeypatch):
-    installExecSpy(env.monkeypatch, [])
-    resp = env.client.post('/api/agent/ssh/exec', headers={'X-Agent-Token': 'bad'},
-                           data=json.dumps({'host': 'x', 'command': 'ls'}),
-                           content_type='application/json')
-    assert resp.status_code == 401
+    for headers in ({}, {'X-Agent-Token': 'bad'}):
+        resp = env.client.post('/api/agent/ssh/exec', headers=headers,
+                               data=json.dumps({'host': 'x', 'command': 'ls'}),
+                               content_type='application/json')
+        assert resp.status_code == 401
 
 
 def test_exec_success_by_host_name(env, monkeypatch):
@@ -206,9 +200,11 @@ def test_session_open_exec_close(tmp_path, monkeypatch):
     monkeypatch.setattr(configMod, 'getAgentTokens',
                         lambda: [{'id': 't1', 'tokenHash': TOKEN_HASH}])
     monkeypatch.setattr(events, 'log', lambda *a, **k: None)
-    monkeypatch.setattr(agent_api, 'hosts', makeFakeHostsModule(entries))
     chan = FakeSessionChannel()
-    monkeypatch.setattr(agent_api.hosts, "getConnection", lambda e: FakeClient(chan))
+    import modules.agent_sessions as agentSessionsMod
+    monkeypatch.setattr(agentSessionsMod, 'getConnection', lambda e: FakeClient(chan))
+    fakeHosts = makeFakeHostsModule(entries, client=FakeClient(chan))
+    monkeypatch.setattr(agent_api, 'hosts', fakeHosts)
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
     client = app.test_client()
@@ -329,6 +325,7 @@ def posixname(path):
 def installSftp(monkeypatch, fake):
     import modules.ssh_sftp as sshSftpMod
     monkeypatch.setattr(sshSftpMod, '_openSftp', lambda hostId: fake)
+    monkeypatch.setattr(agent_api, '_openSftp', lambda hostId: fake)
     monkeypatch.setattr(agent_api, '_resolveHost',
                         lambda nameOrId: {'id': 'office', 'name': nameOrId})
 
@@ -362,6 +359,7 @@ def test_sftp_put_writes_and_audits(env, monkeypatch):
     fake.dirs.add('/srv')
     import modules.ssh_sftp as sshSftpMod
     monkeypatch.setattr(sshSftpMod, '_openSftp', lambda hostId: fake)
+    monkeypatch.setattr(agent_api, '_openSftp', lambda hostId: fake)
     monkeypatch.setattr(agent_api, '_resolveHost',
                         lambda nameOrId: {'id': 'office', 'name': nameOrId})
 
@@ -380,6 +378,7 @@ def test_sftp_get_oversize_is_413(env, monkeypatch):
     fake.dirs.add('/srv')
     import modules.ssh_sftp as sshSftpMod
     monkeypatch.setattr(sshSftpMod, '_openSftp', lambda hostId: fake)
+    monkeypatch.setattr(agent_api, '_openSftp', lambda hostId: fake)
     monkeypatch.setattr(agent_api, '_resolveHost',
                         lambda nameOrId: {'id': 'office', 'name': nameOrId})
 

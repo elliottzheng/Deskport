@@ -32,6 +32,7 @@ from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
 from modules import plugins as pluginsModule  # noqa: E402
 from modules import agent_api as agentApiModule  # noqa: E402
+from modules import agent_sessions as agentSessionsModule  # noqa: E402
 from modules import external_proxy as externalProxyModule  # noqa: E402
 from modules import federation as federationModule  # noqa: E402
 
