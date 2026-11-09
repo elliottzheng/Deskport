@@ -28,7 +28,7 @@ import paramiko
 from flask import Blueprint, jsonify, request
 
 import config
-from modules import events, textio
+from modules import events
 from modules import ssh_hosts as hosts
 from modules.ssh_sftp import _openSftp
 
