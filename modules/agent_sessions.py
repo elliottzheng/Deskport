@@ -183,6 +183,7 @@ def agentSessionExec(sid):
     with sess['lock']:
         outStart = len(chan.out)
         errStart = len(chan.err)
+        markerStart = None
         markerEnd = None
         exitCode = None
         timedOut = False
@@ -193,7 +194,8 @@ def agentSessionExec(sid):
             got = chan.pump()
             idx, lineEnd, code = _findMarker(chan.out, outStart, sess['nonce'])
             if idx is not None:
-                markerEnd = lineEnd
+                markerStart = idx
+                markerEnd = lineEnd + 1
                 exitCode = code
                 break
             if chan.dead():
@@ -202,7 +204,7 @@ def agentSessionExec(sid):
                 break
             if not got:
                 time.sleep(0.05)
-        outBytes = bytes(chan.out[outStart:markerEnd]) if markerEnd is not None \
+        outBytes = bytes(chan.out[outStart:markerStart]) if markerStart is not None \
             else bytes(chan.out[outStart:])
         errBytes = bytes(chan.err[errStart:])
         if markerEnd is not None:
