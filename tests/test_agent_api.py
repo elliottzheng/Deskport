@@ -34,12 +34,13 @@ def env(tmp_path, monkeypatch):
     return SimpleNamespace(client=client, audit=audit, monkeypatch=monkeypatch)
 
 
-def makeFakeHostsModule(entries):
+def makeFakeHostsModule(entries, client=None):
     """构造 agent_api.hosts 的替身模块 (findHost / repo.all)。"""
     import types
     repo = SimpleNamespace(all=lambda: entries)
     mod = types.SimpleNamespace(findHost=lambda hostId: next(
-        (e for e in entries if e['id'] == hostId), None), repo=repo)
+        (e for e in entries if e['id'] == hostId), None), repo=repo,
+        getConnection=lambda entry: client)
     return mod
 
 
@@ -80,7 +81,7 @@ def test_exec_success_by_host_name(env, monkeypatch):
                            content_type='application/json')
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body['exitCode'] == 0 and 'ok-out' in body['stdout']
+    assert body['exit'] == 0 and 'ok-out' in body['out']
     assert calls[0]['command'] == 'uptime'
     assert any(a['action'] == 'agent.exec' for a in env.audit)
 
@@ -94,7 +95,7 @@ def test_exec_rejects_empty_command(env, monkeypatch):
     assert resp.status_code == 400
 
 
-def test_exec_timeout_clamped_to_300(env, monkeypatch):
+def test_exec_timeout_clamped_to_600(env, monkeypatch):
     entries = [{'id': 'h1', 'name': 'x', 'host': '10.0.0.1', 'port': 22}]
     calls = []
     monkeypatch.setattr(agent_api, 'hosts', makeFakeHostsModule(entries))
@@ -103,7 +104,7 @@ def test_exec_timeout_clamped_to_300(env, monkeypatch):
     env.client.post('/api/agent/ssh/exec', headers={'X-Agent-Token': TOKEN},
                     data=json.dumps({'host': 'h1', 'command': 'ls', 'timeoutSec': 99999}),
                     content_type='application/json')
-    assert calls[0]['timeoutSec'] == 300
+    assert calls[0]['timeoutSec'] == 600
 
 
 def test_unknown_host_is_404(env, monkeypatch):
@@ -125,6 +126,127 @@ def test_hosts_listing_has_no_secrets(env, monkeypatch):
     assert resp.status_code == 200
     assert 'SECRET-KEY' not in body and 'hunter2' not in body
     assert resp.get_json()['hosts'][0]['name'] == 'ai-xmyz'
+
+
+# ---- 持久会话: open / exec / close ----
+
+class FakeSessionChannel:
+    def __init__(self):
+        self.out = bytearray()
+        self.err = bytearray()
+        self.readPos = 0
+        self.errPos = 0
+        self.pendingIn = bytearray()
+        self.closed = False
+        self.bootCmd = None
+        self.transport = SimpleNamespace(is_active=lambda: True)
+
+    def get_transport(self):
+        return self.transport
+
+    def settimeout(self, t):
+        pass
+
+    def exec_command(self, cmd):
+        self.bootCmd = cmd
+
+    def sendall(self, data):
+        self.pendingIn += data
+        while True:
+            idx = self.pendingIn.find(b'\n')
+            if idx < 0:
+                break
+            line = bytes(self.pendingIn[:idx])
+            self.pendingIn = bytearray(self.pendingIn[idx + 1:])
+            self._onLine(line)
+
+    def _onLine(self, line):
+        if line.startswith(b'printf "'):
+            start = line.find(b'"') + 1
+            end = line.find(b'%s', start)
+            marker = line[start:end]
+            self.out += marker + b'0\n'
+        elif line.startswith(b'cd '):
+            pass
+        else:
+            self.out += (b'ran: ' + line.strip() + b'\n')
+
+    def recv_ready(self):
+        return self.readPos < len(self.out)
+
+    def recv(self, n=65536):
+        chunk = self.out[self.readPos:self.readPos + n]
+        self.readPos += len(chunk)
+        return chunk
+
+    def recv_stderr_ready(self):
+        return self.errPos < len(self.err)
+
+    def recv_stderr(self, n=65536):
+        chunk = self.err[self.errPos:self.errPos + n]
+        self.errPos += len(chunk)
+        return chunk
+
+    def close(self):
+        self.closed = True
+
+
+class FakeClient:
+    def __init__(self, chan):
+        self.transport = SimpleNamespace(
+            is_active=lambda: True,
+            open_session=lambda timeout=10: chan)
+
+    def get_transport(self):
+        return self.transport
+
+
+def test_session_open_exec_close(tmp_path, monkeypatch):
+    entries = [{'id': 'h1', 'name': 'ai-xmyz', 'host': '10.0.0.9', 'port': 22}]
+    monkeypatch.setattr(configMod, 'getAgentTokens',
+                        lambda: [{'id': 't1', 'tokenHash': TOKEN_HASH}])
+    monkeypatch.setattr(events, 'log', lambda *a, **k: None)
+    monkeypatch.setattr(agent_api, 'hosts', makeFakeHostsModule(entries))
+    chan = FakeSessionChannel()
+    monkeypatch.setattr(agent_api.hosts, "getConnection", lambda e: FakeClient(chan))
+    from app import create_app
+    app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
+    client = app.test_client()
+    H = {'X-Agent-Token': TOKEN}
+
+    resp = client.post('/api/agent/ssh/sessions', headers=H,
+                       data=json.dumps({'host': 'ai-xmyz', 'cwd': '/work'}),
+                       content_type='application/json')
+    assert resp.status_code == 200
+    sid = resp.get_json()['sessionId']
+    assert chan.bootCmd == 'cd /work && exec bash -s'
+
+    resp = client.post('/api/agent/ssh/sessions/' + sid, headers=H,
+                       data=json.dumps({'command': 'echo hi'}),
+                       content_type='application/json')
+    body = resp.get_json()
+    assert body['exit'] == 0
+    assert 'ran: echo hi' in body['out']
+    assert body['cwd'] == '/work'
+
+    resp = client.delete('/api/agent/ssh/sessions/' + sid, headers=H)
+    assert resp.status_code == 200
+    resp = client.post('/api/agent/ssh/sessions/' + sid, headers=H,
+                       data=json.dumps({'command': 'x'}),
+                       content_type='application/json')
+    assert resp.status_code == 404   # 已关闭的会话按不存在处理
+
+
+def test_session_exec_unknown_session_is_404(tmp_path, monkeypatch):
+    monkeypatch.setattr(configMod, 'getAgentTokens',
+                        lambda: [{'id': 't1', 'tokenHash': TOKEN_HASH}])
+    from app import create_app
+    app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
+    client = app.test_client()
+    resp = client.post('/api/agent/ssh/sessions/ghost', headers={'X-Agent-Token': TOKEN},
+                       data=json.dumps({'command': 'ls'}),
+                       content_type='application/json')
+    assert resp.status_code == 404
 
 
 # ---- SFTP: list / get / put ----
