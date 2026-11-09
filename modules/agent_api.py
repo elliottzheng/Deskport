@@ -18,6 +18,8 @@
 """
 import hashlib
 import hmac
+import os
+import posixpath
 import time
 
 import paramiko
@@ -206,9 +208,12 @@ def agentSftpList():
     path = (data.get('path') or '.').strip() or '.'
     try:
         entries = []
+        baseDir = path if path.endswith('/') else path + '/'
         for attr in sftp.listdir_attr(path):
-            entries.append({'name': attr.filename, 'size': attr.st_size,
-                            'mtime': int(attr.st_mtime),
+            full = posixpath.normpath(baseDir + attr.filename) if path != '/' \
+                else '/' + attr.filename
+            entries.append({'name': attr.filename, 'path': full,
+                            'size': attr.st_size, 'mtime': int(attr.st_mtime),
                             'dir': (attr.st_mode & 0o170000) == 0o040000})
         events.log('agent.sftp.list', path, 'ok', '', request.remote_addr)
         return jsonify({'path': path, 'entries': entries})
