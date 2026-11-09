@@ -65,6 +65,8 @@ window.TermClient = (function () {
 
         function switchSession(session) {
             if (!session) { return; }
+            session.flowTripped = false;   // 手动切换 = 给熔断新的观察窗口
+            session.flowBuckets = [];
             const prev = activeSession;
             if (prev && prev !== session) {
                 clearTimers(prev);
@@ -251,6 +253,32 @@ window.TermClient = (function () {
             };
 
             socket.onmessage = function (e) {
+                // 输出速率熔断: 持续超速的会话自动脱离, 防止失控输出灌爆浏览器
+                var nowMs = Date.now();
+                session.flowBuckets = session.flowBuckets || [];
+                var lastBucket = session.flowBuckets[session.flowBuckets.length - 1];
+                var bucketId = Math.floor(nowMs / 1000);
+                if (!lastBucket || lastBucket.b !== bucketId) {
+                    session.flowBuckets.push({ b: bucketId, n: e.data.length });
+                    if (session.flowBuckets.length > 10) { session.flowBuckets.shift(); }
+                } else {
+                    lastBucket.n += e.data.length;
+                }
+                if (session.flowBuckets.length >= 3) {
+                    var recent = session.flowBuckets.slice(-3);
+                    var flooding = recent.every(function (x) { return x.n > 400 * 1024; });
+                    if (flooding && !session.flowTripped) {
+                        session.flowTripped = true;
+                        session.manualClose = true;
+                        session.flowBuckets = [];
+                        try { socket.close(); } catch (err) { /* ignore */ }
+                        session.term.write('\r\n\x1b[33m[该会话输出速率过大，已自动脱离。' +
+                            '点击侧栏会话可重新附着]\x1b[0m\r\n');
+                        setStatus('会话输出过大，已自动脱离', 'err');
+                        onChange();
+                        return;
+                    }
+                }
                 let obj = null;
                 try { obj = JSON.parse(e.data); } catch (err) { obj = null; }
                 if (obj && obj.type === 'ssh-auth') {
