@@ -66,3 +66,11 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 - exec 是非 pty 通道：无交互式程序（vim/top），需要交互请用浏览器终端；
 - 超时掐断只关闭通道，远端进程是否残留取决于命令本身；
 - 令牌即远程执行权：泄露请立即撤销（删除 config 条目并重启）。
+
+
+## 技能封装（给智能体用）
+
+仓库内 `.agents/skills/deskport-ssh/SKILL.md` 是本 API 的智能体技能封装，
+把它链入你自己的 agents 技能目录（如 `~/.agents/skills/`），智能体即可自动
+获得「远程执行命令 / SFTP 读写」的能力。令牌文件路径由部署约定（建议放
+部署目录旁并加入忽略清单），技能文件里不落明文。
