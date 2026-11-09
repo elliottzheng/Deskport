@@ -14,5 +14,6 @@
   "sessiondUrl": "",
   "sshSessiondUrl": "",
   "brandName": "Deskport",
-  "externalApps": {}
+  "externalApps": {},
+  "agentTokens": []
 }

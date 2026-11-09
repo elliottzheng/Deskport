@@ -139,6 +139,12 @@ def register(app):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
+        if path.startswith('/api/agent/'):
+            # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行 (modules/agent_api)
+            from modules import agent_api as agentModule
+            if agentModule.agentFromRequest() is not None:
+                return None
+            return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401
         if path.startswith('/api/'):
             return jsonify({'error': 'unauthorized'}), 401
         from modules import plugins as pluginModule

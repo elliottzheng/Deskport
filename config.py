@@ -108,6 +108,14 @@ def setPassword(newPassword):
         _cache['data'] = None
 
 
+def getAgentTokens():
+    r"""智能体 API 令牌列表; 每项 {id, name, tokenHash(SHA-256), ...}。缺省空。"""
+    tokens = load().get('agentTokens')
+    if not isinstance(tokens, list):
+        return []
+    return [t for t in tokens if isinstance(t, dict)]
+
+
 def getBrandName():
     r"""界面品牌名；缺省 Deskport，最长 24 字符。"""
     name = str(load().get('brandName') or 'Deskport').strip()
