@@ -96,3 +96,25 @@ f649e18（选模型）→ c0647cd（本机全等价）→ 75cae14（文档）。
   经任务 error 回流。
 - **新增可选字段向后兼容**：联邦转发把 `model` 直接透传给对端 `/api/tasks`，
   旧版对端忽略未知字段安全降级为对端默认——新字段不需要锁版本。
+
+## 7. 第二轮补充（2026-11-10 晚）
+
+- **删 import 前先全文件搜索用法**：第一轮重写 agent_api 导入时删掉
+  `import os`（当时唯一使用方 sftp 已迁走），skills 段还在用 → 上线后
+  skills 接口全 500。规则：删 import 必须全文 grep；路由级测试要覆盖
+  每个端点至少一次（skills 曾是盲区）。
+- **PowerShell `exit` 语句会在对象格式化器之前终止进程**：重定向输出时
+  `Get-Location` 这类对象输出整个消失（字符串没事）。修复是命令包进
+  `& { ... } | Out-Default` 强制管道内同步格式化；进度流的 CLIXML 噪音
+  用 `$ProgressPreference='SilentlyContinue'` 压制。定位靠开关矩阵实验
+  （前缀/后缀/OutputFormat 逐项组合），比猜快得多。
+- **`pkill -f '<模式>'` 会匹配到外层 bash 包装进程**：远程复合命令
+  `bash -c "pkill -f 'xxx' ... setsid ... xxx"` 的命令行里含同样字符串，
+  bracket 技巧 `[x]xx` 只防 pkill 自己，防不了包装 shell——自杀导致重启
+  不执行。远程重启守卫进程用显式 PID 或锚定正则 `^python3 ...`。
+- **老 Python 部署面**：node 可能跑在系统 python3（<3.11 无 tomllib）。
+  用新标准库前先确认部署面解释器版本，或写无依赖兜底（正则解析
+  config.toml 段名与顶层键）。部署后立刻打一次 /health 再宣告完成。
+- **接手会话的默认安全侧**：kimi fork 有会话锁（占用中直接报错），API
+  默认 fork:true 让外部智能体永不与用户终端并发写同一会话；fork 输出用
+  正则提 `session_<uuid>`，锁错误原文透传给调用方。
