@@ -31,36 +31,29 @@ blueprint = Blueprint('federation_tasks', __name__)
 
 @blueprint.route('/api/tasks/nodes')
 def nodesList():
+    from modules.agent_nodes import nodeModelsFor
     nodes = []
     for n in config.getAgentNodes():
+        models, defaultModel = nodeModelsFor(n['name'], n)
         nodes.append({'name': n['name'], 'via': n['via'],
-                      'models': n.get('models') or [],
-                      'defaultModel': n.get('model') or '',
-                      'modelSelectable': bool(n.get('models') or n.get('model'))})
+                      'models': models, 'defaultModel': defaultModel,
+                      'modelSelectable': bool(models or defaultModel)})
     local = config.getLocalAgentNode()
     if local is not None:
-        models = local.get('models') or []
-        defaultModel = local.get('model') or ''
-        if not models and not defaultModel:
-            # 配置未显式声明 → 自动发现本机 kimi config.toml
-            from modules.agent_nodes import localKimiModels
-            discovered = localKimiModels()
-            models, defaultModel = discovered['models'], discovered['default']
+        models, defaultModel = nodeModelsFor(local['name'], local)
         nodes.append({'name': local['name'], 'via': '',
                       'models': models, 'defaultModel': defaultModel,
                       'modelSelectable': bool(models or defaultModel)})
     else:
-        from modules.agent_nodes import localKimiModels
-        models = localKimiModels()
+        models, defaultModel = nodeModelsFor('local', {'name': 'local'})
         nodes.append({'name': 'local', 'via': '',
-                      'models': models['models'],
-                      'defaultModel': models['default'],
-                      'modelSelectable': bool(models['models'] or models['default'])})
+                      'models': models, 'defaultModel': defaultModel,
+                      'modelSelectable': bool(models or defaultModel)})
     for member in config.getRemotes():
+        models, defaultModel = nodeModelsFor(member['name'], member)
         nodes.append({'name': member['name'], 'via': 'federation',
-                      'models': member.get('models') or [],
-                      'defaultModel': member.get('model') or '',
-                      'modelSelectable': bool(member.get('models') or member.get('model'))})
+                      'models': models, 'defaultModel': defaultModel,
+                      'modelSelectable': bool(models or defaultModel)})
     return jsonify({'nodes': nodes})
 
 
@@ -344,6 +337,13 @@ class FederationTaskClient:
         """只断开镜像；对端任务继续由对端中枢托管。"""
         self._closed = True
         self._turnEvent.set()
+
+    def shutdown(self):
+        """用户明确结束任务：通知对端一并结束（对端自行回收其会话）。"""
+        try:
+            self._call('POST', '/api/tasks/%s/close' % self.bid, {}, timeout=15)
+        except Exception:
+            pass
 
     @property
     def pid(self):

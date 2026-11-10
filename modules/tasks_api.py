@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import shutil
 import time
 import uuid
@@ -13,6 +14,7 @@ from flask import (Blueprint, Response, g, jsonify, request, send_file,
                    stream_with_context)
 
 from modules.kimi_acp import KimiAcp
+from modules import kimi_acp
 from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
@@ -75,6 +77,7 @@ def createTask():
             return jsonify({'error': 'model 不合法（≤100 字符，无控制字符）'}), 400
     node = ''
     remoteCwd = ''
+    kimiSessionId = ''
     if engine == 'remote':
         node = str(data.get('node') or '').strip()
         if not node:
@@ -94,6 +97,35 @@ def createTask():
     elif data.get('cwd'):
         return jsonify({'error': 'engine=acp 不接受 cwd（本机任务固定运行在'
                                  '独立工作区，输入文件用 paths 传入）'}), 400
+    # 接手已有 Kimi CLI 会话（第二轮反馈 §2）：默认先 fork 复制，
+    # 避免与用户开着的终端并发写同一会话；fork:false 且会话未被占用才直接接管
+    kimiSessionId = str(data.get('kimiSessionId') or '').strip()
+    if kimiSessionId:
+        if engine != 'acp':
+            return jsonify({'error': 'kimiSessionId 仅 engine=acp（本机 Kimi）'
+                                     '支持，远端会话请在节点侧直接派活'}), 400
+        if not re.match(r'^session_[0-9a-f-]{36}$', kimiSessionId):
+            return jsonify({'error': 'kimiSessionId 格式不合法（应为 session_<uuid>，'
+                            'GET /api/tasks/kimi-sessions 可列出候选）'}), 400
+        fork = data.get('fork', True)
+        if isinstance(fork, str):
+            fork = fork.strip().lower() != 'false'
+        if fork:
+            try:
+                kimiSessionId = kimi_acp.forkSession(kimiSessionId)
+            except RuntimeError as e:
+                return jsonify({'error': str(e),
+                                'hint': '会话可能正被占用（先关掉那个终端）或不存在'}), 400
+        else:
+            store.repo.load()
+            with store.repo.lock:
+                live = [t for t in store.repo.list()
+                        if t.get('sessionId') == kimiSessionId
+                        and t.get('status') in ('queued', 'running', 'waiting')]
+            if live:
+                return jsonify({'error': '该会话已被任务 %s 接管，不能再次直接接管'
+                                % live[0]['id'],
+                                'hint': '去掉 fork:false 改用 fork 副本'}), 409
     # 模型白名单：执行点声明了可选列表时必须命中（§7.1 按活的性质挑模型）
     decl = agent_nodes.nodeModelDecl(node or ('local' if engine == 'acp' else ''))
     if model and decl['models'] and model not in decl['models']:
@@ -127,7 +159,8 @@ def createTask():
         'prompt': prompt, 'workspace': workspace, 'status': 'queued',
         'createdAt': store._now(), 'startedAt': 0, 'endedAt': 0,
         'seq': 0, 'events': [], 'lastText': '',
-        'resultFiles': [], 'error': '', 'sessionId': '', 'engine': engine,
+        'resultFiles': [], 'error': '', 'sessionId': kimiSessionId,
+        'engine': engine, 'kimiSessionLoad': bool(kimiSessionId),
         'mode': mode, 'model': model, 'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
         'node': node, 'remoteCwd': remoteCwd,
@@ -447,6 +480,27 @@ def uploadTaskFile():
     return jsonify({'ok': True, 'path': os.path.abspath(path),
                     'size': len(raw),
                     'hint': '把该 path 放进 POST /api/tasks 的 paths 数组即可作为任务输入'})
+
+
+@blueprint.route('/api/tasks/kimi-sessions')
+def listKimiSessions():
+    """已存在的 Kimi CLI 会话（第二轮反馈 §2.3）：智能体挑接手候选。"""
+    cwd = (request.args.get('cwd') or '').strip()
+    try:
+        limit = int(request.args.get('limit') or 30)
+    except ValueError:
+        limit = 30
+    try:
+        items = kimi_acp.listSessions(limit=limit, cwd=cwd or None)
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 502
+    tokenName = getattr(g, 'agentTokenName', '')
+    if tokenName:
+        events.log('agent.task.kimilist', tokenName, 'ok',
+                   'cwd=%s' % (cwd or '-'), request.remote_addr)
+    return jsonify({'sessions': items,
+                    'hint': 'POST /api/tasks {"kimiSessionId": "<id>"} '
+                            '接手（默认 fork 副本，不干扰原会话）'})
 
 
 def register(app):

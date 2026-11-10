@@ -386,3 +386,152 @@ def test_local_kimi_models_cached(tmp_path, monkeypatch):
     assert nodesMod.localKimiModels(maxAgeSec=60)['default'] == 'm-d'
     nodesMod._modelsCache['at'] = 0.0
     assert nodesMod.localKimiModels(maxAgeSec=60)['default'] == 'z'
+
+
+# ---- 第二轮反馈：close 立即回收 / 接手 Kimi 会话 / 节点模型自动上报 ----
+
+def test_close_triggers_client_shutdown(env):
+    """用户 close 后 node 侧进程立即回收（不再等 45 分钟空闲回收）。"""
+    import threading
+    import time as _time
+    from modules import tasks_runner as runner
+    calls = []
+
+    class FakeClient:
+        def __init__(self, cwd, on_update=None, on_permission=None,
+                     mode='auto', prompt_timeout=0, model=''):
+            pass
+
+        def start(self, session_id=None):
+            return 'sess-x1'
+
+        def prompt(self, text, timeout=None):
+            return {'stopReason': 'end_turn'}
+
+        def set_mode(self, mode):
+            pass
+
+        def cancel(self):
+            pass
+
+        def close(self):
+            calls.append('close')
+
+        def shutdown(self):
+            calls.append('shutdown')
+
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    threading.Thread(target=runner._sessionThread, args=(task, []),
+                     kwargs={'clientFactory': FakeClient},
+                     daemon=True).start()
+    for _ in range(60):
+        with env.repo.lock:
+            if task.get('status') == 'waiting':
+                break
+        _time.sleep(0.1)
+    resp = env.client.post('/api/tasks/%s/close' % tid, headers=H)
+    assert resp.status_code == 200
+    assert calls == ['close', 'shutdown']
+
+
+def _sid(n='a'):
+    return 'session_' + n * 8 + '-' + n * 4 + '-' + n * 4 + '-' + n * 4 + '-' + n * 12
+
+
+def test_task_adopts_kimi_session_with_fork(env, monkeypatch):
+    """§2：kimiSessionId 默认先 fork，新副本作为任务的起始会话。"""
+    newId = _sid('b')
+    calls = {}
+
+    def fakeFork(sid, timeout=90):
+        calls['forked'] = sid
+        return newId
+    monkeypatch.setattr(tasks_api.kimi_acp, 'forkSession', fakeFork)
+    resp = create(env, {'prompt': '接着上个会话修 bug', 'kimiSessionId': _sid('a')})
+    assert resp.status_code == 202
+    tid = resp.get_json()['task']['id']
+    assert calls['forked'] == _sid('a')
+    with env.repo.lock:
+        assert env.repo.get(tid)['sessionId'] == newId
+        assert env.repo.get(tid)['kimiSessionLoad'] is True
+
+
+def test_task_adopt_fork_failure_is_400_with_reason(env, monkeypatch):
+    """kimi fork 失败（会话被占用/不存在）→ 400 透传原始原因。"""
+    def failingFork(sid, timeout=90):
+        raise RuntimeError('This session is in use by another Kimi Code CLI instance.')
+    monkeypatch.setattr(tasks_api.kimi_acp, 'forkSession', failingFork)
+    resp = create(env, {'prompt': 'x', 'kimiSessionId': _sid('a')})
+    assert resp.status_code == 400
+    assert 'in use' in resp.get_json()['error']
+
+
+def test_task_adopt_bad_session_id_rejected(env, monkeypatch):
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'findNode',
+                        lambda name: {'name': name} if name == 'local' else None)
+    monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
+    resp = create(env, {'prompt': 'x', 'kimiSessionId': 'rm -rf /'})
+    assert resp.status_code == 400
+    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local',
+                        'cwd': '/tmp', 'kimiSessionId': _sid('a')})
+    assert resp.status_code == 400
+    assert 'acp' in resp.get_json()['error']
+
+
+def test_task_adopt_takeover_conflict_is_409(env):
+    """fork:false 直接接管已被别的任务持有的会话 → 409。"""
+    with env.repo.lock:
+        env.repo.put({'id': 'holder', 'status': 'waiting', 'sessionId': _sid('c'),
+                      'createdAt': 0, 'events': []})
+    resp = create(env, {'prompt': 'x', 'kimiSessionId': _sid('c'), 'fork': False})
+    assert resp.status_code == 409
+
+
+def test_kimi_sessions_list_endpoint(env, monkeypatch):
+    """§2.3：列表接口返回可接手候选。"""
+    items = [{'id': _sid('e'), 'title': 'T', 'workDir': 'E:\\x',
+              'updatedAt': 5, 'lastPrompt': 'p'}]
+    monkeypatch.setattr(tasks_api.kimi_acp, 'listSessions',
+                        lambda limit=30, cwd=None: items)
+    resp = env.client.get('/api/tasks/kimi-sessions', headers=H).get_json()
+    assert resp['sessions'] == items
+    assert 'kimiSessionId' in resp['hint']
+
+
+def test_list_sessions_filters_cwd_and_sorts(monkeypatch, tmp_path):
+    """listSessions：cwd 前缀过滤 + 最近更新排序 + limit。"""
+    import modules.kimi_acp as kacp
+    payload = [
+        {'id': 'session_1', 'title': 'a', 'workDir': 'E:\\事项\\远程',
+         'updatedAt': 100, 'lastPrompt': 'x'},
+        {'id': 'session_2', 'title': 'b', 'workDir': 'D:\\教研',
+         'updatedAt': 200, 'lastPrompt': 'y'},
+        {'id': 'session_3', 'title': 'c', 'workDir': 'e:\\事项\\远程\\deskport',
+         'updatedAt': 50, 'lastPrompt': 'z'},
+    ]
+
+    class P:
+        returncode = 0
+        stdout = json.dumps(payload)
+        stderr = ''
+
+    monkeypatch.setattr(kacp.subprocess, 'run', lambda *a, **k: P())
+    out = kacp.listSessions(cwd='e:/事项/远程')
+    assert [i['id'] for i in out] == ['session_1', 'session_3']
+    out = kacp.listSessions(limit=1)
+    assert [i['id'] for i in out] == ['session_2']   # 按 updatedAt 降序
+
+
+def test_node_models_from_health_cache(monkeypatch):
+    """§6：远端 node 未声明模型时，/health 自动上报的清单生效。"""
+    import modules.agent_nodes as nodesMod
+    fresh = {'at': nodesMod.time.monotonic(),
+             'data': {'ai-xmyz': {'models': ['m1', 'm2'], 'default': 'm1'}}}
+    monkeypatch.setattr(nodesMod, '_healthModels', fresh)
+    models, default = nodesMod.nodeModelsFor(
+        'ai-xmyz', {'name': 'ai-xmyz', 'models': [], 'model': ''})
+    assert models == ['m1', 'm2'] and default == 'm1'

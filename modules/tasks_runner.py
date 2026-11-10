@@ -211,14 +211,15 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
         with store.repo.lock:
             store.repo.setRunning(taskId, client)
             store.repo.setAgent(taskId, agent)
-        sid = client.start(session_id=task.get('sessionId') if resume else None)
+        sid = client.start(session_id=task.get('sessionId') or None)
         with store.repo.lock:
             task['sessionId'] = sid
             task['resume'] = True
             task['startedAt'] = task.get('startedAt') or store._now()
             store.repo.save()
         store.repo.append_event(task, 'status',
-                     text='会话已接续' if resume else 'ACP 会话已建立',
+                     text=('已接手既有 Kimi 会话' if task.get('kimiSessionLoad')
+                           else '会话已接续' if resume else 'ACP 会话已建立'),
                      **({'model': task['model']} if task.get('model') else {}))
         if resume:
             _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
@@ -259,6 +260,13 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                 client.close()
             except Exception:
                 pass
+            if task.get('closedByUser'):
+                # 用户明确结束：node/联邦侧的 ACP 进程立刻回收，
+                # 不再等 45 分钟空闲回收（第二轮反馈 §3）
+                try:
+                    client.shutdown()
+                except Exception:
+                    pass
         with store.repo.lock:
             store.repo.dropRunning(taskId)
             store.repo.dropAgent(taskId)

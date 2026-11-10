@@ -9,12 +9,77 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
+import shutil
 import subprocess
 import threading
 
 log = logging.getLogger('kimi-acp')
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
+SESSION_ID_RE = re.compile(r'session_[0-9a-f-]{36}')
+
+
+def _kimiBin():
+    for cand in ('kimi.exe', 'kimi'):
+        path = shutil.which(cand)
+        if path:
+            return path
+    raise RuntimeError('找不到 kimi 命令')
+
+
+def forkSession(sessionId, timeout=90):
+    """kimi fork：把已有会话复制为新会话并返回新 id（反馈第二轮 §3）。
+
+    默认 fork 而非直接接管——避免与用户正开着的终端写同一个会话
+    （kimi 有会话锁，占用中的会话 fork 会直接报错，原文透传给调用方）。
+    """
+    proc = subprocess.run(
+        [_kimiBin(), 'fork', '-y', sessionId], capture_output=True,
+        text=True, encoding='utf-8', errors='replace', timeout=timeout,
+        creationflags=CREATE_NO_WINDOW)
+    out = (proc.stdout or '') + (proc.stderr or '')
+    if proc.returncode != 0:
+        raise RuntimeError('fork 失败: %s' % (out.strip()[:300] or proc.returncode))
+    m = SESSION_ID_RE.search(out)
+    if not m:
+        raise RuntimeError('fork 输出里没有新会话 id: %s' % out.strip()[:200])
+    return m.group(0)
+
+
+def listSessions(limit=30, cwd=None):
+    """kimi session list --all --json → 智能体可挑的接手候选（按最近更新排序）。
+
+    cwd 给定时做前缀过滤（大小写不敏感）；kimi 不可用抛 RuntimeError。
+    """
+    proc = subprocess.run(
+        [_kimiBin(), 'session', 'list', '--all', '--json'], capture_output=True,
+        text=True, encoding='utf-8', errors='replace', timeout=60,
+        creationflags=CREATE_NO_WINDOW)
+    if proc.returncode != 0:
+        raise RuntimeError('session list 失败: %s' % (proc.stderr or '').strip()[:300])
+    try:
+        raw = json.loads(proc.stdout or '[]')
+    except ValueError:
+        raise RuntimeError('session list 输出不是 JSON')
+    wanted = str(cwd or '').strip()
+    if wanted:
+        wanted = wanted.replace('/', '\\').rstrip('\\').lower()
+    items = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict) or not entry.get('id'):
+            continue
+        workDir = str(entry.get('workDir') or '')
+        if wanted:
+            norm = workDir.replace('/', '\\').rstrip('\\').lower()
+            if norm != wanted and not norm.startswith(wanted + '\\'):
+                continue
+        items.append({'id': str(entry['id']), 'title': str(entry.get('title') or '')[:120],
+                      'lastPrompt': str(entry.get('lastPrompt') or '')[:160],
+                      'workDir': workDir,
+                      'updatedAt': entry.get('updatedAt') or 0})
+    items.sort(key=lambda x: -(x['updatedAt'] or 0))
+    return items[:max(1, min(int(limit), 100))]
 
 
 class AcpError(Exception):
@@ -142,13 +207,9 @@ class KimiAcp:
 
     # ---- lifecycle ----
     def start(self, session_id=None):
-        kimi = None
-        for cand in ('kimi.exe', 'kimi'):
-            path = __import__('shutil').which(cand)
-            if path:
-                kimi = path
-                break
-        if not kimi:
+        try:
+            kimi = _kimiBin()
+        except RuntimeError:
             raise AcpError('找不到 kimi 命令')
         cmd = [kimi]
         if self.model:
@@ -237,6 +298,10 @@ class KimiAcp:
                     self.proc.kill()
         except Exception:
             pass
+
+    def shutdown(self):
+        """stdio 版进程本就在 close 里 terminate；接口对齐 RemoteAcpClient。"""
+        self.close()
 
     @property
     def pid(self):

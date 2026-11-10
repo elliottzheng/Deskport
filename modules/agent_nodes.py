@@ -48,6 +48,51 @@ def listNodeNames():
 
 
 _modelsCache = {'at': 0.0, 'data': {'models': [], 'default': ''}}
+_healthModels = {'at': 0.0, 'data': {}}
+_healthModelsLock = threading.Lock()
+
+
+def _refreshHealthModels():
+    """拉取各 node /health 的 models 字段（新版 node 自动上报 kimi 模型清单）。"""
+    result = {}
+    targets = list(config.getAgentNodes())
+    local = config.getLocalAgentNode()
+    if local is not None:
+        targets.append(local)
+    for node in targets:
+        try:
+            status, data = nodeRequest(node, 'GET', '/health', timeout=5)
+        except Exception:
+            continue
+        if status == 200 and isinstance(data, dict):
+            result[node['name']] = {'models': data.get('models') or [],
+                                    'default': data.get('defaultModel') or ''}
+    with _healthModelsLock:
+        _healthModels['data'] = result
+        _healthModels['at'] = time.monotonic()
+
+
+def _healthModelsCached(maxAgeSec=60):
+    """返回缓存；过期则触发后台刷新（接口立即返回旧值，不阻塞）。"""
+    if time.monotonic() - _healthModels['at'] > maxAgeSec:
+        threading.Thread(target=_refreshHealthModels, daemon=True).start()
+    with _healthModelsLock:
+        return dict(_healthModels['data'])
+
+
+def nodeModelsFor(name, entry=None):
+    """执行点的模型清单：config 声明 → node /health 上报 →（仅本机）config.toml。"""
+    if entry is None:
+        entry = findNode(name) or findFederationMember(name) or {}
+    if entry.get('models') or entry.get('model'):
+        return list(entry.get('models') or []), str(entry.get('model') or '')
+    cached = _healthModelsCached().get(name or '', {})
+    if cached.get('models') or cached.get('default'):
+        return list(cached.get('models') or []), str(cached.get('default') or '')
+    if (name or 'local') == 'local':
+        models = localKimiModels()
+        return models['models'], models['default']
+    return [], ''
 
 
 def localKimiModels(maxAgeSec=60):
@@ -77,32 +122,26 @@ def localKimiModels(maxAgeSec=60):
 
 
 def nodeModelDecl(name=''):
-    """执行点的模型声明：{name, models 白名单, default}。
+    """执行点的模型声明：{name, models 可选清单, default}。
 
     name 空 = engine=acp 的执行点（本机 node 或 web 内 stdio）。
-    models 为空表示未声明白名单：调用方可任选模型交给 kimi --model，
-    选错了由节点侧报错回流。
+    优先级：config 显式声明 → node /health 自动上报（新版 node）→
+    本机 kimi config.toml 自动发现。全空 = 该节点不能选模型（§7.5）。
     """
     wanted = str(name or '').strip()
     if not wanted or wanted == 'local':
         local = config.getLocalAgentNode()
         if local is None:
-            # stdio 直跑：模型清单来自本机 kimi config.toml
-            models = localKimiModels()
-            return {'name': 'local', 'models': models['models'],
-                    'default': models['default']}
-        if local.get('models') or local.get('model'):
-            return {'name': local['name'], 'models': list(local.get('models') or []),
-                    'default': str(local.get('model') or '')}
-        models = localKimiModels()
-        return {'name': local['name'], 'models': models['models'],
-                'default': models['default']}
+            models, default = nodeModelsFor('local', {'name': 'local'})
+            return {'name': 'local', 'models': models, 'default': default}
+        models, default = nodeModelsFor(local['name'], local)
+        return {'name': local['name'], 'models': models, 'default': default}
     target = findNode(wanted) or findFederationMember(wanted)
     if target is None:
         return {'name': wanted, 'models': [], 'default': ''}
+    models, default = nodeModelsFor(wanted, target)
     return {'name': target.get('name') or wanted,
-            'models': list(target.get('models') or []),
-            'default': str(target.get('model') or '')}
+            'models': models, 'default': default}
 
 
 def nodeRequest(node, method, path, payload=None, timeout=30):
@@ -336,6 +375,17 @@ class RemoteAcpClient:
         """只断开事件通道；远端会话进程保持存活以供随时接手。"""
         self._closed = True
         self._turnEvent.set()
+
+    def shutdown(self):
+        """用户明确结束任务：让 node 立刻回收 ACP 进程（第二轮反馈 §3）。"""
+        sid = self.node_sid
+        if not sid:
+            return
+        try:
+            nodeRequest(self._node(), 'DELETE', '/api/sessions/%s' % sid,
+                        timeout=10)
+        except Exception:
+            pass
 
     @property
     def pid(self):
