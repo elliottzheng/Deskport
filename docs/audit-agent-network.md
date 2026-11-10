@@ -8,7 +8,7 @@
 
 ## 一、实测发现
 
-### P0-1 assistant 流式合并 vs 增量订阅的截断风险
+### P0-1 assistant 流式合并 vs 增量订阅的截断风险【已修复】
 
 **机制**（`tasks_runner.py:24-48 _appendAssistantText`）：Kimi 的 message chunk
 不逐条成事件，而是合并进同一条 assistant 事件（seq 不变、text 原地增长）。
@@ -24,20 +24,20 @@
   （外部智能体读 `assistant` 事件）是真实受影响的**——这正是智能体指挥
   智能体的核心数据通路。
 
-**修复建议**：`_promptOnce` 返回后（回合结束、turn_end 事件之前），若本轮
-发生过合并，以新 seq 追加一条完整 assistant 终版事件（前端按 seq 渲染自然
-覆盖中间态；订阅者拿到确定终态）。约 15 行。
+**修复**（已实施）：chunk 期间不再写事件流（只累积缓冲 + lastText +
+log 逐 chunk 流水），回合结束 `_flushAssistant` 以单条完整事件落卡。
+实测 351 字长文：assistant 事件 1 条完整、SSE 与轮询端点一致、
+前端气泡从「停在首 chunk」变为一次性完整显示。异常中断与 resume
+路径均已接 flush。
 
-### P1-1 权限决策回写失败被静默吞掉
+### P1-1 权限决策回写失败被静默吞掉【已修复】
 
 `modules/agent_nodes.py:205-211`：`on_permission` 拿到 optionId 后 POST 给
 node，失败时 `except Exception: pass`。后果：决策丢失，node 端权限请求挂满
 900 秒超时，任务卡显示「已允许」但远端实际取消了该操作——两端状态分叉且
 无任何痕迹。
 
-**修复建议**：失败时写入 `self.stderr_lines`（会进任务卡 error 呈现），
-并重试一次（复用 nodeRequest 已有的隧道重建逻辑即可，只是要把结果检查
-从 `status==200` 变为失败也报）。
+**修复**（已实施）：失败写入 stderr_lines（随任务卡 error 呈现）+ logging.warning；非 200 也视为失败。
 
 ### P1-2 tasks_api.py 逼近行数预算
 

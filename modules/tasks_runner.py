@@ -22,30 +22,30 @@ MAX_RUNNING = 2
 PERMISSION_TIMEOUT = 300
 
 def _appendAssistantText(task, text):
-    """把 ACP 的 message chunk 合并成一段可读文本，避免每个 token 一条事件。"""
+    """回合内的 chunk 只累积缓冲（log 留完整流水），不写事件流。
+
+    增量订阅者（SSE/轮询）按 seq 去重，若逐 chunk 合并进同一条事件，
+    订阅者会停在首推时刻的部分文本。回合结束时 _flushAssistant 以单条
+    完整事件落卡，订阅者天然拿到终版；log 流水仍逐 chunk 可追溯。
+    """
     if not text:
         return
-    mergedSeq = None
-    fresh = False
     with store.repo.lock:
-        events = task.setdefault('events', [])
-        if events and events[-1].get('type') == 'assistant':
-            last = events[-1]
-            merged = (last.get('text') or '') + text
-            last['text'] = merged[:store.MAX_TEXT]
-            if len(merged) > store.MAX_TEXT:
-                last['truncated'] = True
-            task['lastText'] = merged[:300]
-            mergedSeq = last.get('seq')
-            store.repo.save()
-        else:
-            fresh = True
-    if fresh:
-        store.repo.append_event(task, 'assistant', text=text[:store.MAX_TEXT], full=text,
-                     truncated=len(text) > store.MAX_TEXT)
+        task['_assistantBuf'] = (task.get('_assistantBuf') or '') + text
+        task['lastText'] = task['_assistantBuf'][:300]
+        store.repo.save()
+    store.repo.log_write(task, {'at': store._now(), 'type': 'assistant_chunk',
+                                'text': text})
+
+
+def _flushAssistant(task):
+    """把回合缓冲落成一条完整 assistant 事件；无内容时不产生事件。"""
+    with store.repo.lock:
+        buf = task.pop('_assistantBuf', '') or ''
+    if not buf:
         return
-    # 任务卡合并显示, 但完整流水逐块落盘, 便于事后追溯
-    store.repo.log_write(task, {'seq': mergedSeq, 'at': store._now(), 'type': 'assistant_chunk', 'text': text})
+    store.repo.append_event(task, 'assistant', text=buf[:store.MAX_TEXT],
+                            full=buf, truncated=len(buf) > store.MAX_TEXT)
 
 
 def _handleAcpUpdate(task, update):
@@ -163,6 +163,7 @@ def _promptOnce(task, client, text):
         task['lastActiveAt'] = store._now()
         store.repo.save()
     result = client.prompt(text)
+    _flushAssistant(task)   # 回合结束即落终版，订阅者（SSE/轮询）拿到完整文本
     results = store._scanResults(task['workspace'])
     with store.repo.lock:
         task['stopReason'] = (result or {}).get('stopReason') or ''
@@ -202,6 +203,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             store.repo.save()
         store.repo.append_event(task, 'status', text='会话已接续' if resume else 'ACP 会话已建立')
         if resume:
+            _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
             if firstMessage:
                 agent['ready'] = True
                 store.repo.append_event(task, 'user', text=firstMessage)
@@ -223,6 +225,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                 _promptOnce(task, client, text)
                 store.repo.append_event(task, 'status', text='这轮结束，等你继续')
     except Exception as e:
+        _flushAssistant(task)   # 异常中断也保留已收到的部分回答
         with store.repo.lock:
             task_state.transition(task, task_state.TaskState.FAILED)
             task['endedAt'] = store._now()

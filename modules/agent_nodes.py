@@ -11,6 +11,7 @@
     远端 cwd 用 task['remoteCwd']。会话活在 node 侧，web 重启可 resume。
 """
 import json
+import logging
 import threading
 import time
 import urllib.error
@@ -24,6 +25,7 @@ from modules import task_engines
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 blueprint = Blueprint('agent_nodes', __name__)
+log = logging.getLogger('agent-nodes')
 
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -203,12 +205,22 @@ class RemoteAcpClient:
             except TypeError:
                 optionId = self.on_permission(params)
             try:
-                nodeRequest(self._node(), 'POST',
-                            '/api/sessions/%s/permission' % self.node_sid,
-                            {'requestId': requestId, 'optionId': optionId or ''},
-                            timeout=10)
-            except Exception:
-                pass
+                status, data = nodeRequest(
+                    self._node(), 'POST',
+                    '/api/sessions/%s/permission' % self.node_sid,
+                    {'requestId': requestId, 'optionId': optionId or ''},
+                    timeout=10)
+                if status != 200:
+                    raise RuntimeError('HTTP %s: %s'
+                                       % (status, data.get('error') or data))
+            except Exception as e:
+                # 决策丢失会让 node 端权限挂到超时、两端状态分叉——必须留痕
+                note = '[agent-nodes] 权限决策提交失败: %s' % e
+                self.stderr_lines.append(note)
+                try:
+                    log.warning('%s requestId=%s', note, requestId)
+                except Exception:
+                    pass
         elif kind == 'turn_end':
             self._stopReason = event.get('stopReason') or ''
             self._turnEvent.set()

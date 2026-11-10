@@ -50,16 +50,32 @@ For Each helper In Array("start-locald.vbs", "start-sshd.vbs", "start-watchdog.v
     End If
 Next
 
-' Skip when the app is already serving on 6789 (avoid double start)
+' Skip when the app is already serving on its configured port (avoid double start).
+' Port comes from THIS directory's config.json (single source of truth) —
+' dev (6788) and prod (6789) share this launcher file, each reads its own.
+Dim port, reCfg, cfgText, m
+port = 6789
+If fso.FileExists(appDir & "\config.json") Then
+    On Error Resume Next
+    cfgText = fso.OpenTextFile(appDir & "\config.json", 1).ReadAll
+    Set reCfg = New RegExp
+    reCfg.Pattern = """port""\s*:\s*(\d+)"
+    If Err.Number = 0 And reCfg.Test(cfgText) Then
+        Set m = reCfg.Execute(cfgText)
+        If m.Count > 0 Then port = CLng(m(0).SubMatches(0))
+    End If
+    On Error Goto 0
+End If
+
 portInUse = False
 On Error Resume Next
 Set http = CreateObject("MSXML2.XMLHTTP")
-http.open "GET", "http://127.0.0.1:6789/login", False
+http.open "GET", "http://127.0.0.1:" & port & "/login", False
 http.send
 If Err.Number = 0 Then portInUse = True
 On Error Goto 0
 If portInUse Then
-    AppendLog Now & " [SKIP] port 6789 already in use - app already running, nothing to do"
+    AppendLog Now & " [SKIP] port " & port & " already in use - app already running, nothing to do"
     WScript.Quit 0
 End If
 
@@ -69,7 +85,7 @@ If Not fso.FileExists(pyPath) Then
 End If
 
 shell.CurrentDirectory = appDir
-AppendLog Now & " [START] launching app.py on port 6789 via hidden cmd"
+AppendLog Now & " [START] launching app.py on port " & port & " via hidden cmd"
 
 ' NOTE: do NOT use shell.Exec here - Exec allocates a visible console
 ' window for the child when the host (wscript) has no console.
