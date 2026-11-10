@@ -1,99 +1,107 @@
 ---
 name: deskport
-description: 通过 Deskport 智能体 API 操作已保存的远程主机（执行命令、读写文件、持久会话），以及把复杂任务派活给其他智能体（Deskport 本机或远端节点上的 Kimi 会话，全程结构化事件回流、权限可审批）。当任务需要远程执行、读写远程文件，或需要委托另一个智能体完成多步复杂任务时使用。认证用长效令牌（部署时签发），令牌等价于远程执行权，勿外传。
+description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Deskport 本机（执行命令、读写文件、持久会话），以及把复杂任务派活给其他智能体（可选模型，全程结构化事件回流、权限可审批）。当任务需要远程/本机执行、读写文件，或需要委托另一个智能体完成多步复杂任务时使用。认证用长效令牌（部署时签发），令牌等价于远程执行权，勿外传。
 ---
 
 # deskport
 
-通过 Deskport 的智能体 API 操作远程主机、并把复杂任务委托给其他智能体。所有请求带 `X-Agent-Token` 头。
+通过 Deskport 的智能体 API 操作主机（SSH 主机 + Deskport 本机 `host:"local"`）、
+并把复杂任务委托给其他智能体。所有请求带 `X-Agent-Token` 头。
 
 ## 速查
 
 - API base: 部署 Deskport 的地址（本机部署为 `http://127.0.0.1:6789`；外网走部署者配的 HTTPS 隧道地址）
-- 认证: `X-Agent-Token: <令牌>`；令牌由部署者在 `config.json` 的 `agentTokens[]` 签发（存 SHA-256 指纹，明文只给智能体一次）
-- 主机: 用名称或 id；`GET /api/agent/hosts` 可列出（只含 id/name/host/port，无凭据）
-- 智能体节点: `GET /api/tasks/nodes` 可列出（本机节点名 `local`，远端节点如 `ai-xmyz`）
+- 认证: `X-Agent-Token: <令牌>`；每个智能体应单独签发令牌（审计按令牌名留痕）
+- 主机: `GET /api/agent/hosts` 列出（SSH 主机 + 本机 `local`，本机带 os/defaultShell/shells）
+- 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`
+- 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 
 ## 快命令（无状态，单发）
 
 ```text
 POST /api/agent/ssh/exec
-{"host": "<主机>", "command": "uptime", "timeoutSec": 30, "cwd": "/path"}
-→ {"exit": 0, "out": "...", "err": "...", "timedOut": false}
+{"host": "<主机或local>", "command": "uptime", "timeoutSec": 30, "cwd": "/path"}
+→ {"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 4321}
 ```
 
 - exec 无状态：cd 不延续。多步任务用 `cwd` 参数（每条都带），或用持久会话 / 任务派活（见下）。
-- 输出上限 2MB；超时上限 600s；超时只关闭通道，长命令后台化再轮询日志。
+- `timeoutSec` 1–600，越界 400；命令含 NUL 400；stdin 即时 EOF（读 stdin 的命令不挂死）。
+- 输出上限 2MB；`"encoding": "base64"` 拿 `outB64`/`errB64` 原文字节。
+- 超时：`exit:null` + `reason:"timeout"` + `pid`，远端进程组被整组击杀。
+- 本机路径双写法（`/e/事项` = `E:\事项`）；本机可加 `"shell": "powershell"|"pwsh"`（默认 bash，退出码已统一）。
 
 ## 持久会话（cd / export / venv 激活都延续）
 
 ```text
-POST   /api/agent/ssh/sessions              {"host": "<主机>", "cwd": "/path"} → {"sessionId"}
+POST   /api/agent/ssh/sessions              {"host": "...", "cwd": "..."} → {"sessionId"}
 POST   /api/agent/ssh/sessions/<sid>        {"command": "...", "timeoutSec": 30}
 DELETE /api/agent/ssh/sessions/<sid>
 ```
 
-- 同一会话里 cd / export / source 都延续（单 bash 进程常驻）。
-- 响应字段：`exit`、`out`（末尾 8KB）、`err`、`cwd`、`alive`；`combined: true` 并入 stderr，`full: true` 全量输出。
-- 命令卡死超时会话可能残留状态，建议 close 重开。
+- `cwd` 不存在 → 开会话就 400（不会再"创建成功、执行全 500"）。
+- 语法错误（未闭合引号等）只影响本条：`exit:2` + bash 原始报错，会话不会被卡死。
+- `read x`/`cat` 直接见 EOF；响应 `cwd` 是当前目录（实时回报）。
+- 超时 `timedOut:true, exit:null`；旧命令没跑完时下一条返回 409 busy（等它落地自动恢复）；`exit 7` → `exit:7, alive:false`，之后该会话 410。
+- 本机会话只支持 bash；powershell/pwsh 用单发 exec。
 
-## SFTP（文件读写，8MB 上限）
+## SFTP（文件读写）
 
 ```text
-POST /api/agent/sftp/list  {"host": "<主机>", "path": "/path"} → {entries: [...]}
-POST /api/agent/sftp/get   {"host": "...", "path": "..."}     → {contentB64}
-POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "..."}
+POST /api/agent/sftp/list  {"host": "...", "path": "/srv"} → {path, entries:[{name,path,size,mtime,dir,type,mode,target}]}
+POST /api/agent/sftp/get   {"host": "...", "path": "...", "offset": 0, "length": 4096} → {contentB64, total}
+POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "sha256": "可选"}
 ```
+
+- `~` 与相对路径都解析为绝对路径；错误码：403 权限 / 404 不存在 / 400 用法（对目录 get 等）/ 413 超限。
+- 整读上限 8MB，超限用 `offset`/`length` 分块（413 响应带 `total`）。
+- put 严格校验 base64（坏编码 400 拒写，原文件不动）；可选 sha256 校验；原子写入。
 
 ## 任务派活（委托另一个智能体，多步复杂任务推荐）
 
-把一句目标交给 Deskport 托管的 Kimi 会话执行：它自己规划、调工具、回报结果；
-危险操作会停下等你审批（见权限）。人也能在任务卡上随时插话或接手。
-
 ```text
 POST /api/tasks
-{"prompt": "目标描述", "engine": "acp", "mode": "auto"}
+{"prompt": "目标描述", "engine": "acp", "mode": "auto", "model": "<可选>"}
 → 202 {"task": {"id": "...", ...}}
 ```
 
-- `engine: "acp"` = Deskport 本机的 Kimi（workspace 为本机临时目录，输出文件会列在任务卡）
-- `engine: "remote"` = 远端节点执行，需加 `"node": "<节点名>", "cwd": "<远端目录>"`；节点列表 `GET /api/tasks/nodes`
-- `mode`: `auto`（自动批准，推荐）/ `default`（逐项审批）/ `plan` / `yolo`
-- `paths`（仅 acp）：本机输入文件路径数组，会复制到任务工作区（只读原件）
+- `mode` 不传 = `default`（逐项审批，安全默认）；要自动批准显式传 `"mode": "auto"`。
+- `model` 可选：按活的性质挑模型（机械活用快的，验收用与实施方不同的模型）；
+  可选列表看 `GET /api/tasks/nodes` 的 `models`；续聊沿用原模型。
+- `engine: "remote"` 加 `"node": "...", "cwd": "<远端目录>"`；acp 不接受 cwd。
+- `prompt` 上限 4000 字符；本机文件用 `paths: [绝对路径]`；没有现成文件时先上传：
+  `POST /api/tasks/files {"name": "a.md", "contentB64": "..."}` → 返回 path 塞进 paths，
+  或建任务时直接带 `attachments: [{name, contentB64}]`。
 
-**收事件**（SSE 推送，挂一条连接即可；JSON 轮询端点保留备用）：
+**收事件**（SSE 推送，挂一条连接即可；轮询端点备用）：
 
 ```text
 GET /api/tasks/<id>/events/stream?since=<上次最大seq>
-→ data: {seq, type, text, name, options, ...} 逐条推送；18s 心跳；closed 后 end
-GET /api/tasks/<id>/events?after=<上次最大seq>    → {events: [...]}（轮询备用）
+GET /api/tasks/<id>/events?after=<上次最大seq>    （since 等价接受）
 ```
 
-事件类型：`status`（状态流转）、`user`（输入）、`assistant`（Kimi 的回答文本）、
-`tool` / `tool_result`（工具调用与结果）、`plan`（计划更新）、
-`permission_request`（等待你审批，`options` 里选一个 `optionId`）、`error`。
+事件类型：`status` / `user` / `assistant`（Kimi 的回答终版）/ `tool` / `tool_result` /
+`plan` / `permission_request`（**带 `callId` 与 `args`**，能对回具体调用）/ `error`。
 
 **关键操作**：
 
 ```text
-GET  /api/tasks/<id>                          → 任务状态（status/lastText/error）
-GET  /api/tasks/<id>/log                      → 完整 jsonl 流水
+GET  /api/tasks/<id>                              → 状态（含 model/workspace/error）
+GET  /api/tasks/<id>/log                          → 完整 jsonl 流水
 POST /api/tasks/<id>/message    {"text": "..."}   → 续聊/追问（回合间）
-POST /api/tasks/<id>/permission {"requestId": "...", "optionId": "...", "deny": false} → 审批
-POST /api/tasks/<id>/cancel                     → 停止当前轮
-POST /api/tasks/<id>/close                      → 结束会话
+POST /api/tasks/<id>/permission {"requestId": "...", "optionId": "...", "deny": false}
+POST /api/tasks/<id>/cancel | /close              → 都返回 status；close 幂等
 ```
 
-- 任务结束判定：`status: waiting`（这轮完成，等下一句）或 `failed`（看 `error`）。
-- 会话可接手：`status: paused` 或 waiting 时 `message` 续聊会自动接续原上下文；
-  web 重启不打断会话（由 agent node 托管）。
-- 并发上限 2 个 running 任务；创建 202 表示受理，不是完成。
+- 任务结束判定：`status: waiting`（这轮完成）或 `failed`（看 `error`）。
+- 会话接手：node 托管的会话 web 重启后 `message` 可续（`canResume`）；
+  stdio 回退（未启用 node）时中断会明确 409，请重建任务。
+- 并发上限 2 个 running；202 是受理不是完成。
 
 ## 规矩
 
 - 命令与任务都真实执行：优先只读；写操作（写文件、装软件、动服务）先向用户说明再执行。
-- 主机/节点名写错时响应带提示（`availableHosts` / `nodes`），直接改用，不用再列。
+- 名字写错时响应带提示（`availableHosts` / `nodes` / `models`），直接改用，不用再列。
 - 401 = 令牌失效：检查令牌与 `config.json` 的 `agentTokens` 指纹是否匹配。
-- 审计全留痕（agent.exec / agent.sftp.* / agent.task.create），部署者可在控制台回看。
+- 审计全留痕（agent.exec / agent.sftp.* / agent.session.* / agent.task.*），部署者可在控制台回看。
 - 本技能由中枢分发，可自举更新：`GET /api/agent/skills/deskport` 取最新版覆盖本地 SKILL.md。
 - 完整接口参考：仓库内 `docs/agent-api.md`；agent node 侧接口见 `agent_node/README.md`。
