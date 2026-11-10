@@ -141,6 +141,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
 | GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable` |
 | POST | /api/tasks/files | 上传文件 → 返回本机路径（塞进 paths 用） |
+| GET | /api/tasks/kimi-sessions?cwd= | 已存在的 Kimi CLI 会话（接手候选，按最近更新排序） |
 
 - `engine: "acp"`（缺省）= 本机 Kimi（agent node 托管，web 重启可接手）；
   `paths` 引用本机输入文件；**不接受 `cwd`**（400，任务固定运行在独立
@@ -150,10 +151,18 @@ DELETE /api/agent/ssh/sessions/<sid>
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；
 - `model`（可选）：给执行点选模型（§7）。`GET /api/tasks/nodes` 里每个执行点
-  带 `models`（可选列表）/ `defaultModel` / `modelSelectable`；声明白名单的
-  执行点校验不命中 → 400 附可选列表；模型自动发现自 kimi config.toml（本机）
-  与 node /health（远端）；选错别名会在任务 error 里看到 kimi 原始报错；
+  带 `models`（可选列表）/ `defaultModel` / `modelSelectable`；清单三级来源：
+  config 显式声明 → node /health 自动上报（节点侧解析 kimi config.toml，
+  节点升级即自动点亮）→ 本机自动发现。声明白名单的执行点校验不命中 →
+  400 附可选列表；选错别名会在任务 error 里看到 kimi 原始报错；
   联邦成员转发该字段，旧版对端安全忽略；
+- **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（仅
+  engine=acp）。默认先 `kimi fork` 复制副本再加载——不干扰用户开着的
+  终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
+  但会话已被其他任务持有时 409。候选列表
+  `GET /api/tasks/kimi-sessions?cwd=<工作目录>`；
+- **close 回收语义**：`waiting`/`paused` 任务的会话进程保留（45 分钟空闲
+  回收，随时可续聊）；`close` 是明确结束——node/联邦侧的 ACP 进程立即回收；
 - **文件投递**（智能体够不到 Deskport 文件系统时的过渡通道）：
   `POST /api/tasks/files {"name": "报告.md", "contentB64": "..."}` →
   `{"path": "E:\\...\\报告.md"}`，把该 path 放进 `paths`；或建任务时直接带

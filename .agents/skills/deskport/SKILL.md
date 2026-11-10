@@ -13,7 +13,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - API base: 部署 Deskport 的地址（本机部署为 `http://127.0.0.1:6789`；外网走部署者配的 HTTPS 隧道地址）
 - 认证: `X-Agent-Token: <令牌>`；每个智能体应单独签发令牌（审计按令牌名留痕）
 - 主机: `GET /api/agent/hosts` 列出（SSH 主机 + 本机 `local`，本机带 os/defaultShell/shells）
-- 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`
+- 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`（远端节点升级后自动上报）
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 
 ## 快命令（无状态，单发）
@@ -67,6 +67,9 @@ POST /api/tasks
 - `mode` 不传 = `default`（逐项审批，安全默认）；要自动批准显式传 `"mode": "auto"`。
 - `model` 可选：按活的性质挑模型（机械活用快的，验收用与实施方不同的模型）；
   可选列表看 `GET /api/tasks/nodes` 的 `models`；续聊沿用原模型。
+- 接手已有 Kimi 会话：`GET /api/tasks/kimi-sessions?cwd=<目录>` 挑候选，
+  `{"kimiSessionId": "<id>"}` 建任务（默认 fork 副本不干扰原会话，占用时 400 透传原因）。
+- 任务 close = 明确结束（node 侧进程立即回收）；不 close 的会话保留 45 分钟可随时续聊。
 - `engine: "remote"` 加 `"node": "...", "cwd": "<远端目录>"`；acp 不接受 cwd。
 - `prompt` 上限 4000 字符；本机文件用 `paths: [绝对路径]`；没有现成文件时先上传：
   `POST /api/tasks/files {"name": "a.md", "contentB64": "..."}` → 返回 path 塞进 paths，
