@@ -221,19 +221,17 @@ def getSessiondPort(kind='local'):
         return default
 
 
-def getSessiondToken(kind='local'):
-    r"""web 与对应守护进程的共享令牌; 首次调用原子创建, 两个服务各自独立。"""
-    path = statePath('sessiond_token_' + kind)
+def _sharedToken(path):
+    """令牌文件原子创建 + 重试读取；web 与对应服务各自独立持有。"""
     if not os.path.isfile(path):
         try:
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
             with open(path, 'x', encoding='utf-8') as f:
                 f.write(secrets.token_hex(24))
                 f.flush()
                 os.fsync(f.fileno())
-        except FileExistsError:
+        except (FileExistsError, OSError):
             pass
-        except OSError:
-            return ''
     for _ in range(20):
         try:
             with open(path, 'r', encoding='utf-8') as f:
@@ -244,6 +242,11 @@ def getSessiondToken(kind='local'):
             pass
         time.sleep(0.02)
     return ''
+
+
+def getSessiondToken(kind='local'):
+    r"""web 与对应守护进程的共享令牌; 首次调用原子创建, 两个服务各自独立。"""
+    return _sharedToken(statePath('sessiond_token_' + kind))
 
 
 def getAgentNodeToken():
@@ -252,28 +255,8 @@ def getAgentNodeToken():
     路径固定在 node 自己的数据目录（~/.deskport-agent-node/token），
     不随 stateDirName 变化 —— 本机 node 是 dev/prod 共享的单例服务。
     """
-    path = os.path.join(os.path.expanduser('~'), '.deskport-agent-node', 'token')
-    if not os.path.isfile(path):
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, 'x', encoding='utf-8') as f:
-                f.write(secrets.token_hex(24))
-                f.flush()
-                os.fsync(f.fileno())
-        except FileExistsError:
-            pass
-        except OSError:
-            return ''
-    for _ in range(20):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                token = f.read().strip()
-            if token:
-                return token
-        except OSError:
-            pass
-        time.sleep(0.02)
-    return ''
+    return _sharedToken(os.path.join(os.path.expanduser('~'),
+                                     '.deskport-agent-node', 'token'))
 
 
 def getLocalAgentNode():

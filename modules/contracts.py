@@ -4,7 +4,25 @@
 运行时仍是普通 dict；作用是把前端/日志/WS 依赖的字段集中到一处，
 避免 summary/events/hello 三套形状各写各的。
 """
-from typing import Literal, TypedDict
+from typing import Literal, Protocol, TypedDict
+
+
+class AcpClient(Protocol):
+    """智能体会话客户端契约。
+
+    两个实现共同满足：KimiAcp（web 进程内 stdio 托管，回退路径）与
+    RemoteAcpClient（HTTP → agent node，本机/远端统一路径）。
+    方法签名靠本 Protocol 与 tests/test_acp_parity.py 的对拍测试约束，
+    新增方法必须两边同步，否则对拍测试或静态检查报警。
+    """
+    stderr_lines: list[str]
+
+    def start(self, session_id: str | None = None) -> str: ...
+    def prompt(self, text: str, timeout: float | None = None) -> dict: ...
+    def set_mode(self, mode: str) -> None: ...
+    def cancel(self) -> None: ...
+    def close(self) -> None: ...
+    def poll(self) -> int: ...
 
 
 class TaskSummary(TypedDict):
