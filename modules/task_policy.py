@@ -26,6 +26,10 @@ import re
 
 READONLY_KINDS = {'read'}
 WRITE_KINDS = {'edit', 'delete'}
+# 真实 Kimi 的 request_permission.toolCall 常不带 kind——按工具名兜底
+# （真实事件形状：title='Edit'，args={'new_string','old_string','path'}）
+WRITE_NAMES = re.compile(r'^(edit|write|multiedit|notebookedit|apply[_-]?patch|'
+                         r'str[_-]?replace|replace)\b', re.I)
 READONLY_NAMES = re.compile(r'^(read|grep|glob|ls|search|view|todowrite)\b', re.I)
 READONLY_XARGS = {'cat', 'head', 'tail', 'grep', 'ls', 'wc', 'file', 'stat',
                   'find', 'echo', 'xargs'}
@@ -38,6 +42,26 @@ SEGMENT_SPLIT = re.compile(r'\s*(?:&&|\|\||\||;)\s*|\n')
 FIND_UNSAFE = re.compile(r'(?:^|[\s;&|])-(?:exec|delete)\b')
 XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
+CD_RE = re.compile(r'\bcd\s+(?:"([^"]+)"|\'([^\']+)"?|([^\s;&|]+))', re.I)
+HEREDOC_RE = re.compile(r'<<-?\s*[\'"]?([A-Za-z_][\w.-]*)[\'"]?')
+
+
+def _stripHeredocs(cmd):
+    """去掉 heredoc 正文（<<TAG 到独占一行的 TAG）：正文是数据，不参与
+    引号剥离/命令替换检测/分段——否则正文里的引号与 $( 会误伤判定。"""
+    out = cmd
+    while True:
+        m = HEREDOC_RE.search(out)
+        if not m:
+            return out
+        tag = m.group(1)
+        start = out.find('\n', m.end())
+        if start < 0:
+            return out[:m.start()]
+        tm = re.search(r'^%s\s*$' % re.escape(tag), out[start + 1:], re.M)
+        if not tm:
+            return out[:start]
+        out = out[:start + 1] + out[start + 1 + tm.end():]
 
 DEFAULT_POLICY = {'allowPaths': [], 'allowCommands': [], 'denyCommands': [],
                   'default': 'ask', 'timeoutSec': None}
@@ -132,7 +156,89 @@ def _firstWord(segment):
     return m.group(1).lower() if m else ''
 
 
-def evaluate(policy, kind='', name='', args=None):
+def _cdTarget(cmd):
+    """命令里第一个 `cd <目录>` 的目标；POSIX 风格 /e/x 转成 E:\\x。"""
+    m = CD_RE.search(cmd)
+    if not m:
+        return ''
+    d = next((g for g in m.groups() if g), '').strip('"\'')
+    if not d:
+        return ''
+    if re.match(r'^[A-Za-z]:', d) or d.startswith('\\\\'):
+        return d
+    if re.match(r'^/[A-Za-z](/|$)', d):
+        return d[1].upper() + ':' + d[2:].replace('/', '\\')
+    return d
+
+
+def _redirectTargets(cmd):
+    """扫描重定向目标（含 `>>`、双/单引号目标）；单引号内整体是数据。
+
+    调用前 `$( `/反引号已由调用方拦截，`2>&1` 等豁免项已剔除。
+    返回 [(target, append)]；扫描不到目标时返回空——调用方按 ask 处理。
+    """
+    targets = []
+    i, n = 0, len(cmd)
+    inTarget = False
+    buf = ''
+    append = False
+    inSQ = inDQ = False
+    while i < n:
+        ch = cmd[i]
+        if inTarget:
+            if inDQ:
+                if ch == '"':
+                    targets.append((buf, append))
+                    buf = ''
+                    inTarget = False
+                    inDQ = False
+                else:
+                    buf += ch
+                i += 1
+                continue
+            if ch == "'":
+                i += 1
+                continue
+            if ch in ' \t':
+                if buf:
+                    targets.append((buf, append))
+                    buf = ''
+                inTarget = False
+            elif ch in ';&|<':
+                if buf:
+                    targets.append((buf, append))
+                    buf = ''
+                inTarget = False
+                continue
+            else:
+                buf += ch
+            i += 1
+            continue
+        if inSQ:
+            if ch == "'":
+                inSQ = False
+            i += 1
+            continue
+        if ch == '"':
+            inDQ = not inDQ
+            i += 1
+            continue
+        if ch == '>':
+            j = i + 1
+            append = bool(j < n and cmd[j] == '>')
+            i = j + 1 if append else j
+            while i < n and cmd[i] in ' \t':
+                i += 1
+            inTarget = True
+            buf = ''
+            continue
+        i += 1
+    if buf:
+        targets.append((buf, append))
+    return targets
+
+
+def evaluate(policy, kind='', name='', args=None, cwd=None):
     """按 policy 判定一次工具调用。
 
     返回 (decision, rule)：decision ∈ allow/ask/deny；rule 供 auto_approved/
@@ -147,14 +253,29 @@ def evaluate(policy, kind='', name='', args=None):
 
     segments = None
     if cmd.strip():
-        outsideSingle = STRIP_SQ.sub('', cmd)
+        cmdNoHeredoc = _stripHeredocs(cmd)
+        outsideSingle = STRIP_SQ.sub('', cmdNoHeredoc)
         if DANGER_SUBST.search(outsideSingle):
             return 'ask', 'danger:command-substitution'
-        stripped = STRIP_DQ.sub('', STRIP_SQ.sub('', cmd))
+        stripped = STRIP_DQ.sub('', STRIP_SQ.sub('', cmdNoHeredoc))
         for exempt in REDIRECT_EXEMPT:
             stripped = stripped.replace(exempt, '')
         if '>' in stripped:
-            return 'ask', 'danger:redirect'
+            # 重定向写改进（R4-2b）：目标全部落在 allowPaths 内（相对路径按
+            # 命令里 cd 的目录或任务 cwd 解析，解析不出 → ask）时不再一刀切
+            # ask；命令本身仍要走 allowCommands 判定
+            targets = _redirectTargets(cmdNoHeredoc)
+            base = _cdTarget(cmdNoHeredoc) or str(cwd or '')
+            resolved = []
+            for target, _append in targets:
+                p = target.replace('/', '\\')
+                if not re.match(r'^[A-Za-z]:[\\/]', p):
+                    if not base or p.startswith('~'):
+                        return 'ask', 'danger:redirect'
+                    p = os.path.normpath(os.path.join(base, p))
+                resolved.append(p)
+            if not resolved or not all(_underAny(p, allowPaths) for p in resolved):
+                return 'ask', 'danger:redirect'
         if FIND_UNSAFE.search(stripped):
             return 'ask', 'danger:find'
         segments = [s for s in SEGMENT_SPLIT.split(stripped) if s.strip()]
@@ -180,7 +301,7 @@ def evaluate(policy, kind='', name='', args=None):
         if all(any(r.search(seg) for r in allowRes) for seg in segments):
             return 'allow', 'allowCommands'
 
-    if kind in WRITE_KINDS:
+    if kind in WRITE_KINDS or WRITE_NAMES.match(name or ''):
         paths = list(_pathsInArgs(args))
         if paths and all(_underAny(p, allowPaths) for p in paths):
             return 'allow', 'allowPaths'

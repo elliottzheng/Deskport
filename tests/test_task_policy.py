@@ -131,3 +131,70 @@ def test_args_without_command_skip_command_dimension():
     p = {'allowPaths': ['E:\\w'], 'allowCommands': ['^grep\\b'], 'default': 'ask'}
     assert tp.evaluate(p, 'edit', 'Edit', {'file_path': 'E:/w/a'})[0] == 'allow'
     assert tp.evaluate(p, 'edit', 'Edit', {'file_path': '/tmp/a'})[0] == 'ask'
+
+
+# ---- R4-2b：真实链路形状回归（证据：prod 任务 4b1c65a28843 事件流）----
+
+POLICY = {'allowPaths': ['e:/事项/远程/web-platform-dev'],
+          'allowCommands': [r'\b(cat|grep|ls|git log|cd|echo|sed)\b'],
+          'default': 'ask'}
+
+# 真实事件形状：tool_call update 里 kind='edit'，request_permission 不带
+# kind，args={'new_string','old_string','path'}（缺任何一环曾漏成人工审批）
+REAL_EDIT_ARGS = {
+    'new_string': '        lastSeq = task.get("seq", 0)\n        error = ...',
+    'old_string': '        lastSeq = task.get("seq", 0)\n    return {...}',
+    'path': 'E:\事项\远程\web-platform-dev\modules\tasks_api.py',
+}
+
+
+def test_real_edit_shape_kind_present():
+    decision, rule = tp.evaluate(POLICY, 'edit', 'Edit', REAL_EDIT_ARGS)
+    assert decision == 'allow' and rule == 'allowPaths'
+
+
+def test_real_edit_shape_kind_missing_name_fallback():
+    """request_permission.toolCall.kind 为空时按工具名 Edit 兜底。"""
+    decision, rule = tp.evaluate(POLICY, '', 'Edit', REAL_EDIT_ARGS)
+    assert decision == 'allow' and rule == 'allowPaths'
+
+
+def test_write_outside_paths_still_ask():
+    outside = dict(REAL_EDIT_ARGS, path='E:/事项/other/x.py')
+    decision, _ = tp.evaluate(POLICY, '', 'Edit', outside)
+    assert decision == 'ask'
+
+
+# 重定向目标在 allowPaths 内 → 允许；相对路径按 cd 解析；解析不出 → ask
+
+def test_redirect_append_inside_cwd_allows():
+    cmd = ('cd "E:\事项\远程\web-platform-dev" && '
+           "cat >> tests/test_x.py << 'EOF'\nhello\nEOF")
+    decision, rule = tp.evaluate(POLICY, '', 'Bash',
+                                          {'command': cmd}, cwd='')
+    assert decision == 'allow' and rule == 'allowCommands'
+
+
+def test_redirect_relative_no_cd_no_cwd_is_ask():
+    decision, _ = tp.evaluate(POLICY, '', 'Bash',
+                                       {'command': 'cat x > dev/内/文件'})
+    assert decision == 'ask'
+
+
+def test_redirect_outside_paths_is_ask():
+    decision, rule = tp.evaluate(POLICY, '', 'Bash',
+                                          {'command': 'cat x > /c/Windows/x'},
+                                          cwd='E:\事项\远程\web-platform-dev')
+    assert decision == 'ask' and rule == 'danger:redirect'
+
+
+def test_redirect_posix_cwd_and_target_resolves():
+    cmd = "cd /e/事项/远程/web-platform-dev && echo hi > notes/a.md"
+    decision, rule = tp.evaluate(POLICY, '', 'Bash', {'command': cmd})
+    assert decision == 'allow' and rule == 'allowCommands'
+
+
+def test_substitution_still_ask_with_redirect():
+    cmd = 'cd "E:\事项\远程\web-platform-dev" && echo $(pwd) > out.txt'
+    decision, _ = tp.evaluate(POLICY, '', 'Bash', {'command': cmd})
+    assert decision == 'ask'

@@ -66,15 +66,23 @@ def _handleAcpUpdate(task, update):
         with store.repo.lock:
             # 审批事件要能对回工具调用（反馈 §3.4）：ACP 的 permission 请求
             # 常不带 rawInput——按 callId 回查原始参数（对象/字符串原样保留），
-            # 兜底再取最近一次 tool_call；_lastToolCall.args 是序列化文本
+            # 兜底再取最近一次 tool_call；_lastToolCall.args 是序列化文本。
+            # kind 同链路回查（R4-2b：真实 Kimi 的 request_permission.toolCall
+            # 不带 kind，tool_call update 里有——policy 写工具路径判定要用）
             byCall = task.setdefault('_toolArgs', {})
+            byKind = task.setdefault('_toolKinds', {})
             if callId:
                 byCall[callId] = args
+                byKind[callId] = update.get('kind') or ''
                 if len(byCall) > 50:
                     for k in list(byCall.keys())[:-50]:
                         byCall.pop(k)
+                if len(byKind) > 50:
+                    for k in list(byKind.keys())[:-50]:
+                        byKind.pop(k)
             task['_lastToolCall'] = {'callId': callId,
                                      'name': update.get('title') or '',
+                                     'kind': update.get('kind') or '',
                                      'args': argsText[:2000],
                                      'rawArgs': args}
         store.repo.append_event(task, 'tool',
@@ -130,10 +138,16 @@ def _handleAcpPermission(task, agent, params, requestId):
     tool = params.get('toolCall') or {}
     title = tool.get('title') or '工具调用'
     callId = tool.get('toolCallId') or ''
+    kind = tool.get('kind') or ''
     rawInput = tool.get('rawInput')
     with store.repo.lock:
         last = task.get('_lastToolCall') or {}
+        byKind = (task.get('_toolKinds') or {}).get(callId) if callId else None
         byCall = (task.get('_toolArgs') or {}).get(callId) if callId else None
+    # kind 链（R4-2b）：真实 Kimi 的 request_permission.toolCall 不带 kind，
+    # 按 callId 回查 tool_call update 记下的 kind，再兜底最近一次调用
+    if not kind:
+        kind = byKind or last.get('kind') or ''
     # 真实链路（R4 验收）：Kimi 的 request_permission 常不带 rawInput，
     # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，
     # 字符串统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉
@@ -168,7 +182,8 @@ def _handleAcpPermission(task, agent, params, requestId):
     if policy and options and not peerJudged:
         kind = tool.get('kind') or ''
         try:
-            decision, rule = task_policy.evaluate(policy, kind, title, rawInput)
+            decision, rule = task_policy.evaluate(policy, kind, title, rawInput,
+                                                  cwd=task.get('workspace') or '')
         except Exception:
             decision, rule = 'ask', 'policy-error'
         if decision == 'allow':
