@@ -1170,3 +1170,25 @@ def test_close_while_permission_pending_settles_closed(env):
     with env.repo.lock:
         assert env.repo.get(tid)['status'] == 'closed'
         assert env.repo.get(tid)['pendingPermission'] == ''
+
+
+# ---- R4 复测缺陷：wait 响应必须带 taskId ----
+
+def test_create_with_wait_has_taskid_and_brief(env):
+    """带 wait 的 create 响应含 taskId，且 task.id == taskId（summaryBrief）。"""
+    resp = create(env, {'prompt': 'x', 'wait': 1})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['taskId']
+    assert body['task']['id'] == body['taskId']
+    assert body['task']['status'] in ('queued', 'running')
+    assert 'model' in body['task'] and 'kimiSessionId' in body['task']
+
+
+def test_get_wait_has_taskid(env):
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    body = env.client.get('/api/tasks/%s/wait?timeout=1' % tid,
+                          headers=H).get_json()
+    assert body['taskId'] == tid
+    assert body['status'] in ('queued', 'running')

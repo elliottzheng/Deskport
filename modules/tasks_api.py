@@ -202,8 +202,11 @@ def createTask():
     runner._startTask(task, manifest)
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:
-        # 发完直接阻塞到回合结束/需决策（R4-3），省一次轮询往返
-        return jsonify(_blockWait(task, 0, waitSec)), 200
+        # 发完直接阻塞到回合结束/需决策（R4-3），省一次轮询往返；
+        # task: summaryBrief 让调用方不重查任务卡就能拿到元数据
+        snap = _blockWait(task, 0, waitSec)
+        snap['task'] = store.repo.summaryBrief(task)
+        return jsonify(snap), 200
     return jsonify({'task': store.repo.summary(task)}), 202
 
 
@@ -288,7 +291,9 @@ def _waitSnapshot(task, after, ignorePending=None):
                        'options': perm.get('options') or []}
         lastSeq = task.get('seq', 0)
         error = task.get('error', '')
-    return {'status': 'permission' if pending else status,
+    # taskId 必须在所有 wait 响应里（R4 复测缺陷：调用方拿不到自己刚建的任务）
+    return {'taskId': task.get('id') or '',
+            'status': 'permission' if pending else status,
             'finalText': _lastAssistantAfter(task, after),
             'pending': pending, 'stats': stats,
             'lastSeq': lastSeq, 'error': error}
