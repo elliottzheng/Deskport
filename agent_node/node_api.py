@@ -10,7 +10,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs
+from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
+    discoverModels
 
 _MANAGER = None
 _TOKEN = ''
@@ -67,7 +68,7 @@ class SessionManager:
         except OSError:
             pass
 
-    def create(self, cwd, mode, title, resume_session_id=None):
+    def create(self, cwd, mode, title, resume_session_id=None, model=''):
         if resume_session_id:
             with self._lock:
                 for session in self._sessions.values():
@@ -78,7 +79,7 @@ class SessionManager:
                         session.last_active = nowMs()
                         return session
         sid = uuid.uuid4().hex[:12]
-        session = AcpSession(sid, cwd, mode, self.kimi_bin, title)
+        session = AcpSession(sid, cwd, mode, self.kimi_bin, title, model)
         session.start(resume_session_id)
         with self._lock:
             self._sessions[sid] = session
@@ -165,10 +166,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/health':
             sessions = _MANAGER.list()
             alive = sum(1 for s in sessions if isinstance(s.get('dead'), bool) and not s['dead'])
+            models = discoverModels()
             return self._json(200, {'ok': True, 'service': 'deskport-agent-node',
                                     'protocolVersion': PROTOCOL_VERSION,
                                     'sessions': len(sessions), 'alive': alive,
-                                    'uptime': nowMs() - _STARTED})
+                                    'uptime': nowMs() - _STARTED,
+                                    'models': models['models'],
+                                    'defaultModel': models['default']})
         if not self._authed():
             return self._json(401, {'error': '认证失败'})
         if path == '/api/sessions':
@@ -233,9 +237,10 @@ class Handler(BaseHTTPRequestHandler):
             cwd = str(data.get('cwd') or '').strip() or os.path.expanduser('~')
             mode = str(data.get('mode') or 'auto').strip()
             title = str(data.get('title') or '').strip()
+            model = str(data.get('model') or '').strip()
             resume = str(data.get('sessionId') or '').strip() or None
             try:
-                session = _MANAGER.create(cwd, mode, title, resume)
+                session = _MANAGER.create(cwd, mode, title, resume, model)
             except Exception as e:
                 return self._json(502, {'error': 'ACP 启动失败: %s' % e})
             return self._json(200, {'sid': session.sid,

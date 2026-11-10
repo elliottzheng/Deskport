@@ -40,6 +40,7 @@ class TaskSummary(TypedDict):
     resultFiles: list[dict]
     error: str
     mode: str
+    model: str
     node: str
     remoteCwd: str
     resume: bool

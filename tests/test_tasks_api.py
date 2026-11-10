@@ -234,3 +234,155 @@ def test_api_405_is_json(env):
     assert resp.status_code == 405
     assert resp.is_json
     assert resp.get_json()['code'] == 405
+
+
+# ---- §7 派活选模型 ----
+
+def test_model_stored_and_reported(env, monkeypatch):
+    """model 合法性依赖执行点声明：声明为空时可任选并如实落卡。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'nodeModelDecl',
+                        lambda name='': {'name': 'local', 'models': [],
+                                         'default': ''})
+    resp = create(env, {'prompt': 'x', 'model': 'kimi-k2-turbo'})
+    assert resp.status_code == 202
+    task = resp.get_json()['task']
+    assert task['model'] == 'kimi-k2-turbo'
+    tid = task['id']
+    assert env.client.get('/api/tasks/%s' % tid, headers=H).get_json()[
+        'task']['model'] == 'kimi-k2-turbo'
+
+
+def test_model_rejected_when_not_in_whitelist(env, monkeypatch):
+    """§7.1：节点声明了白名单时，不在列表内的模型 400 + 可选列表。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'nodeModelDecl', lambda name='': {
+        'name': name or 'local', 'models': ['m-fast', 'm-strong'],
+        'default': 'm-fast'})
+    resp = create(env, {'prompt': 'x', 'model': 'm-nope'})
+    body = resp.get_json()
+    assert resp.status_code == 400
+    assert body['models'] == ['m-fast', 'm-strong']
+    assert body['defaultModel'] == 'm-fast'
+    resp = create(env, {'prompt': 'x', 'model': 'm-strong'})
+    assert resp.status_code == 202
+
+
+def test_model_bad_format_rejected(env):
+    assert create(env, {'prompt': 'x', 'model': 'x' * 101}).status_code == 400
+
+
+def test_nodes_list_includes_model_info(env, monkeypatch):
+    """§7.2：nodes 里每个执行点带 models/defaultModel/modelSelectable。"""
+    import modules.tasks_federation as fedMod
+    monkeypatch.setattr(fedMod.config, 'getAgentNodes', lambda: [
+        {'name': 'ai-xmyz', 'via': 'h1', 'models': ['k2'], 'model': 'k2'}])
+    monkeypatch.setattr(fedMod.config, 'getLocalAgentNode', lambda: None)
+    monkeypatch.setattr(fedMod.config, 'getRemotes', lambda: [
+        {'name': 'win4710', 'models': [], 'model': ''}])
+    resp = env.client.get('/api/tasks/nodes', headers=H).get_json()
+    byName = {n['name']: n for n in resp['nodes']}
+    assert byName['ai-xmyz']['models'] == ['k2']
+    assert byName['ai-xmyz']['modelSelectable'] is True
+    assert byName['win4710']['modelSelectable'] is False   # §7.5 固定模型要能看出来
+
+
+def test_kimi_acp_launch_with_model(monkeypatch, tmp_path):
+    """§7.3：model 传到 kimi CLI 的 --model 参数。"""
+    import modules.kimi_acp as kacp
+    captured = {}
+
+    def fakePopen(cmd, **kw):
+        captured['cmd'] = cmd
+        raise RuntimeError('stop-here')   # 不真的启动
+    monkeypatch.setattr(kacp.subprocess, 'Popen', fakePopen)
+    monkeypatch.setattr(kacp.shutil if hasattr(kacp, 'shutil') else kacp,
+                        'which', lambda name: 'kimi.exe', raising=False)
+    client = kacp.KimiAcp(cwd=str(tmp_path), model='m-fast')
+    import shutil as _shutil
+    origWhich = _shutil.which
+    monkeypatch.setattr(_shutil, 'which', lambda name: 'kimi.exe')
+    try:
+        client.start()
+    except RuntimeError as e:
+        assert 'stop-here' in str(e)
+    assert captured['cmd'] == ['kimi.exe', '--model', 'm-fast', 'acp']
+
+
+def test_federation_start_forwards_model(monkeypatch, tmp_path):
+    """§7.4：联邦转发把 model 带给对端 /api/tasks。"""
+    import modules.tasks_federation as fedMod
+    client = fedMod.FederationTaskClient(cwd=str(tmp_path), member='b',
+                                         first_prompt='hi', model='m-strong')
+    calls = {}
+
+    def fakeCall(method, path, payload=None, timeout=20):
+        calls.setdefault(method, payload)
+        if method == 'GET':   # 镜像轮询立刻落定，别让它空转
+            return 200, {'status': 'waiting', 'events': []}
+        return 202, {'task': {'id': 'bid1'}}
+    monkeypatch.setattr(client, '_call', fakeCall)
+    assert client.start() == 'bid1'
+    assert calls['POST']['model'] == 'm-strong'
+    client.close()
+
+
+def test_remote_client_sends_model(monkeypatch):
+    """node 链路：model 随 /api/sessions 下发。"""
+    import modules.agent_nodes as nodesMod
+    client = nodesMod.RemoteAcpClient(cwd='/tmp', node='ai-xmyz', model='m-strong')
+    sent = {}
+
+    def fakeRequest(node, method, path, payload=None, timeout=30):
+        sent['payload'] = payload
+        return 200, {'sid': 's1', 'kimiSessionId': 'k1'}
+    monkeypatch.setattr(nodesMod, 'nodeRequest', fakeRequest)
+    monkeypatch.setattr(nodesMod, 'findNode', lambda name: {'name': name, 'url': 'x'})
+    monkeypatch.setattr(nodesMod, 'tunnelPort', lambda node: 0, raising=False)
+    import threading as _th
+    class _Resp:
+        def __iter__(self):
+            return iter([])
+        def close(self):
+            pass
+    monkeypatch.setattr(client, '_openStream', lambda node, since, timeout=45: _Resp())
+    client.start()
+    assert sent['payload']['model'] == 'm-strong'
+
+
+def test_discover_models_from_kimi_config(tmp_path, monkeypatch):
+    """§7.2：从 kimi config.toml 自动枚举模型（web 与 node 两侧一致）。"""
+    cfg = tmp_path / 'config.toml'
+    cfg.write_text(
+        'default_model = "zhipuai/glm-x"\n'
+        '[models."coderelay/gpt-5.6-sol"]\nmodel = "gpt-5.6-sol"\n'
+        '[models."coderelay-ds/deepseek-v4"]\nmodel = "deepseek-v4"\n',
+        encoding='utf-8')
+    import agent_node.acp_session as acpSessionMod
+    result = acpSessionMod.discoverModels(str(cfg))
+    assert result['default'] == 'zhipuai/glm-x'
+    assert result['models'] == ['coderelay-ds/deepseek-v4', 'coderelay/gpt-5.6-sol']
+    # 缺文件 → 空声明
+    assert acpSessionMod.discoverModels(str(tmp_path / 'nope.toml')) == {
+        'models': [], 'default': ''}
+
+
+def test_local_kimi_models_cached(tmp_path, monkeypatch):
+    """web 侧 stdio 回退也用本机 config.toml，60s 缓存。"""
+    import modules.agent_nodes as nodesMod
+    cfgDir = tmp_path / '.kimi-code'
+    cfgDir.mkdir()
+    cfg = cfgDir / 'config.toml'
+    cfg.write_text('default_model = "m-d"\n[models."m-a"]\nmodel = "a"\n',
+                   encoding='utf-8')
+    monkeypatch.setattr(nodesMod, '_modelsCache', {'at': 0.0, 'data': {
+        'models': [], 'default': ''}})
+    import os as _os
+    monkeypatch.setattr(_os.path, 'expanduser', lambda p: str(tmp_path))
+    first = nodesMod.localKimiModels(maxAgeSec=60)
+    assert first['models'] == ['m-a'] and first['default'] == 'm-d'
+    # 缓存生效：改文件不重读
+    cfg.write_text('default_model = "z"\n', encoding='utf-8')
+    assert nodesMod.localKimiModels(maxAgeSec=60)['default'] == 'm-d'
+    nodesMod._modelsCache['at'] = 0.0
+    assert nodesMod.localKimiModels(maxAgeSec=60)['default'] == 'z'

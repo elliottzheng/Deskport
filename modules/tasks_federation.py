@@ -31,10 +31,36 @@ blueprint = Blueprint('federation_tasks', __name__)
 
 @blueprint.route('/api/tasks/nodes')
 def nodesList():
-    nodes = [{'name': n['name'], 'via': n['via']}
-             for n in config.getAgentNodes()]
+    nodes = []
+    for n in config.getAgentNodes():
+        nodes.append({'name': n['name'], 'via': n['via'],
+                      'models': n.get('models') or [],
+                      'defaultModel': n.get('model') or '',
+                      'modelSelectable': bool(n.get('models') or n.get('model'))})
+    local = config.getLocalAgentNode()
+    if local is not None:
+        models = local.get('models') or []
+        defaultModel = local.get('model') or ''
+        if not models and not defaultModel:
+            # 配置未显式声明 → 自动发现本机 kimi config.toml
+            from modules.agent_nodes import localKimiModels
+            discovered = localKimiModels()
+            models, defaultModel = discovered['models'], discovered['default']
+        nodes.append({'name': local['name'], 'via': '',
+                      'models': models, 'defaultModel': defaultModel,
+                      'modelSelectable': bool(models or defaultModel)})
+    else:
+        from modules.agent_nodes import localKimiModels
+        models = localKimiModels()
+        nodes.append({'name': 'local', 'via': '',
+                      'models': models['models'],
+                      'defaultModel': models['default'],
+                      'modelSelectable': bool(models['models'] or models['default'])})
     for member in config.getRemotes():
-        nodes.append({'name': member['name'], 'via': 'federation'})
+        nodes.append({'name': member['name'], 'via': 'federation',
+                      'models': member.get('models') or [],
+                      'defaultModel': member.get('model') or '',
+                      'modelSelectable': bool(member.get('models') or member.get('model'))})
     return jsonify({'nodes': nodes})
 
 
@@ -119,11 +145,13 @@ class FederationTaskClient:
     """对端任务 REST → AcpClient 契约的代理适配器。"""
 
     def __init__(self, cwd, on_update=None, on_permission=None,
-                 mode='auto', prompt_timeout=1800, member='', first_prompt=''):
+                 mode='auto', prompt_timeout=1800, member='', first_prompt='',
+                 model=''):
         self.cwd = cwd                      # 不跨机；对端 workspace 自管
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or (lambda params, rid: '')
         self.mode = mode
+        self.model = str(model or '').strip()
         self.prompt_timeout = prompt_timeout
         self.member = member
         self.first_prompt = first_prompt
@@ -163,7 +191,8 @@ class FederationTaskClient:
         else:
             status, data = self._call(
                 'POST', '/api/tasks',
-                {'prompt': self.first_prompt, 'mode': self.mode}, timeout=60)
+                {'prompt': self.first_prompt, 'mode': self.mode,
+                 'model': self.model}, timeout=60)
             if status != 202:
                 raise RuntimeError('联邦任务创建失败(%s): %s'
                                    % (status, data.get('error') or data))

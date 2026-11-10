@@ -47,6 +47,64 @@ def listNodeNames():
     return [n['name'] for n in config.getAgentNodes()]
 
 
+_modelsCache = {'at': 0.0, 'data': {'models': [], 'default': ''}}
+
+
+def localKimiModels(maxAgeSec=60):
+    """本机 kimi CLI 的可选模型（config.toml 自动发现，60s 缓存）。
+
+    本机 agent node 未启用（stdio 直跑）时 Deskport 自己解析；与
+    agent_node/acp_session.discoverModels 是同一份 kimi 配置。
+    """
+    import time as _time
+    now = _time.monotonic()
+    if now - _modelsCache['at'] > maxAgeSec:
+        import os as _os
+        path = _os.path.join(_os.path.expanduser('~'), '.kimi-code', 'config.toml')
+        try:
+            import tomllib
+            with open(path, 'rb') as f:
+                data = tomllib.load(f)
+            raw = data.get('models')
+            result = {'models': sorted(str(k) for k in raw.keys())
+                      if isinstance(raw, dict) else [],
+                      'default': str(data.get('default_model') or '')}
+        except (OSError, ValueError):
+            result = {'models': [], 'default': ''}
+        _modelsCache['at'] = now
+        _modelsCache['data'] = result
+    return _modelsCache['data']
+
+
+def nodeModelDecl(name=''):
+    """执行点的模型声明：{name, models 白名单, default}。
+
+    name 空 = engine=acp 的执行点（本机 node 或 web 内 stdio）。
+    models 为空表示未声明白名单：调用方可任选模型交给 kimi --model，
+    选错了由节点侧报错回流。
+    """
+    wanted = str(name or '').strip()
+    if not wanted or wanted == 'local':
+        local = config.getLocalAgentNode()
+        if local is None:
+            # stdio 直跑：模型清单来自本机 kimi config.toml
+            models = localKimiModels()
+            return {'name': 'local', 'models': models['models'],
+                    'default': models['default']}
+        if local.get('models') or local.get('model'):
+            return {'name': local['name'], 'models': list(local.get('models') or []),
+                    'default': str(local.get('model') or '')}
+        models = localKimiModels()
+        return {'name': local['name'], 'models': models['models'],
+                'default': models['default']}
+    target = findNode(wanted) or findFederationMember(wanted)
+    if target is None:
+        return {'name': wanted, 'models': [], 'default': ''}
+    return {'name': target.get('name') or wanted,
+            'models': list(target.get('models') or []),
+            'default': str(target.get('model') or '')}
+
+
 def nodeRequest(node, method, path, payload=None, timeout=30):
     """node API 调用；返回 (status, data)。
 
@@ -85,11 +143,12 @@ class RemoteAcpClient:
     """KimiAcp 的 HTTP 传输版本：接口一致，任务层零改动复用。"""
 
     def __init__(self, cwd, on_update=None, on_permission=None,
-                 mode='auto', prompt_timeout=1800, node=''):
+                 mode='auto', prompt_timeout=1800, node='', model=''):
         self.cwd = cwd
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or self._defaultPermission
         self.mode = mode
+        self.model = str(model or '').strip()
         self.prompt_timeout = prompt_timeout
         self.node_name = node
         self.node_sid = ''
@@ -123,7 +182,8 @@ class RemoteAcpClient:
         node = self._node()
         status, data = nodeRequest(node, 'POST', '/api/sessions',
                                    {'cwd': self.cwd, 'mode': self.mode,
-                                    'sessionId': session_id or ''}, timeout=90)
+                                    'sessionId': session_id or '',
+                                    'model': self.model}, timeout=90)
         if status != 200:
             raise RuntimeError('远端会话创建失败(%s): %s'
                                % (status, data.get('error') or data))
@@ -291,6 +351,7 @@ def remoteClientFactory(task):
     """按任务生成与 KimiAcp 同签名的客户端工厂（cwd 换成远端目录）。"""
     node = task.get('node') or ''
     remoteCwd = task.get('remoteCwd') or ''
+    taskModel = task.get('model') or ''
 
     def factory(cwd, on_update=None, on_permission=None,
                 mode='auto', prompt_timeout=0):
@@ -298,7 +359,7 @@ def remoteClientFactory(task):
                                on_update=on_update,
                                on_permission=on_permission,
                                mode=mode, prompt_timeout=prompt_timeout,
-                               node=node)
+                               node=node, model=taskModel)
     return factory
 
 
@@ -317,6 +378,7 @@ def clientFactoryFor(task):
     """
     from modules.kimi_acp import KimiAcp
     engine = (task.get('engine') or 'acp').lower()
+    taskModel = task.get('model') or ''
     if engine == 'remote':
         nodeName = task.get('node') or ''
         if findFederationMember(nodeName) is not None:
@@ -330,7 +392,8 @@ def clientFactoryFor(task):
                     on_permission=on_permission,
                     mode=task.get('mode') or mode,
                     prompt_timeout=prompt_timeout,
-                    member=nodeName, first_prompt=firstPrompt)
+                    member=nodeName, first_prompt=firstPrompt,
+                    model=taskModel)
             return fedFactory
         return remoteClientFactory(task)
     local = config.getLocalAgentNode()
@@ -343,9 +406,16 @@ def clientFactoryFor(task):
                                    on_update=on_update,
                                    on_permission=on_permission,
                                    mode=mode, prompt_timeout=prompt_timeout,
-                                   node=nodeName)
+                                   node=nodeName, model=taskModel)
         return factory
-    return KimiAcp
+
+    def stdioFactory(cwd, on_update=None, on_permission=None,
+                     mode='auto', prompt_timeout=0):
+        return KimiAcp(cwd=cwd, on_update=on_update,
+                       on_permission=on_permission,
+                       mode=mode, prompt_timeout=prompt_timeout,
+                       model=taskModel)
+    return stdioFactory
 
 
 def _remoteSessionThread(task, manifest):

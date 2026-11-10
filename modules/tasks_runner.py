@@ -217,7 +217,9 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             task['resume'] = True
             task['startedAt'] = task.get('startedAt') or store._now()
             store.repo.save()
-        store.repo.append_event(task, 'status', text='会话已接续' if resume else 'ACP 会话已建立')
+        store.repo.append_event(task, 'status',
+                     text='会话已接续' if resume else 'ACP 会话已建立',
+                     **({'model': task['model']} if task.get('model') else {}))
         if resume:
             _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
             if firstMessage:

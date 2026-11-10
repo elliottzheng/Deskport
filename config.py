@@ -45,12 +45,16 @@ def getRemotes():
             continue
         apps = item.get('apps')
         apps = [str(a).strip() for a in apps if str(a).strip()] if isinstance(apps, list) else []
+        models = item.get('models')
+        models = [str(a).strip() for a in models if str(a).strip()] if isinstance(models, list) else []
         out.append({'id': rid,
                     'name': str(item.get('name') or rid)[:24],
                     'base': base,
                     'token': str(item.get('token') or ''),
                     'terminal': item.get('terminal', True) is not False,
-                    'apps': apps})
+                    'apps': apps,
+                    'models': models,
+                    'model': str(item.get('model') or '').strip()})
     return out
 
 
@@ -208,8 +212,22 @@ def getAgentNodes():
                     'url': url,
                     'token': str(item.get('token') or ''),
                     'via': str(item.get('via') or '').strip(),
-                    'remote': str(item.get('remote') or '').strip()})
+                    'remote': str(item.get('remote') or '').strip(),
+                    'models': _strList(item.get('models')),
+                    'model': str(item.get('model') or '').strip()})
     return out
+
+
+def _strList(raw):
+    """配置里的模型白名单：字符串数组，去空去重。"""
+    if not isinstance(raw, list):
+        return []
+    seen = []
+    for item in raw:
+        text = str(item or '').strip()
+        if text and text not in seen:
+            seen.append(text)
+    return seen
 
 
 def getSessiondPort(kind='local'):
@@ -271,7 +289,9 @@ def getLocalAgentNode():
     if port <= 0:
         return None
     return {'name': 'local', 'url': 'http://127.0.0.1:%d' % port,
-            'token': getAgentNodeToken(), 'via': '', 'remote': ''}
+            'token': getAgentNodeToken(), 'via': '', 'remote': '',
+            'models': _strList(load().get('localAgentNodeModels')),
+            'model': str(load().get('localAgentNodeModel') or '').strip()}
 
 
 def getLocalAgentNodePort():

@@ -69,6 +69,10 @@ def createTask():
     mode = (data.get('mode') or 'default').lower()
     if mode not in ('auto', 'default', 'plan', 'yolo'):
         return jsonify({'error': 'mode 只能是 auto / default / plan / yolo'}), 400
+    model = str(data.get('model') or '').strip()
+    if model:
+        if len(model) > 100 or any(c < ' ' for c in model):
+            return jsonify({'error': 'model 不合法（≤100 字符，无控制字符）'}), 400
     node = ''
     remoteCwd = ''
     if engine == 'remote':
@@ -90,6 +94,12 @@ def createTask():
     elif data.get('cwd'):
         return jsonify({'error': 'engine=acp 不接受 cwd（本机任务固定运行在'
                                  '独立工作区，输入文件用 paths 传入）'}), 400
+    # 模型白名单：执行点声明了可选列表时必须命中（§7.1 按活的性质挑模型）
+    decl = agent_nodes.nodeModelDecl(node or ('local' if engine == 'acp' else ''))
+    if model and decl['models'] and model not in decl['models']:
+        return jsonify({'error': '执行点 %s 不支持模型 %s' % (decl['name'], model),
+                        'models': decl['models'],
+                        'defaultModel': decl['default']}), 400
     with store.repo.lock:
         active = sum(1 for t in store.repo.list() if t.get('status') == 'running')
         if active >= runner.MAX_RUNNING:
@@ -114,7 +124,7 @@ def createTask():
         'createdAt': store._now(), 'startedAt': 0, 'endedAt': 0,
         'seq': 0, 'events': [], 'lastText': '',
         'resultFiles': [], 'error': '', 'sessionId': '', 'engine': engine,
-        'mode': mode, 'resume': False, 'closedByUser': False,
+        'mode': mode, 'model': model, 'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
         'node': node, 'remoteCwd': remoteCwd,
         'sources': manifest,
@@ -126,7 +136,8 @@ def createTask():
     tokenName = getattr(g, 'agentTokenName', '')
     if tokenName:
         # 外部智能体经令牌通道建任务: 写系统审计（任务卡事件之外独立留痕）
-        events.log('agent.task.create', tokenName, 'ok', prompt[:160],
+        detail = prompt[:160] + (' · model=%s' % model if model else '')
+        events.log('agent.task.create', tokenName, 'ok', detail,
                    request.remote_addr)
     runner._startTask(task, manifest)
     return jsonify({'task': store.repo.summary(task)}), 202

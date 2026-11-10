@@ -49,7 +49,8 @@ def test_set_remotes_roundtrip(cfgfile):
     assert config.getRemotes() == [{'id': 'win4710', 'name': 'i7-4710MQ',
                                     'base': 'http://10.126.126.3:6789',
                                     'token': 'vn1WdB7IAKfd',
-                                    'terminal': True, 'apps': []}]   # 策略缺省: 接终端, 不接应用
+                                    'terminal': True, 'apps': [],
+                                    'models': [], 'model': ''}]   # 策略缺省: 接终端, 不接应用, 模型未声明
     # 其他配置键保留
     assert json.loads(cfgfile.read_text(encoding='utf-8'))['port'] == 6788
     assert federation.machineOptions() == [

@@ -209,6 +209,7 @@ class TaskRepository:
             'resultFiles': task.get('resultFiles', []),
             'error': task.get('error', ''),
             'mode': task.get('mode') or 'auto',
+            'model': task.get('model') or '',
             'node': task.get('node') or '',
             'remoteCwd': remoteCwd,
             'resume': bool(task.get('resume')),

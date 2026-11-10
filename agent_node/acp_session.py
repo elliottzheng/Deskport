@@ -14,6 +14,26 @@ MAX_EVENTS = 5000
 PERMISSION_TIMEOUT = 900          # node 端兜底；Deskport 端 300s 先到
 IDLE_KILL_SECONDS = 45 * 60       # 空闲进程回收；会话可 resume，不丢上下文
 CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
+KIMI_CONFIG_PATH = os.path.join(os.path.expanduser('~'), '.kimi-code',
+                                'config.toml')
+
+
+def discoverModels(configPath=None):
+    """从 kimi CLI 的 config.toml 枚举可选模型（反馈 §7.2 自动发现）。
+
+    返回 {models: [别名...], default: 别名}；文件缺失/损坏返回空，
+    由调用方按"节点未声明模型"处理。
+    """
+    path = configPath or KIMI_CONFIG_PATH
+    try:
+        import tomllib
+        with open(path, 'rb') as f:
+            data = tomllib.load(f)
+    except (OSError, ValueError):
+        return {'models': [], 'default': ''}
+    raw = data.get('models')
+    models = sorted(str(k) for k in raw.keys()) if isinstance(raw, dict) else []
+    return {'models': models, 'default': str(data.get('default_model') or '')}
 
 
 def nowMs():
@@ -59,12 +79,13 @@ class Ring:
 class AcpSession:
     """托管一个 kimi acp 子进程；update 透传进 ring，权限请求挂起等决策。"""
 
-    def __init__(self, sid, cwd, mode, kimi_bin, title=''):
+    def __init__(self, sid, cwd, mode, kimi_bin, title='', model=''):
         self.sid = sid
         self.cwd = cwd
         self.mode = mode
         self.kimi_bin = kimi_bin
         self.title = (title or '')[:60]
+        self.model = str(model or '').strip()
         self.kimi_session_id = None
         self.created_at = nowMs()
         self.last_active = nowMs()
@@ -204,8 +225,12 @@ class AcpSession:
 
     # ---- lifecycle ----
     def start(self, resume_session_id=None):
+        cmd = [self.kimi_bin]
+        if self.model:
+            cmd += ['--model', self.model]
+        cmd.append('acp')
         self.proc = subprocess.Popen(
-            [self.kimi_bin, 'acp'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace',
             bufsize=1, cwd=self.cwd, creationflags=CREATE_NO_WINDOW)
         threading.Thread(target=self._readLoop, daemon=True).start()
@@ -324,7 +349,8 @@ class AcpSession:
 
     def meta(self):
         return {'sid': self.sid, 'cwd': self.cwd, 'mode': self.mode,
-                'title': self.title, 'kimiSessionId': self.kimi_session_id,
+                'title': self.title, 'model': self.model,
+                'kimiSessionId': self.kimi_session_id,
                 'createdAt': self.created_at, 'running': self.running,
                 'dead': self.dead, 'exitCode': self.exit_code,
                 'seq': self.ring.seq(), 'lastActive': self.last_active}

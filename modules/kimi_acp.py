@@ -23,11 +23,12 @@ class AcpError(Exception):
 
 class KimiAcp:
     def __init__(self, cwd, on_update=None, on_permission=None,
-                 mode='auto', prompt_timeout=1800):
+                 mode='auto', prompt_timeout=1800, model=''):
         self.cwd = cwd
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or self._defaultPermission
         self.mode = mode
+        self.model = str(model or '').strip()
         self.prompt_timeout = prompt_timeout
         self.proc = None
         self.session_id = None
@@ -149,8 +150,12 @@ class KimiAcp:
                 break
         if not kimi:
             raise AcpError('找不到 kimi 命令')
+        cmd = [kimi]
+        if self.model:
+            cmd += ['--model', self.model]
+        cmd.append('acp')
         self.proc = subprocess.Popen(
-            [kimi, 'acp'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding='utf-8',
             errors='replace', bufsize=1, cwd=self.cwd,
             creationflags=CREATE_NO_WINDOW)
