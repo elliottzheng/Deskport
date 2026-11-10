@@ -413,6 +413,29 @@ def test_audit_written_for_exec(env, monkeypatch):
     assert 'agent.exec' in actions
 
 
+# ---- 技能分发（第二轮反馈：skills 路由 500 回归——import os 缺失曾漏网）----
+
+def test_skills_list_and_get(env):
+    """skills 路由必须可用且返回真实 SKILL.md 内容。"""
+    H = {'X-Agent-Token': TOKEN}
+    resp = env.client.get('/api/agent/skills', headers=H)
+    assert resp.status_code == 200
+    skills = resp.get_json()['skills']
+    names = [s['name'] for s in skills]
+    assert 'deskport' in names
+    assert all(s['size'] > 0 for s in skills)
+
+    resp = env.client.get('/api/agent/skills/deskport', headers=H)
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert 'deskport' in body['content']
+    assert body['name'] == 'deskport'
+
+    resp = env.client.get('/api/agent/skills/no-such-skill', headers=H)
+    assert resp.status_code == 404
+    assert resp.is_json and 'available' in resp.get_json()
+
+
 # ---- 反馈专项: SFTP 语义（§2.1 / §3.10 / §4）----
 
 def test_sftp_put_rejects_bad_base64_without_touching_file(env, monkeypatch):

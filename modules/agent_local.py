@@ -90,22 +90,30 @@ def _psEncode(script):
 
 
 _PS_PREFIX = ('$ErrorActionPreference="Continue";'
+              '$ProgressPreference="SilentlyContinue";'
               '[Console]::OutputEncoding=[Text.UTF8Encoding]::new();')
 _PS_SUFFIX = '\nif ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE } else { exit 0 }\n'
 
 
 def _buildLocalCmd(command, shell):
-    """本地子进程参数。bash 直接传；PS 走 -EncodedCommand 免引号地狱，
-    服务端统一 UTF-8 输出并把 $LASTEXITCODE 收敛为进程退出码。"""
+    """本地子进程参数。bash 直接传；PS 走 -EncodedCommand 免引号地狱。
+
+    PowerShell 5.1 在输出重定向时：默认把进度流序列化成 CLIXML 噪音进
+    stderr（ProgressPreference 压掉）；且 exit 语句会终止在对象格式化器
+    之前——`Get-Location` 这类对象输出被整个吞掉（字符串没事）。因此命令
+    包进 `& { ... } | Out-Default`：格式化在管道内同步完成，exit 前已落盘；
+    `$LASTEXITCODE` 仍穿透为进程退出码。"""
     if shell == 'bash':
         bash = _findBash()
         if not bash:
             return None, '本机找不到 bash（Git Bash）'
         return [bash, '-c', command], None
     exe = 'powershell' if shell == 'powershell' else 'pwsh'
-    encoded = _psEncode(_PS_PREFIX + '\n' + command + _PS_SUFFIX)
-    return [exe, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-            '-EncodedCommand', encoded], None
+    script = (_PS_PREFIX + '\n& {\n' + command + '\n} | Out-Default' + _PS_SUFFIX)
+    encoded = _psEncode(script)
+    argv = [exe, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-OutputFormat', 'Text', '-EncodedCommand', encoded]
+    return argv, None
 
 
 def _killTree(pid):
@@ -429,7 +437,8 @@ def agentLocalExec():
     body = {'exit': result['exit'], 'timedOut': result['timedOut'],
             'reason': result['reason'], 'outTruncated': result['truncated'],
             'durationMs': result['durationMs'], 'timeoutSec': timeoutSec,
-            'pid': result['pid']}
+            'pid': result['pid'], 'shell': shell,
+            'cwd': normalizeLocalPath(cwd) if cwd else ''}
     if encoding == 'base64':
         body['outB64'] = base64.b64encode(result['out'][:MAX_OUTPUT_BYTES]).decode('ascii')
         body['errB64'] = base64.b64encode(result['err'][:MAX_OUTPUT_BYTES]).decode('ascii')

@@ -120,6 +120,36 @@ def test_local_exec_powershell_chinese_output(env):
     assert '\ufffd' not in body['out']
 
 
+def test_local_exec_powershell_no_clixml_noise(env):
+    """第二轮反馈 §4：stderr 不再有 CLIXML/进度序列化噪音。"""
+    body = post(env, '/api/agent/ssh/exec',
+                {'host': 'local', 'shell': 'powershell',
+                 'command': 'Write-Output hi'}).get_json()
+    assert 'CLIXML' not in body['err']
+    assert 'Preparing modules' not in body['err']
+
+
+def test_local_exec_powershell_object_output_not_swallowed(env):
+    """第二轮反馈 §5.4：PS 对象格式化输出（Get-Location 等）不被吞。"""
+    body = post(env, '/api/agent/ssh/exec',
+                {'host': 'local', 'shell': 'powershell',
+                 'command': 'Get-Location; $PSVersionTable.PSVersion.ToString()'}).get_json()
+    assert body['out'].strip() != ''      # 不再只有 \r\n
+    assert len(body['out'].strip()) > 3
+
+
+def test_local_exec_echoes_shell(env):
+    """第二轮反馈 §5.2：响应回显实际使用的 shell 与规范化 cwd。"""
+    body = post(env, '/api/agent/local/exec',
+                {'host': 'local', 'shell': 'powershell', 'cwd': '/e/事项/远程',
+                 'command': 'Set-Location E:\\事项\\远程'}).get_json()
+    assert body['shell'] == 'powershell'
+    assert body['cwd'] == 'E:\\事项\\远程'
+    body = post(env, '/api/agent/ssh/exec',
+                {'host': 'local', 'command': 'echo x'}).get_json()
+    assert body['shell'] == 'bash'
+
+
 def test_local_exec_shell_whitelist(env):
     resp = post(env, '/api/agent/ssh/exec',
                 {'host': 'local', 'shell': 'zsh', 'command': 'x'})
