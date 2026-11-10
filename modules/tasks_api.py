@@ -544,7 +544,10 @@ def closeTask(task, taskId):
         runner._denyPendingPermission(agent)
         agent['queue'].put({'type': 'close'})
         client = agent.get('client')
-        if isinstance(client, KimiAcp):
+        # 三类客户端（KimiAcp/RemoteAcpClient/FederationTaskClient）都有
+        # cancel：不主动掐断回合，Kimi 会在权限被拒后继续尝试别的做法，
+        # 任务就长时间停在 running（R4 验收：871e615e3416）
+        if client is not None and hasattr(client, 'cancel'):
             try:
                 client.cancel()
             except Exception:

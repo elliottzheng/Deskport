@@ -1070,3 +1070,103 @@ def test_create_wait_maps_running_when_queued(env):
     body = resp.get_json()
     assert body['status'] == 'running'
     assert body['lastSeq'] >= 1
+
+
+# ---- R4 验收回归：真实事件形状（JSON 字符串 rawInput + 权限请求缺 rawInput）----
+
+def test_policy_real_chain_string_args_and_missing_rawinput(env):
+    """真实 Kimi 链路：tool_call 的 rawInput 是 JSON 字符串，权限请求不带
+    rawInput——按 callId 回查并解析成对象后判定，args 回显对象。"""
+    from modules.tasks_runner import _handleAcpPermission, _handleAcpUpdate
+    tid = create(env, {'prompt': '先执行 echo r4-e2e', 'policy': POLICY}) \
+        .get_json()['task']['id']
+    task, agent = _adoptEnv(env, tid)
+    realUpdate = {'sessionUpdate': 'tool_call', 'toolCallId': '0:call_172f',
+                  'title': 'Bash', 'kind': 'execute',
+                  'rawInput': json.dumps({'command': 'echo r4-e2e',
+                                          'description': 'x'})}
+    _handleAcpUpdate(task, realUpdate)
+    params = {'toolCall': {'toolCallId': '0:call_172f', 'title': 'Bash'},
+              'options': [{'optionId': 'opt-allow', 'name': '允许',
+                           'kind': 'allow_once'}]}
+    assert _handleAcpPermission(task, agent, params, 'req-x') == 'opt-allow'
+    types = [e['type'] for e in task['events']]
+    assert 'auto_approved' in types and 'permission_request' not in types
+    approved = [e for e in task['events'] if e['type'] == 'auto_approved'][0]
+    assert approved['callId'] == '0:call_172f'
+
+
+def test_permission_request_args_filled_from_callid_string(env):
+    """判定不命中（走挂起）时，permission_request 事件的 args 也是解析后的对象。"""
+    from modules.tasks_runner import _handleAcpPermission, _handleAcpUpdate
+    tid = create(env, {'prompt': 'x', 'policy': POLICY}).get_json()['task']['id']
+    task, agent = _adoptEnv(env, tid)
+    _handleAcpUpdate(task, {'sessionUpdate': 'tool_call',
+                            'toolCallId': '0:call_173a', 'title': 'Bash',
+                            'kind': 'execute',
+                            'rawInput': json.dumps({'command': 'curl http://127.0.0.1:6789/health'})})
+    params = {'toolCall': {'toolCallId': '0:call_173a', 'title': 'Bash'},
+              'options': [{'optionId': 'o1', 'name': '允许', 'kind': 'allow_once'}]}
+    _approveSoon(agent, 'o1')   # handler 会重建 decision：必须走它自己的协议
+    value = _handleAcpPermission(task, agent, params, 'req-y')
+    assert value == 'o1'
+    ev = [e for e in task['events'] if e['type'] == 'permission_request'][0]
+    assert ev['args'] == {'command': 'curl http://127.0.0.1:6789/health'}
+
+
+def test_close_while_permission_pending_settles_closed(env):
+    """挂起审批时 close：cancel 掐断回合 → 任务落 CLOSED → 进程回收。"""
+    import threading as _th
+    import time as _time
+    from modules import tasks_runner as runner
+    calls = []
+
+    class BlockingClient:
+        def __init__(self, cwd, on_update=None, on_permission=None,
+                     mode='auto', prompt_timeout=0, model=''):
+            self.on_permission = on_permission
+            self._decision = __import__('threading').Event()
+
+        def start(self, session_id=None):
+            return 'sess-p1'
+
+        def prompt(self, text, timeout=None):
+            opt = self.on_permission(
+                {'toolCall': {'toolCallId': 'c1', 'title': 'Bash',
+                              'kind': 'execute',
+                              'rawInput': {'command': 'echo x'}},
+                 'options': [{'optionId': 'o1', 'name': '允许',
+                              'kind': 'allow_once'}]}, 'req-p1')
+            self._decision.wait(10)
+            return {'stopReason': 'end_turn'}
+
+        def set_mode(self, mode):
+            pass
+
+        def cancel(self):
+            calls.append('cancel')
+            self._decision.set()
+
+        def close(self):
+            calls.append('close')
+
+        def shutdown(self):
+            calls.append('shutdown')
+
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    _th.Thread(target=runner._sessionThread, args=(task, []),
+               kwargs={'clientFactory': BlockingClient}, daemon=True).start()
+    for _ in range(60):
+        with env.repo.lock:
+            if task.get('pendingPermission'):
+                break
+        _time.sleep(0.1)
+    resp = env.client.post('/api/tasks/%s/close' % tid, headers=H)
+    assert resp.get_json()['status'] == 'closed'   # 不再长时间停留 running
+    assert set(calls) == {'cancel', 'close', 'shutdown'}
+    with env.repo.lock:
+        assert env.repo.get(tid)['status'] == 'closed'
+        assert env.repo.get(tid)['pendingPermission'] == ''

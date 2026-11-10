@@ -65,8 +65,14 @@ def _handleAcpUpdate(task, update):
         argsText = json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args
         with store.repo.lock:
             # 审批事件要能对回工具调用（反馈 §3.4）：ACP 的 permission 请求
-            # 不带 toolCallId 时，退而取最近一次 tool_call；rawArgs 保留对象
-            # 供审批边界（R4-1/R4-2）与审批事件回显
+            # 常不带 rawInput——按 callId 回查原始参数（对象/字符串原样保留），
+            # 兜底再取最近一次 tool_call；_lastToolCall.args 是序列化文本
+            byCall = task.setdefault('_toolArgs', {})
+            if callId:
+                byCall[callId] = args
+                if len(byCall) > 50:
+                    for k in list(byCall.keys())[:-50]:
+                        byCall.pop(k)
             task['_lastToolCall'] = {'callId': callId,
                                      'name': update.get('title') or '',
                                      'args': argsText[:2000],
@@ -127,11 +133,24 @@ def _handleAcpPermission(task, agent, params, requestId):
     rawInput = tool.get('rawInput')
     with store.repo.lock:
         last = task.get('_lastToolCall') or {}
-    if rawInput is None:
+        byCall = (task.get('_toolArgs') or {}).get(callId) if callId else None
+    # 真实链路（R4 验收）：Kimi 的 request_permission 常不带 rawInput，
+    # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，
+    # 字符串统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉
+    if not rawInput and byCall is not None:
+        rawInput = byCall
+    if not rawInput:
         callId = callId or last.get('callId') or ''
         rawInput = last.get('rawArgs')
-    if rawInput is None:
+    if not rawInput:
         rawInput = last.get('args') or ''
+    if isinstance(rawInput, str) and rawInput.strip()[:1] in ('{', '['):
+        try:
+            parsed = json.loads(rawInput.strip())
+            if isinstance(parsed, dict):
+                rawInput = parsed
+        except ValueError:
+            pass
     # 审批事件自带被审批调用的参数（对象优先），name=工具名（反馈 §1）
     argsForEvent = rawInput if isinstance(rawInput, (dict, list)) \
         else str(rawInput or '')
