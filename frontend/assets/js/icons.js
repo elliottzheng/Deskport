@@ -15,6 +15,7 @@ window.Icons = (function () {
         folder: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.5h8.4A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-12z"/>',
         play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5z"/>',
         plug: '<path d="M17.5 3.5c2 2 2 5 0 7L14 14l-2-2 3.5-3.5c1-1 1-2.5 0-3.5z"/><path d="M14 14l-4-4"/>',
+        remote: '<rect x="2" y="4" width="14.5" height="10" rx="2"/><path d="M7.5 18h3.5M9.25 14v4"/><rect x="17.5" y="9.5" width="4.5" height="9" rx="1.3"/>',
         star: '<path d="M12 3.8l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8z"/>',
         home: '<path d="M3 11.5l9-7.5 9 7.5M5.5 9.5V20h13V9.5"/>',
         drives: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
