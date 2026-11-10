@@ -97,7 +97,9 @@ def createTask():
                                  '独立工作区，输入文件用 paths 传入）'}), 400
     # 接手已有 Kimi CLI 会话（第二轮反馈 §2）：默认先 fork 复制，
     # 避免与用户开着的终端并发写同一会话；fork:false 且会话未被占用才直接接管
-    kimiSessionId = str(data.get('kimiSessionId') or '').strip()
+    kimiSessionId = str(data.get('kimiSessionId') or '').strip()   # 用户传的原会话
+    kimiSessionFork = False
+    loadedSessionId = ''                                           # 实际加载的会话
     if kimiSessionId:
         if engine != 'acp':
             return jsonify({'error': 'kimiSessionId 仅 engine=acp（本机 Kimi）'
@@ -108,9 +110,11 @@ def createTask():
         fork = data.get('fork', True)
         if isinstance(fork, str):
             fork = fork.strip().lower() != 'false'
+        kimiSessionFork = bool(fork)
+        loadedSessionId = kimiSessionId
         if fork:
             try:
-                kimiSessionId = kimi_acp.forkSession(kimiSessionId)
+                loadedSessionId = kimi_acp.forkSession(kimiSessionId)
             except RuntimeError as e:
                 return jsonify({'error': str(e),
                                 'hint': '会话可能正被占用（先关掉那个终端）或不存在'}), 400
@@ -118,7 +122,7 @@ def createTask():
             store.repo.load()
             with store.repo.lock:
                 live = [t for t in store.repo.list()
-                        if t.get('sessionId') == kimiSessionId
+                        if t.get('sessionId') == loadedSessionId
                         and t.get('status') in ('queued', 'running', 'waiting')]
             if live:
                 return jsonify({'error': '该会话已被任务 %s 接管，不能再次直接接管'
@@ -130,6 +134,8 @@ def createTask():
         return jsonify({'error': '执行点 %s 不支持模型 %s' % (decl['name'], model),
                         'models': decl['models'],
                         'defaultModel': decl['default']}), 400
+    # 实际生效的模型：用户没传就落执行点默认（可追溯"这个结论是哪个模型给的"）
+    modelEffective = model or decl['default']
     with store.repo.lock:
         active = sum(1 for t in store.repo.list() if t.get('status') == 'running')
         if active >= runner.MAX_RUNNING:
@@ -157,9 +163,11 @@ def createTask():
         'prompt': prompt, 'workspace': workspace, 'status': 'queued',
         'createdAt': store._now(), 'startedAt': 0, 'endedAt': 0,
         'seq': 0, 'events': [], 'lastText': '',
-        'resultFiles': [], 'error': '', 'sessionId': kimiSessionId,
-        'engine': engine, 'kimiSessionLoad': bool(kimiSessionId),
-        'mode': mode, 'model': model, 'resume': False, 'closedByUser': False,
+        'resultFiles': [], 'error': '', 'sessionId': loadedSessionId,
+        'engine': engine, 'kimiSessionId': kimiSessionId,
+        'kimiSessionFork': kimiSessionFork,
+        'mode': mode, 'model': model, 'modelEffective': modelEffective,
+        'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
         'node': node, 'remoteCwd': remoteCwd,
         'sources': manifest,

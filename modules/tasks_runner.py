@@ -218,7 +218,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             task['startedAt'] = task.get('startedAt') or store._now()
             store.repo.save()
         store.repo.append_event(task, 'status',
-                     text=('已接手既有 Kimi 会话' if task.get('kimiSessionLoad')
+                     text=('已接手既有 Kimi 会话' if task.get('kimiSessionId')
                            else '会话已接续' if resume else 'ACP 会话已建立'),
                      **({'model': task['model']} if task.get('model') else {}))
         if resume:

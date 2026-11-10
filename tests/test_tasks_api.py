@@ -29,6 +29,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, 'repo', repo)
     monkeypatch.setattr(store, 'taskRoot', lambda: str(tmp_path / 'root'))
     monkeypatch.setattr(tasks_api.runner, '_startTask', lambda t, m: None)
+    # 健康模型缓存：给"新鲜空值"——既不触发后台探测线程（真实网络），
+    # 也杜绝跨测试互相污染
+    import time as _time
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, '_healthModels',
+                        {'at': _time.monotonic(), 'data': {}})
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
     return SimpleNamespace(client=app.test_client(), repo=repo, tmp=tmp_path)
@@ -456,8 +462,75 @@ def test_task_adopts_kimi_session_with_fork(env, monkeypatch):
     tid = resp.get_json()['task']['id']
     assert calls['forked'] == _sid('a')
     with env.repo.lock:
-        assert env.repo.get(tid)['sessionId'] == newId
-        assert env.repo.get(tid)['kimiSessionLoad'] is True
+        task = env.repo.get(tid)
+        assert task['sessionId'] == newId
+        assert task['kimiSessionId'] == _sid('a')   # 第三轮：原会话保留
+        assert task['kimiSessionFork'] is True
+
+
+def test_task_adoption_provenance_in_summary(env, monkeypatch):
+    """第三轮反馈 §1：详情/列表能看出接手来源（原会话/副本/fork 与否）。"""
+    newId = _sid('b')
+    monkeypatch.setattr(tasks_api.kimi_acp, 'forkSession',
+                        lambda sid, timeout=90: newId)
+    resp = create(env, {'prompt': 'x', 'kimiSessionId': _sid('a')})
+    tid = resp.get_json()['task']['id']
+    detail = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
+    assert detail['kimiSessionId'] == _sid('a')
+    assert detail['sessionId'] == newId
+    assert detail['kimiSessionFork'] is True
+    lst = env.client.get('/api/tasks', headers=H).get_json()['tasks']
+    mine = [t for t in lst if t['id'] == tid][0]
+    assert mine['kimiSessionId'] == _sid('a')
+    assert mine['kimiSessionFork'] is True
+
+
+def test_task_adoption_takeover_fields(env):
+    """fork:false 直接接管：sessionId 即原会话，fork 标记为 False。"""
+    orig = _sid('e')
+    resp = create(env, {'prompt': 'x', 'kimiSessionId': orig, 'fork': False})
+    assert resp.status_code == 202
+    detail = env.client.get('/api/tasks/%s' % resp.get_json()['task']['id'],
+                            headers=H).get_json()['task']
+    assert detail['sessionId'] == orig
+    assert detail['kimiSessionId'] == orig
+    assert detail['kimiSessionFork'] is False
+
+
+def test_model_effective_recorded(env, monkeypatch):
+    """第三轮反馈 §2：model=用户传的，modelEffective=实际生效（含默认回填）。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'nodeModelDecl',
+                        lambda name='': {'name': 'local', 'models': ['m1'],
+                                         'default': 'm1'})
+    resp = create(env, {'prompt': 'x'})
+    t = resp.get_json()['task']
+    assert t['model'] == '' and t['modelEffective'] == 'm1'
+    resp = create(env, {'prompt': 'x', 'model': 'm1'})
+    t = resp.get_json()['task']
+    assert t['model'] == 'm1' and t['modelEffective'] == 'm1'
+
+
+def test_federation_member_models_discovered(monkeypatch):
+    """第三轮反馈 §3：成员模型经其 nodes 接口自动发现（不再只看声明）。"""
+    import modules.agent_nodes as nodesMod
+    import modules.tasks_federation as fedMod
+    monkeypatch.setattr(nodesMod.config, 'getAgentNodes', lambda: [])
+    monkeypatch.setattr(nodesMod.config, 'getLocalAgentNode', lambda: None)
+    monkeypatch.setattr(nodesMod.config, 'getRemotes', lambda: [
+        {'id': 'win4710', 'name': 'win4710', 'base': 'http://10.126.126.3:6789',
+         'token': 't', 'terminal': True, 'apps': [], 'models': [], 'model': ''}])
+
+    def fakeMemberCall(member, method, path, payload=None, timeout=20):
+        assert method == 'GET' and path == '/api/tasks/nodes'
+        return 200, {'nodes': [{'name': 'local', 'models': ['m-b'],
+                                'defaultModel': 'm-b', 'modelSelectable': True}]}
+    monkeypatch.setattr(fedMod, '_memberCall', fakeMemberCall)
+    nodesMod._refreshHealthModels()
+    cached = nodesMod._healthModelsCached(maxAgeSec=9999)
+    assert cached['win4710']['models'] == ['m-b']
+    models, default = nodesMod.nodeModelsFor('win4710')
+    assert models == ['m-b'] and default == 'm-b'
 
 
 def test_task_adopt_fork_failure_is_400_with_reason(env, monkeypatch):

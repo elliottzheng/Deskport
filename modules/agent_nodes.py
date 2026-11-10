@@ -53,7 +53,11 @@ _healthModelsLock = threading.Lock()
 
 
 def _refreshHealthModels():
-    """拉取各 node /health 的 models 字段（新版 node 自动上报 kimi 模型清单）。"""
+    """拉取各 node /health 的 models 字段（新版 node 自动上报 kimi 模型清单）。
+
+    联邦成员额外查它自己的 /api/tasks/nodes——成员的 local 节点模型即
+    成员可提供的模型（第三轮反馈：i7-4710MQ 之前一直 selectable=false）。
+    """
     result = {}
     targets = list(config.getAgentNodes())
     local = config.getLocalAgentNode()
@@ -67,6 +71,19 @@ def _refreshHealthModels():
         if status == 200 and isinstance(data, dict):
             result[node['name']] = {'models': data.get('models') or [],
                                     'default': data.get('defaultModel') or ''}
+    for member in config.getRemotes():
+        try:
+            from modules.tasks_federation import _memberCall
+            status, data = _memberCall(member, 'GET', '/api/tasks/nodes',
+                                       timeout=8)
+        except Exception:
+            continue
+        if status == 200 and isinstance(data, dict):
+            own = next((n for n in data.get('nodes') or []
+                        if n.get('name') == 'local'), None)
+            if own and (own.get('models') or own.get('defaultModel')):
+                result[member['name']] = {'models': own.get('models') or [],
+                                          'default': own.get('defaultModel') or ''}
     with _healthModelsLock:
         _healthModels['data'] = result
         _healthModels['at'] = time.monotonic()

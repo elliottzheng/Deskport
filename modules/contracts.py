@@ -39,8 +39,12 @@ class TaskSummary(TypedDict):
     lastText: str
     resultFiles: list[dict]
     error: str
+    sessionId: str
     mode: str
     model: str
+    modelEffective: str
+    kimiSessionId: str
+    kimiSessionFork: bool
     node: str
     remoteCwd: str
     resume: bool
