@@ -144,11 +144,17 @@ class AcpSession:
 
     def _handlePermission(self, params, acpReqId):
         requestId = str(acpReqId)
+        toolCall = params.get('toolCall') or {}
         options = [{'optionId': o.get('optionId') or '', 'name': o.get('name') or '',
                     'kind': o.get('kind') or ''}
                    for o in (params.get('options') or []) if isinstance(o, dict)]
+        rawInput = toolCall.get('rawInput')
+        argsText = rawInput if isinstance(rawInput, str) \
+            else json.dumps(rawInput, ensure_ascii=False) if rawInput is not None else ''
         self.ring.append({'type': 'permission_request', 'requestId': requestId,
-                          'title': (params.get('toolCall') or {}).get('title') or '工具调用',
+                          'title': toolCall.get('title') or '工具调用',
+                          'callId': toolCall.get('toolCallId') or '',
+                          'args': argsText[:2000],
                           'options': options})
         decision = {'value': None, 'event': threading.Event()}
         with self._lock:

@@ -196,18 +196,21 @@ class TaskRepository:
 
     def summary(self, task) -> contracts.TaskSummary:
         status = task.get('status', '')
+        remoteCwd = task.get('remoteCwd') or ''
         return {
             'id': task['id'], 'title': task.get('title', ''), 'prompt': task.get('prompt', ''),
             'status': status, 'createdAt': task.get('createdAt', 0),
             'createdLabel': _iso(task.get('createdAt', 0)),
             'startedAt': task.get('startedAt', 0), 'endedAt': task.get('endedAt', 0),
-            'workspace': task.get('workspace', ''), 'engine': task.get('engine', ''),
+            # remote 任务展示远端 cwd（本机 workspace 目录对调用方毫无意义）
+            'workspace': remoteCwd or task.get('workspace', ''),
+            'engine': task.get('engine', ''),
             'lastText': task.get('lastText', ''),
             'resultFiles': task.get('resultFiles', []),
             'error': task.get('error', ''),
             'mode': task.get('mode') or 'auto',
             'node': task.get('node') or '',
-            'remoteCwd': task.get('remoteCwd') or '',
+            'remoteCwd': remoteCwd,
             'resume': bool(task.get('resume')),
             'canContinue': task_state.canContinue(task),
             'canResume': task_state.canResume(task),

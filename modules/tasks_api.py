@@ -40,8 +40,11 @@ def listTasks():
     store.repo.load()
     with store.repo.lock:
         items = sorted(store.repo.list(), key=lambda x: -x.get('createdAt', 0))
+    running = sum(1 for t in items if t.get('status') == 'running')
+    queued = sum(1 for t in items if t.get('status') == 'queued')
     return jsonify({'tasks': [store.repo.summary(t) for t in items[:50]],
-                    'running': store.repo.runningCount()})
+                    'running': running, 'queued': queued,
+                    'countScope': 'all callers (全局)'})
 
 
 @blueprint.route('/api/tasks', methods=['POST'])
@@ -53,27 +56,40 @@ def createTask():
     if not prompt:
         return jsonify({'error': '任务描述不能为空'}), 400
     if len(prompt) > 4000:
-        return jsonify({'error': '任务描述过长'}), 400
+        return jsonify({'error': '任务描述过长（上限 4000 字符）——大文件请先'
+                                 '上传到本机再用 paths 引用'}), 400
     if not isinstance(paths, list) or len(paths) > 20:
         return jsonify({'error': 'paths 必须是数组且不超过 20 项'}), 400
     engine = (data.get('engine') or 'acp').lower()
-    if engine not in ('acp', 'p', 'remote'):
-        return jsonify({'error': 'engine 只能是 acp / p / remote'}), 400
-    mode = (data.get('mode') or 'auto').lower()
+    if engine == 'p':
+        engine = 'acp'   # 已废弃的旧引擎名，按 acp 处理
+    if engine not in ('acp', 'remote'):
+        return jsonify({'error': 'engine 只能是 acp / remote'}), 400
+    # 不传 mode 时逐项审批（安全默认）——要自动批准必须显式传 auto
+    mode = (data.get('mode') or 'default').lower()
     if mode not in ('auto', 'default', 'plan', 'yolo'):
         return jsonify({'error': 'mode 只能是 auto / default / plan / yolo'}), 400
     node = ''
     remoteCwd = ''
     if engine == 'remote':
         node = str(data.get('node') or '').strip()
+        if not node:
+            return jsonify({'error': 'engine=remote 需要 node（执行点名）',
+                            'nodes': agent_nodes.listNodeNames()}), 400
         if agent_nodes.findNode(node) is None \
                 and agent_nodes.findFederationMember(node) is None:
             return jsonify({'error': '执行点不存在（agent node 或联邦成员）',
                             'nodes': agent_nodes.listNodeNames()}), 400
         remoteCwd = str(data.get('cwd') or '').strip()
+        if not remoteCwd:
+            return jsonify({'error': 'engine=remote 需要 cwd（远端工作目录）',
+                            'hint': 'cwd 必须是执行点上已存在的目录'}), 400
         if len(remoteCwd) > 500:
             return jsonify({'error': 'cwd 过长'}), 400
         paths = []   # 远端任务不接受本机文件，跨机传输不在本引擎范围
+    elif data.get('cwd'):
+        return jsonify({'error': 'engine=acp 不接受 cwd（本机任务固定运行在'
+                                 '独立工作区，输入文件用 paths 传入）'}), 400
     with store.repo.lock:
         active = sum(1 for t in store.repo.list() if t.get('status') == 'running')
         if active >= runner.MAX_RUNNING:
@@ -128,11 +144,12 @@ def getTask(task, taskId):
 @blueprint.route('/api/tasks/<taskId>/events')
 @taskRoute
 def taskEvents(task, taskId):
-    after = 0
+    # after 与 since 等价接受（外部反馈：手册写 since 实现是 after，别为难调用方）
+    after = request.args.get('after') or request.args.get('since') or 0
     try:
-        after = int(request.args.get('after') or 0)
+        after = int(after)
     except ValueError:
-        pass
+        after = 0
     events = [e for e in task.get('events', []) if e.get('seq', 0) > after]
     return jsonify({'status': task.get('status'), 'events': events,
                     'lastText': task.get('lastText', ''),
@@ -210,7 +227,7 @@ def cancelTask(task, taskId):
     task_state.transition(task, task_state.TaskState.CANCELLED)
     task['endedAt'] = store._now()
     store.repo.append_event(task, 'status', text='任务已取消')
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'status': task.get('status')})
 
 
 @blueprint.route('/api/tasks/<taskId>/message', methods=['POST'])
@@ -319,10 +336,21 @@ def closeTask(task, taskId):
                 client.cancel()
             except Exception:
                 pass
+        # 等托管线程落地终态（通常瞬时）；超时也如实返回当前状态
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            store.repo.load()
+            with store.repo.lock:
+                status = task.get('status') or ''
+            if status in ('closed', 'cancelled', 'failed', 'paused',
+                          'interrupted'):
+                break
+            time.sleep(0.2)
     else:
         task_state.transition(task, task_state.TaskState.CLOSED)
         task['endedAt'] = store._now()
         store.repo.append_event(task, 'status', text='会话已结束')
+    # close 语义：返回的就是终态（已 cancel 的任务保持 cancelled，不会改判）
     return jsonify({'ok': True, 'status': task.get('status')})
 
 

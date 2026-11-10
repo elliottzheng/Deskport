@@ -240,12 +240,52 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
     federationModule.bindApp(app)
 
 
+def _installApiJsonErrors(app):
+    """/api/* 的 404/405/500 一律 JSON（外部智能体反馈 §3.8）。
+
+    智能体解析不了 Flask 的 HTML 错误页；500 的 traceback 落日志，
+    响应带 requestId 便于关联。
+    """
+    import traceback
+    import uuid
+    from flask import jsonify
+
+    def _isApi():
+        return (request.path or '').startswith('/api/')
+
+    @app.errorhandler(404)
+    def apiNotFound(e):
+        if not _isApi():
+            return e
+        return jsonify({'error': '接口不存在: %s' % request.method + ' '
+                        + request.path, 'code': 404}), 404
+
+    @app.errorhandler(405)
+    def apiMethodNotAllowed(e):
+        if not _isApi():
+            return e
+        return jsonify({'error': '方法不允许: %s %s' % (request.method, request.path),
+                        'code': 405}), 405
+
+    @app.errorhandler(500)
+    def apiServerError(e):
+        if not _isApi():
+            return e
+        reqId = uuid.uuid4().hex[:12]
+        logging.getLogger('app').error(
+            '[%s] 500 at %s %s\n%s', reqId, request.method, request.path,
+            traceback.format_exc())
+        return jsonify({'error': '服务内部错误（详见服务端日志）',
+                        'code': 500, 'requestId': reqId}), 500
+
+
 def create_app(pluginRoots=None, pluginNavDir=None):
     """装配一个独立 Flask 实例；测试可多次调用，互不共享路由状态。"""
     app = Flask(__name__)
     sock = Sock(app)
 
     auth.register(app)
+    _installApiJsonErrors(app)
     app.register_blueprint(pages)
     for route, filename in PAGES.items():
         app.add_url_rule(route, endpoint='page_' + filename.replace('.', '_'),

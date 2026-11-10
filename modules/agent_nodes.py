@@ -197,7 +197,9 @@ class RemoteAcpClient:
             except Exception:
                 pass
         elif kind == 'permission_request':
-            params = {'toolCall': {'title': event.get('title') or ''},
+            params = {'toolCall': {'title': event.get('title') or '',
+                                   'toolCallId': event.get('callId') or '',
+                                   'rawInput': event.get('args') or ''},
                       'options': event.get('options') or []}
             requestId = event.get('requestId') or ''
             try:

@@ -61,6 +61,12 @@ def _handleAcpUpdate(task, update):
         if args is None:
             args = extractText(update.get('content'))
         argsText = json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args
+        with store.repo.lock:
+            # 审批事件要能对回工具调用（反馈 §3.4）：ACP 的 permission 请求
+            # 不带 toolCallId 时，退而取最近一次 tool_call
+            task['_lastToolCall'] = {'callId': callId,
+                                     'name': update.get('title') or '',
+                                     'args': argsText[:2000]}
         store.repo.append_event(task, 'tool',
                      name=update.get('title') or update.get('kind') or 'tool',
                      args=argsText[:store.MAX_TEXT],
@@ -107,6 +113,15 @@ def _handleAcpPermission(task, agent, params, requestId):
     """把 ACP 的授权请求推到任务卡，等用户在前端点允许/拒绝。"""
     tool = params.get('toolCall') or {}
     title = tool.get('title') or '工具调用'
+    callId = tool.get('toolCallId') or ''
+    args = tool.get('rawInput')
+    if args is None:
+        with store.repo.lock:
+            last = task.get('_lastToolCall') or {}
+        callId = callId or last.get('callId') or ''
+        args = last.get('args') or ''
+    argsText = args if isinstance(args, str) \
+        else json.dumps(args, ensure_ascii=False)
     options = []
     for opt in params.get('options') or []:
         options.append({'optionId': opt.get('optionId') or '',
@@ -119,13 +134,15 @@ def _handleAcpPermission(task, agent, params, requestId):
     decision = {'value': None}
     with store.repo.lock:
         agent['perm'] = {'requestId': str(requestId), 'seq': 0,
-                         'title': title, 'options': options}
+                         'title': title, 'options': options,
+                         'callId': callId, 'args': argsText[:2000]}
         agent['permDecision'] = decision
         agent['permEvent'] = threading.Event()
         task['pendingPermission'] = str(requestId)
         store.repo.save()
     ev = store.repo.append_event(task, 'permission_request', requestId=str(requestId),
-                      text='等待你授权：' + title, name=title, options=options)
+                      text='等待你授权：' + title, name=title, options=options,
+                      callId=callId, args=argsText[:store.MAX_TEXT])
     with store.repo.lock:
         if agent.get('perm'):
             agent['perm']['seq'] = ev.get('seq')
@@ -197,7 +214,6 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
         sid = client.start(session_id=task.get('sessionId') if resume else None)
         with store.repo.lock:
             task['sessionId'] = sid
-            task['engine'] = 'acp'
             task['resume'] = True
             task['startedAt'] = task.get('startedAt') or store._now()
             store.repo.save()
