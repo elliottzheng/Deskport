@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""智能体 API — 给外部 AI 程序的机器接口（令牌认证，非交互式执行 + SFTP）。
+"""智能体 API — 给外部 AI 程序的机器接口（令牌认证，非交互式执行 + 主机）。
 
 认证:
     请求头 X-Agent-Token 或 Authorization: Bearer <token>，
@@ -9,19 +9,18 @@
 端点:
     GET  /api/agent/hosts          主机列表（只含 id/name/host/port，无凭据）
     POST /api/agent/ssh/exec       非交互执行命令（paramiko exec_command）
-    POST /api/agent/sftp/list      远程目录列表
-    GET  /api/agent/sftp/get       读取远程文件（base64，有上限）
-    POST /api/agent/sftp/put       写远程文件（base64）
 
-持久会话（bash -s 常驻通道）在 modules/agent_sessions.py。
+配套路由（蓝图同源, 在 app.py 显式登记）:
+    modules/agent_sftp.py          SFTP list/get/put（错误码、分块、原子写）
+    modules/agent_sessions.py      持久会话（bash 常驻通道）
+    modules/agent_local.py         Deskport 本机作为内置主机（全等价）
 
 审计: 每次调用写 events（agent.exec / agent.sftp.*）。
 安全: 插件安全模型同档——外部智能体 = 可信代码；危险命令审批是后续增强项。
 """
+import base64
 import hashlib
 import hmac
-import os
-import posixpath
 import re
 import shlex
 import time
@@ -32,12 +31,10 @@ from flask import Blueprint, jsonify, request
 import config
 from modules import events
 from modules import ssh_hosts as hosts
-from modules.ssh_sftp import _openSftp
 
 DEFAULT_TIMEOUT = 30
 MAX_TIMEOUT = 600
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
-MAX_FILE_BYTES = 8 * 1024 * 1024
 
 blueprint = Blueprint('agent', __name__)
 
@@ -101,13 +98,79 @@ def _safeHosts():
 
 # ---------------------------------------------------------------- 执行
 
-def _execOnHost(hostEntry, command, timeoutSec):
-    """paramiko exec_command: 非 pty 通道, 轮询读双流, 到总时限掐断。"""
+def parseTimeoutSec(data):
+    """timeoutSec 校验：缺省 30；非整数或越界(1–600)返回错误说明。"""
+    raw = data.get('timeoutSec')
+    if raw is None or raw == '':
+        return DEFAULT_TIMEOUT, None
+    if isinstance(raw, bool):
+        return None, 'timeoutSec 必须是 1–600 的整数'
+    if isinstance(raw, str):
+        try:
+            raw = int(raw.strip())
+        except ValueError:
+            return None, 'timeoutSec 必须是 1–600 的整数'
+    if isinstance(raw, float):
+        if raw != int(raw):
+            return None, 'timeoutSec 必须是 1–600 的整数'
+        raw = int(raw)
+    if not isinstance(raw, int):
+        return None, 'timeoutSec 必须是 1–600 的整数'
+    if raw < 1 or raw > MAX_TIMEOUT:
+        return None, 'timeoutSec 超出范围（1–%d）' % MAX_TIMEOUT
+    return raw, None
+
+
+def _buildExecScript(command, cwd):
+    """把用户命令包进服务端可控的外壳（cd / UTF-8 locale / setsid 进程组）。
+
+    用户命令经 base64 进入内层 eval——引号、heredoc、多行、NUL 之外的任意
+    内容都不会破坏外壳语法；外壳每一行都是服务端固定文本，不拼接用户输入。
+    setsid 让命令独立成进程组：超时可整组击杀；无 setsid 的系统退化为直跑。
+    """
+    b64 = base64.b64encode(command.encode('utf-8')).decode('ascii')
+    inner = ('printf "__PID__%%s\\n" "$$"; '
+             'eval "$(printf %%s %s | base64 -d)"' % b64)
+    quoted = shlex.quote(inner)
+    lines = ['export LANG=C.UTF-8 LC_ALL=C.UTF-8']
+    if cwd:
+        lines.append('cd -- ' + shlex.quote(cwd) + ' || exit')
+    lines.append('if command -v setsid >/dev/null 2>&1; then')
+    lines.append('  setsid -w bash -c ' + quoted)
+    lines.append('else')
+    lines.append('  bash -c ' + quoted)
+    lines.append('fi')
+    return '\n'.join(lines)
+
+
+def _killRemoteGroup(transport, pid):
+    """超时后整组击杀：先 TERM，1 秒后兜底 KILL（nohup 免被会话回收带走）。"""
+    if not pid:
+        return
+    try:
+        ch = transport.open_session(timeout=5)
+        ch.exec_command(
+            'kill -TERM -- -%d 2>/dev/null; '
+            'nohup sh -c \'sleep 1; kill -KILL -- -%d 2>/dev/null\' '
+            '>/dev/null 2>&1 &' % (pid, pid))
+        time.sleep(0.15)
+        ch.close()
+    except Exception:
+        pass
+
+
+def _execOnHost(hostEntry, command, timeoutSec, cwd=''):
+    """paramiko exec_command: 非 pty 通道, 轮询读双流, 到总时限掐断。
+
+    stdin 立即 EOF（读 stdin 的命令不再挂起）；超时返回 exit=null 并整组
+    击杀远端进程；stdout 里的 __PID__ 标记行是外壳产物，出参前剥离。
+    """
     client = hosts.getConnection(hostEntry)
     transport = client.get_transport()
     channel = transport.open_session(timeout=10)
     channel.settimeout(1.0)
-    channel.exec_command(command)
+    channel.exec_command(_buildExecScript(command, cwd))
+    channel.shutdown_write()
     stdoutBuf = bytearray()
     stderrBuf = bytearray()
     deadline = time.monotonic() + timeoutSec
@@ -125,7 +188,11 @@ def _execOnHost(hostEntry, command, timeoutSec):
             break
         if time.monotonic() >= deadline:
             timedOut = True
-            channel.close()
+            pid = None
+            m = re.search(rb'__PID__(\d+)\r?\n', bytes(stdoutBuf))
+            if m:
+                pid = int(m.group(1))
+            _killRemoteGroup(transport, pid)
             break
         if not got:
             time.sleep(0.05)
@@ -133,12 +200,17 @@ def _execOnHost(hostEntry, command, timeoutSec):
         stdoutBuf += channel.recv(65536)
     while channel.recv_stderr_ready():
         stderrBuf += channel.recv_stderr(65536)
+    # 剥离外壳打印的 PID 标记行
+    m = re.search(rb'__PID__(\d+)\r?\n', bytes(stdoutBuf))
+    pid = int(m.group(1)) if m else None
+    if m:
+        del stdoutBuf[m.start():m.end()]
     exitCode = channel.recv_exit_status() if channel.exit_status_ready() else None
     return {
-        'exitCode': exitCode,
-        'stdout': stdoutBuf[:MAX_OUTPUT_BYTES].decode('utf-8', 'replace'),
-        'stderr': stderrBuf[:MAX_OUTPUT_BYTES].decode('utf-8', 'replace'),
-        'timedOut': timedOut,
+        'exit': None if timedOut else exitCode,
+        'out': bytes(stdoutBuf), 'err': bytes(stderrBuf),
+        'timedOut': timedOut, 'reason': 'timeout' if timedOut else '',
+        'pid': pid,
         'truncated': max(len(stdoutBuf), len(stderrBuf)) > MAX_OUTPUT_BYTES,
     }
 
@@ -157,17 +229,21 @@ def agentExec():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
-    command = str(data.get('command') or '').strip()
+    rawCommand = data.get('command')
+    command = str(rawCommand or '').strip()
     cwd = str(data.get('cwd') or '').strip()
     if not command:
         return jsonify({'error': '缺少 command'}), 400
-    if cwd:
-        command = 'cd ' + shlex.quote(cwd) + ' && (' + command + ')'
-    try:
-        timeoutSec = int(data.get('timeoutSec') or DEFAULT_TIMEOUT)
-    except (TypeError, ValueError):
-        timeoutSec = DEFAULT_TIMEOUT
-    timeoutSec = max(1, min(timeoutSec, MAX_TIMEOUT))
+    if isinstance(rawCommand, str) and '\x00' in rawCommand:
+        return jsonify({'error': 'command 含 NUL 字符'}), 400
+    if len(cwd) > 500:
+        return jsonify({'error': 'cwd 过长'}), 400
+    encoding = str(data.get('encoding') or 'text').lower()
+    if encoding not in ('text', 'base64'):
+        return jsonify({'error': 'encoding 只能是 text / base64'}), 400
+    timeoutSec, timeoutErr = parseTimeoutSec(data)
+    if timeoutErr:
+        return jsonify({'error': timeoutErr}), 400
 
     hostEntry = _resolveHost(str(data.get('host') or ''))
     if hostEntry is None:
@@ -177,116 +253,30 @@ def agentExec():
 
     started = time.monotonic()
     try:
-        result = _execOnHost(hostEntry, command, timeoutSec)
+        result = _execOnHost(hostEntry, command, timeoutSec, cwd)
     except paramiko.SSHException as e:
         events.log('agent.exec', hostName, 'fail', command[:160], request.remote_addr)
         return jsonify({'error': 'SSH 执行失败: %s' % e}), 502
     durationMs = int((time.monotonic() - started) * 1000)
 
     events.log('agent.exec', hostName,
-               'timeout' if result['timedOut'] else 'ok',
-               command[:160], request.remote_addr)
-    return jsonify({'exit': result['exitCode'],
-                    'out': result['stdout'], 'err': result['stderr'],
-                    'timedOut': result['timedOut'],
-                    'outTruncated': result['truncated'],
-                    'durationMs': durationMs})
+               result['reason'] or 'ok', command[:160], request.remote_addr)
+    body = {'exit': result['exit'],
+            'timedOut': result['timedOut'], 'reason': result['reason'],
+            'outTruncated': result['truncated'],
+            'durationMs': durationMs, 'timeoutSec': timeoutSec,
+            'pid': result['pid']}
+    if encoding == 'base64':
+        body['outB64'] = base64.b64encode(result['out'][:MAX_OUTPUT_BYTES]).decode('ascii')
+        body['errB64'] = base64.b64encode(result['err'][:MAX_OUTPUT_BYTES]).decode('ascii')
+    else:
+        body['out'] = result['out'][:MAX_OUTPUT_BYTES].decode('utf-8', 'replace')
+        body['err'] = result['err'][:MAX_OUTPUT_BYTES].decode('utf-8', 'replace')
+    return jsonify(body)
 
 
 # ---------------------------------------------------------------- SFTP
-
-def _sftpFor(hostNameOrId):
-    hostEntry = _resolveHost(str(hostNameOrId or ''))
-    if hostEntry is None:
-        return None, None, '主机不存在'
-    try:
-        return hostEntry, _openSftp(hostEntry['id']), ''
-    except Exception as e:
-        return None, None, str(e)
-
-
-@blueprint.route('/api/agent/sftp/list', methods=['POST'])
-def agentSftpList():
-    agent, err = _agentRequired()
-    if agent is None:
-        return err
-    data = request.get_json(silent=True) or {}
-    hostEntry, sftp, err = _sftpFor(data.get('host'))
-    if err:
-        return jsonify({'error': err}), 404
-    path = (data.get('path') or '.').strip() or '.'
-    try:
-        entries = []
-        baseDir = path if path.endswith('/') else path + '/'
-        for attr in sftp.listdir_attr(path):
-            full = posixpath.normpath(baseDir + attr.filename) if path != '/' \
-                else '/' + attr.filename
-            entries.append({'name': attr.filename, 'path': full,
-                            'size': attr.st_size, 'mtime': int(attr.st_mtime),
-                            'dir': (attr.st_mode & 0o170000) == 0o040000})
-        events.log('agent.sftp.list', path, 'ok', '', request.remote_addr)
-        return jsonify({'path': path, 'entries': entries})
-    except IOError as e:
-        events.log('agent.sftp.list', path, 'fail', str(e), request.remote_addr)
-        return jsonify({'error': str(e)}), 404
-
-
-@blueprint.route('/api/agent/sftp/get', methods=['POST'])
-def agentSftpGet():
-    agent, err = _agentRequired()
-    if agent is None:
-        return err
-    data = request.get_json(silent=True) or {}
-    hostEntry, sftp, err = _sftpFor(data.get('host'))
-    if err:
-        return jsonify({'error': err}), 404
-    path = str(data.get('path') or '')
-    if not path:
-        return jsonify({'error': '缺少 path'}), 400
-    try:
-        attr = sftp.stat(path)
-        if attr.st_size > MAX_FILE_BYTES:
-            return jsonify({'error': '文件超过上限 (%d bytes)，请用 SFTP 面板下载'
-                            % MAX_FILE_BYTES}), 413
-        with sftp.open(path, 'rb') as f:
-            raw = f.read(attr.st_size)
-    except IOError as e:
-        return jsonify({'error': str(e)}), 404
-    events.log('agent.sftp.get', path, 'ok', '%d bytes' % attr.st_size,
-               request.remote_addr)
-    import base64
-    return jsonify({'ok': True, 'path': path, 'size': attr.st_size,
-                    'contentB64': base64.b64encode(raw).decode('ascii')})
-
-
-@blueprint.route('/api/agent/sftp/put', methods=['POST'])
-def agentSftpPut():
-    agent, err = _agentRequired()
-    if agent is None:
-        return err
-    data = request.get_json(silent=True) or {}
-    hostEntry, sftp, err = _sftpFor(data.get('host'))
-    if err:
-        return jsonify({'error': err}), 404
-    path = str(data.get('path') or '')
-    contentB64 = str(data.get('contentB64') or '')
-    if not path or not contentB64:
-        return jsonify({'error': '缺少 path/contentB64'}), 400
-    import base64
-    try:
-        raw = base64.b64decode(contentB64)
-    except Exception:
-        return jsonify({'error': 'contentB64 不是合法 base64'}), 400
-    if len(raw) > MAX_FILE_BYTES:
-        return jsonify({'error': '文件超过上限 (%d bytes)' % MAX_FILE_BYTES}), 413
-    try:
-        with sftp.open(path, 'wb') as f:
-            f.write(raw)
-    except IOError as e:
-        return jsonify({'error': str(e)}), 400
-    events.log('agent.sftp.put', path, 'ok', '%d bytes' % len(raw),
-               request.remote_addr)
-    return jsonify({'ok': True, 'path': path, 'size': len(raw)})
+# SFTP list/get/put 在 modules/agent_sftp.py（同蓝图, app.py 显式登记）。
 
 
 # ---------------------------------------------------------------- 技能分发
