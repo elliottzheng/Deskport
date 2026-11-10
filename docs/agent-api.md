@@ -88,6 +88,24 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
   `status: waiting` = 本轮完成，`failed` 时看 `error`；
 - 令牌来源的任务会写审计 `agent.task.create`（独立于任务卡事件）。
 
+## 技能分发（URL 自举）
+
+技能文档由中枢统一分发，外部智能体一条命令即可完成安装/更新：
+
+```text
+GET /api/agent/skills            → {skills: [{name, size, mtime}]}
+GET /api/agent/skills/<name>     → {name, content}   （SKILL.md 原文）
+```
+
+新智能体入网（有 token 即可自举）：
+
+```bash
+mkdir -p ~/.kimi-code/skills/deskport
+curl -s -H "X-Agent-Token: $TOKEN"   http://<中枢>/api/agent/skills/deskport   | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])"   > ~/.kimi-code/skills/deskport/SKILL.md
+```
+
+Deskport 升级后重新拉取即更新到最新版（mtime 可用于检测变更）。
+
 ## 审计
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.list|get|put`），

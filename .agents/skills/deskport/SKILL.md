@@ -95,4 +95,5 @@ POST /api/tasks/<id>/close                      → 结束会话
 - 主机/节点名写错时响应带提示（`availableHosts` / `nodes`），直接改用，不用再列。
 - 401 = 令牌失效：检查令牌与 `config.json` 的 `agentTokens` 指纹是否匹配。
 - 审计全留痕（agent.exec / agent.sftp.* / agent.task.create），部署者可在控制台回看。
+- 本技能由中枢分发，可自举更新：`GET /api/agent/skills/deskport` 取最新版覆盖本地 SKILL.md。
 - 完整接口参考：仓库内 `docs/agent-api.md`；agent node 侧接口见 `agent_node/README.md`。

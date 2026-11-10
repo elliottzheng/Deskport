@@ -106,9 +106,10 @@
      Windows 用 `start-agentnode.vbs` + watchdog；
   4. 中枢 `config.json` 的 `agentNodes[]` 登记一条（防火墙过滤时填
      `via` 走 SSH 隧道）。
-- **加一个指挥者（智能体）**：分发 token + 链入
-  `.agents/skills/deskport/SKILL.md`。它立刻获得三级能力：
-  快命令（exec）、持久终端（bash 会话）、任务派活（指挥其他智能体）。
+- **加一个指挥者（智能体）**：分发 token，技能文档由中枢 URL 自举
+  （`GET /api/agent/skills/deskport` → 写入智能体技能目录）。它立刻获得
+  三级能力：快命令（exec）、持久终端（bash 会话）、任务派活（指挥其他
+  智能体）；Deskport 升级后重拉即同步最新版。
 
 ## 八、协议实现位置索引
 

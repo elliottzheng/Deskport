@@ -20,7 +20,9 @@
 """
 import hashlib
 import hmac
+import os
 import posixpath
+import re
 import shlex
 import time
 
@@ -285,3 +287,52 @@ def agentSftpPut():
     events.log('agent.sftp.put', path, 'ok', '%d bytes' % len(raw),
                request.remote_addr)
     return jsonify({'ok': True, 'path': path, 'size': len(raw)})
+
+
+# ---------------------------------------------------------------- 技能分发
+
+def _skillsDir():
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        '.agents', 'skills')
+
+
+@blueprint.route('/api/agent/skills')
+def agentSkillsList():
+    """可分发的技能清单（供外部智能体自举与检测更新）。"""
+    agent, err = _agentRequired()
+    if agent is None:
+        return err
+    root = _skillsDir()
+    skills = []
+    if os.path.isdir(root):
+        for name in sorted(os.listdir(root)):
+            skillFile = os.path.join(root, name, 'SKILL.md')
+            if os.path.isfile(skillFile):
+                try:
+                    stat = os.stat(skillFile)
+                except OSError:
+                    continue
+                skills.append({'name': name, 'size': stat.st_size,
+                               'mtime': int(stat.st_mtime)})
+    return jsonify({'skills': skills})
+
+
+@blueprint.route('/api/agent/skills/<name>')
+def agentSkillGet(name):
+    """返回技能原文（text/markdown），供智能体拉取安装到本地技能目录。"""
+    agent, err = _agentRequired()
+    if agent is None:
+        return err
+    if not re.match(r'^[A-Za-z0-9_-]{1,40}$', name):
+        return jsonify({'error': '名称不合法'}), 400
+    skillFile = os.path.join(_skillsDir(), name, 'SKILL.md')
+    if not os.path.isfile(skillFile):
+        return jsonify({'error': '技能不存在', 'available':
+                        [s for s in os.listdir(_skillsDir())
+                         if os.path.isfile(os.path.join(_skillsDir(), s, 'SKILL.md'))]
+                        if os.path.isdir(_skillsDir()) else []}), 404
+    with open(skillFile, 'r', encoding='utf-8') as f:
+        body = f.read()
+    resp = jsonify({'name': name, 'content': body})
+    resp.headers['X-Skill-Name'] = name
+    return resp
