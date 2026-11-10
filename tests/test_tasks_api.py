@@ -89,10 +89,11 @@ def test_prompt_limit_in_error_message(env):
     assert '4000' in resp.get_json()['error']
 
 
-def test_engine_p_deprecated_alias(env):
+def test_engine_p_removed_not_alias(env):
+    """API 不做跨版本兼容（2026-11-10 决策）：废弃引擎名 p 直接拒绝。"""
     resp = create(env, {'prompt': 'x', 'engine': 'p'})
-    assert resp.status_code == 202
-    assert resp.get_json()['task']['engine'] == 'acp'
+    assert resp.status_code == 400
+    assert resp.get_json()['error'] == 'engine 只能是 acp / remote'
     resp = create(env, {'prompt': 'x', 'engine': 'zzz'})
     assert resp.status_code == 400
     assert resp.get_json()['error'] == 'engine 只能是 acp / remote'

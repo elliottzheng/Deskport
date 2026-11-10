@@ -3,13 +3,17 @@
 在任意 Linux/macOS/Windows 主机上托管 `kimi acp` 会话并暴露 HTTP API，
 让 Deskport（或其他调用方）把任务派到远端执行。纯标准库，零第三方依赖。
 
+**Python ≥ 3.11**（模型自动发现依赖 tomllib）；入口有版本守卫，老解释器
+会拒绝启动。建议用 uv：`uv python install 3.13` 后以 `uv python find 3.13`
+给出的解释器路径启动。
+
 ## 部署
 
 ```bash
 # 1. 目标机需已安装并登录 kimi CLI（kimi --version 可用）
 # 2. 拷贝本目录（agent_node/，共 3 个 py 文件）到目标机任意目录
 # 3. 启动（token 也可用 --token <明文> 或环境变量 AGENT_NODE_TOKEN）
-python3 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
+python3.11 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
 ```
 
 - 会话存档写在 `~/.deskport-agent-node/sessions.json`；日志自管（建议重定向）。
@@ -42,7 +46,7 @@ python3 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
 追加到用户 crontab（`crontab -e`）：
 
 ```
-@reboot sleep 10 && cd <部署目录> && /usr/bin/python3 agent_node.py \
+@reboot sleep 10 && cd <部署目录> && <Python≥3.11 的绝对路径> agent_node.py \
   --port 8622 --token-file ~/.deskport-agent-node/token \
   --kimi /home/<user>/.kimi-code/bin/kimi >> <部署目录>/node.log 2>&1
 ```

@@ -155,7 +155,7 @@ DELETE /api/agent/ssh/sessions/<sid>
   config 显式声明 → node /health 自动上报（节点侧解析 kimi config.toml，
   节点升级即自动点亮）→ 本机自动发现。声明白名单的执行点校验不命中 →
   400 附可选列表；选错别名会在任务 error 里看到 kimi 原始报错；
-  联邦成员转发该字段，旧版对端安全忽略；
+  联邦成员转发该字段（对端与本中枢保持同版，见下方版本策略）；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（仅
   engine=acp）。默认先 `kimi fork` 复制副本再加载——不干扰用户开着的
   终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -213,8 +213,10 @@ Deskport 升级后重新拉取即更新（mtime 检测变更）。
 
 - exec 是非 pty 通道：无交互式程序（vim/top），需要交互请用浏览器终端；
   会话里 stdin 是 EOF，要喂数据用 heredoc 或 sftp/put；
-- 远程任务对端 Deskport 需为同代版本才能转发 model 等新字段（旧版忽略之，
-  用对端默认模型）；
+- **版本策略：API 不做跨版本兼容**。联邦/节点各部署面与本中枢保持同版
+  （升级时一并升），新字段直接可用，不为旧版保留别名或降级路径；
+- agent node 需要 Python ≥ 3.11（模型自动发现依赖 tomllib），入口有
+  fail-fast 守卫；建议用 uv 跑 3.13；
 - 外部调用方 Python 封装参考：`deskport.py`（仅标准库）已按本 API 契约
   处理 NUL 拒发、`after` 增量去重等；服务端修复后这些规避仍兼容。
 

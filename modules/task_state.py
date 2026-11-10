@@ -19,14 +19,13 @@ class TaskState(StrEnum):
     FAILED = 'failed'
     CANCELLED = 'cancelled'
     INTERRUPTED = 'interrupted'
-    DONE = 'done'          # legacy engine='p' 的完成态
 
 
 TRANSITIONS = {
     TaskState.QUEUED: {TaskState.RUNNING, TaskState.PAUSED, TaskState.FAILED,
                        TaskState.CANCELLED, TaskState.INTERRUPTED, TaskState.CLOSED},
     TaskState.RUNNING: {TaskState.WAITING, TaskState.PAUSED, TaskState.FAILED,
-                        TaskState.CANCELLED, TaskState.CLOSED, TaskState.DONE,
+                        TaskState.CANCELLED, TaskState.CLOSED,
                         TaskState.INTERRUPTED},
     TaskState.WAITING: {TaskState.RUNNING, TaskState.PAUSED, TaskState.FAILED,
                         TaskState.CANCELLED, TaskState.CLOSED, TaskState.INTERRUPTED},
@@ -36,7 +35,6 @@ TRANSITIONS = {
     TaskState.CANCELLED: {TaskState.CLOSED},
     TaskState.INTERRUPTED: {TaskState.QUEUED, TaskState.CLOSED},
     TaskState.CLOSED: set(),
-    TaskState.DONE: {TaskState.CLOSED},
 }
 
 CONTINUABLE = {TaskState.WAITING, TaskState.PAUSED}

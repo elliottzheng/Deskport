@@ -16,7 +16,7 @@ from modules.kimi_acp import KimiAcp, extractText
 
 log = logging.getLogger('tasks')
 
-from modules.tasks_legacy import runTask
+log = logging.getLogger('tasks')
 
 MAX_RUNNING = 2
 PERMISSION_TIMEOUT = 300
@@ -332,5 +332,5 @@ def _shutdownClients():
 atexit.register(_shutdownClients)
 
 # acp/remote 引擎由 modules/agent_nodes 注册（clientFactoryFor 统一选择
-# 本机 node / 远端节点 / web 内 stdio）；这里只保留与智能体无关的 legacy。
-task_engines.register('p', task_engines.ThreadEngine(runTask))
+# 本机 node / 远端节点 / 联邦成员 / web 内 stdio）。旧 'p' 引擎已随
+# tasks_legacy 一并移除（API 不做跨版本兼容，部署面保持同版）。

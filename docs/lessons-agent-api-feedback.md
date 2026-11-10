@@ -112,9 +112,11 @@ f649e18（选模型）→ c0647cd（本机全等价）→ 75cae14（文档）。
   `bash -c "pkill -f 'xxx' ... setsid ... xxx"` 的命令行里含同样字符串，
   bracket 技巧 `[x]xx` 只防 pkill 自己，防不了包装 shell——自杀导致重启
   不执行。远程重启守卫进程用显式 PID 或锚定正则 `^python3 ...`。
-- **老 Python 部署面**：node 可能跑在系统 python3（<3.11 无 tomllib）。
-  用新标准库前先确认部署面解释器版本，或写无依赖兜底（正则解析
-  config.toml 段名与顶层键）。部署后立刻打一次 /health 再宣告完成。
+- **老 Python 部署面（最终决策：不做兼容）**：node 跑在系统 python3
+  (<3.11 无 tomllib) 曾让 /health 直接崩。先写了正则兜底，随后按
+  "API 不做跨版本兼容"的原则改为：入口 fail-fast 版本守卫（≥3.11，
+  报错里给 uv 建议）+ 远端改用 uv 跑 3.13。兼容垫片只该是过渡态，
+  决策定了就删；部署后立刻打一次 /health 再宣告完成。
 - **接手会话的默认安全侧**：kimi fork 有会话锁（占用中直接报错），API
   默认 fork:true 让外部智能体永不与用户终端并发写同一会话；fork 输出用
   正则提 `session_<uuid>`，锁错误原文透传给调用方。

@@ -29,6 +29,10 @@ MANAGER = None
 
 def main():
     global MANAGER
+    if sys.version_info < (3, 11):
+        raise SystemExit('agent node 需要 Python ≥ 3.11（tomllib 用于模型自动发现），'
+                         '当前 %s。建议用 uv: `uv python install 3.13` 后以该解释器启动'
+                         % sys.version.split()[0])
     parser = argparse.ArgumentParser(description='Deskport Agent Node')
     parser.add_argument('--port', type=int, default=8622)
     parser.add_argument('--token', default=os.environ.get('AGENT_NODE_TOKEN', ''))

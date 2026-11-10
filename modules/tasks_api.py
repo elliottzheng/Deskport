@@ -63,8 +63,6 @@ def createTask():
     if not isinstance(paths, list) or len(paths) > 20:
         return jsonify({'error': 'paths 必须是数组且不超过 20 项'}), 400
     engine = (data.get('engine') or 'acp').lower()
-    if engine == 'p':
-        engine = 'acp'   # 已废弃的旧引擎名，按 acp 处理
     if engine not in ('acp', 'remote'):
         return jsonify({'error': 'engine 只能是 acp / remote'}), 400
     # 不传 mode 时逐项审批（安全默认）——要自动批准必须显式传 auto
