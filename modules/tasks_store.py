@@ -23,8 +23,6 @@ MAX_TASK_FILES = 3000
 MAX_EVENTS = 2000
 MAX_TEXT = 8000
 MAX_TOOL_RESULT = 4000
-MAX_RUNNING = 2
-PERMISSION_TIMEOUT = 300
 MAX_UPLOAD_MB = 32        # /api/tasks/files 单文件上限（§7b 过渡：智能体没有
                           # exec/sftp 之前的文件投递通道）
 
@@ -110,6 +108,9 @@ class TaskRepository:
         self.log_dir = log_dir
         self.tasks = {}
         self.lock = threading.RLock()
+        # 阻塞等待（R4-3）：以 repo.lock 为条件锁——append_event 在锁内
+        # notify_all，等待方 wait() 期间整体放锁，追加方照常入队
+        self.evCond = threading.Condition(self.lock)
         self.running = {}
         self.agents = {}
         self.loaded = False
@@ -230,11 +231,30 @@ class TaskRepository:
             if etype == 'assistant' and payload.get('text'):
                 task['lastText'] = payload['text'][:300]
             self.save()
+            self.evCond.notify_all()   # 唤醒 /wait 阻塞订阅者（R4-3）
         entry = dict(event)
         if full is not None:
             entry['text'] = full
         self.log_write(task, entry)
         return event
+
+    def summaryBrief(self, task):
+        """列表精简摘要（R4-0）：调用方读到的每个字节都占上下文，
+        默认只给索引/判态所需字段，完整摘要用 summary()。"""
+        lastText = task.get('lastText') or ''
+        return {
+            'id': task['id'], 'title': task.get('title', ''),
+            'status': task.get('status', ''), 'engine': task.get('engine', ''),
+            'owner': task.get('owner') or '',
+            'node': task.get('node') or '',
+            'model': task.get('model') or '',
+            'modelEffective': task.get('modelEffective') or '',
+            'kimiSessionId': task.get('kimiSessionId') or '',
+            'kimiSessionFork': bool(task.get('kimiSessionFork')),
+            'createdAt': task.get('createdAt', 0), 'endedAt': task.get('endedAt', 0),
+            'error': task.get('error', ''),
+            'lastText': lastText[:200], 'lastTextTruncated': len(lastText) > 200,
+        }
 
     def summary(self, task) -> contracts.TaskSummary:
         status = task.get('status', '')
@@ -242,6 +262,7 @@ class TaskRepository:
         return {
             'id': task['id'], 'title': task.get('title', ''), 'prompt': task.get('prompt', ''),
             'status': status, 'createdAt': task.get('createdAt', 0),
+            'owner': task.get('owner') or '',
             'createdLabel': _iso(task.get('createdAt', 0)),
             'startedAt': task.get('startedAt', 0), 'endedAt': task.get('endedAt', 0),
             # remote 任务展示远端 cwd（本机 workspace 目录对调用方毫无意义）
@@ -265,6 +286,7 @@ class TaskRepository:
             'pendingPermission': task.get('pendingPermission') or '',
             'lastActiveAt': task.get('lastActiveAt', 0),
             'lastActiveLabel': _iso(task.get('lastActiveAt', 0)),
+            'policy': task.get('policy') or {},
         }
 
 

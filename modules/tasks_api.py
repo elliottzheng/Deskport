@@ -15,6 +15,7 @@ from flask import (Blueprint, Response, g, jsonify, request, send_file,
 
 from modules.kimi_acp import KimiAcp
 from modules import kimi_acp
+from modules import task_policy
 from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
@@ -40,12 +41,15 @@ def taskRoute(fn):
 @blueprint.route('/api/tasks', methods=['GET'])
 def listTasks():
     store.repo.load()
+    full = request.args.get('full') == '1'
     with store.repo.lock:
         items = sorted(store.repo.list(), key=lambda x: -x.get('createdAt', 0))
     running = sum(1 for t in items if t.get('status') == 'running')
     queued = sum(1 for t in items if t.get('status') == 'queued')
-    return jsonify({'tasks': [store.repo.summary(t) for t in items[:50]],
-                    'running': running, 'queued': queued,
+    tasks = [store.repo.summary(t) if full else store.repo.summaryBrief(t)
+             for t in items[:50]]
+    return jsonify({'tasks': tasks, 'running': running, 'queued': queued,
+                    'limit': runner.maxRunning(),
                     'countScope': 'all callers (全局)'})
 
 
@@ -76,6 +80,11 @@ def createTask():
     node = ''
     remoteCwd = ''
     kimiSessionId = ''
+    policy = {}
+    try:
+        policy = task_policy.validatePolicy(data.get('policy'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     if engine == 'remote':
         node = str(data.get('node') or '').strip()
         if not node:
@@ -137,9 +146,15 @@ def createTask():
     # 实际生效的模型：用户没传就落执行点默认（可追溯"这个结论是哪个模型给的"）
     modelEffective = model or decl['default']
     with store.repo.lock:
-        active = sum(1 for t in store.repo.list() if t.get('status') == 'running')
-        if active >= runner.MAX_RUNNING:
-            return jsonify({'error': '同时执行的任务过多，请稍后再试'}), 429
+        limit = runner.maxRunning()
+        running = [t for t in store.repo.list() if t.get('status') == 'running']
+        if limit > 0 and len(running) >= limit:
+            # 429 带占用明细（R4-9）：调用方不必再查一轮就知道是谁占着名额
+            holders = [{'id': t['id'], 'owner': t.get('owner') or '未知',
+                        'title': t.get('title') or ''} for t in running]
+            return jsonify({'error': '并发任务已达上限 %d，请稍后再试' % limit,
+                            'limit': limit, 'running': len(running),
+                            'holders': holders}), 429
         taskId = uuid.uuid4().hex[:12]
         workspace = os.path.join(store.taskRoot(),
                                  datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -166,7 +181,9 @@ def createTask():
         'resultFiles': [], 'error': '', 'sessionId': loadedSessionId,
         'engine': engine, 'kimiSessionId': kimiSessionId,
         'kimiSessionFork': kimiSessionFork,
+        'owner': getattr(g, 'agentTokenName', '') or '面板',
         'mode': mode, 'model': model, 'modelEffective': modelEffective,
+        'policy': policy,
         'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
         'node': node, 'remoteCwd': remoteCwd,
@@ -183,6 +200,10 @@ def createTask():
         events.log('agent.task.create', tokenName, 'ok', detail,
                    request.remote_addr)
     runner._startTask(task, manifest)
+    waitSec = _parseWaitSeconds(data.get('wait'))
+    if waitSec:
+        # 发完直接阻塞到回合结束/需决策（R4-3），省一次轮询往返
+        return jsonify(_blockWait(task, 0, waitSec)), 200
     return jsonify({'task': store.repo.summary(task)}), 202
 
 
@@ -190,9 +211,116 @@ def createTask():
 @taskRoute
 def getTask(task, taskId):
     out = store.repo.summary(task)
-    out['events'] = task.get('events', [])[-500:]
     out['sources'] = task.get('sources', [])
+    if request.args.get('events') == '1':
+        # 默认不带 events（调用方字节预算）；增量订阅走 /events 端点，
+        # ?events=1 保留旧行为供一次性全量对账
+        out['events'] = task.get('events', [])[-500:]
     return jsonify({'task': out})
+
+
+# ---- R4-3：阻塞等待 + 精简结果（同时覆盖 R4-12 断线续接） ----
+# 阻塞实现：app.run(threaded=True)，每个等待请求占一个工作线程，
+# 线程在 repo.evCond 上整体放锁休眠（事件驱动唤醒，无忙等）；
+# 单用户场景等待方是个位数，不构成线程池压力。
+
+WAIT_ENDERS = ('waiting', 'failed', 'closed', 'cancelled')
+
+
+def _parseWaitSeconds(value, cap=600):
+    """"wait": <秒> → 1..cap 的整数或 None（不等待）。"""
+    if value in (None, '', False):
+        return None
+    try:
+        secs = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(secs, cap))
+
+
+def _lastAssistantAfter(task, after):
+    """after 之后最后一条 assistant 的全文——事件卡里 text 截到 MAX_TEXT，
+    全文只在 jsonl 流水里，读文件拿完整版。"""
+    text = ''
+    path = store.repo.log_path(task)
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get('seq', 0) > after and obj.get('type') == 'assistant' \
+                            and obj.get('text'):
+                        text = obj['text']
+        except OSError:
+            pass
+    if not text:
+        with store.repo.lock:
+            for e in reversed(task.get('events', [])):
+                if e.get('seq', 0) > after and e.get('type') == 'assistant' \
+                        and e.get('text'):
+                    text = e['text']
+                    break
+    return text
+
+
+def _waitSnapshot(task, after, ignorePending=None):
+    """wait 响应的精炼快照：不带事件全集，只带调用方决策所需。"""
+    with store.repo.lock:
+        events = [e for e in task.get('events', []) if e.get('seq', 0) > after]
+        stats = {'events': len(events),
+                 'tools': sum(1 for e in events if e.get('type') == 'tool'),
+                 'autoApproved': sum(1 for e in events
+                                     if e.get('type') == 'auto_approved'),
+                 'errors': sum(1 for e in events if e.get('type') == 'error')}
+        status = task.get('status') or 'queued'
+        pendingPerm = task.get('pendingPermission') or ''
+        agent = store.repo.agentOf(task['id'])
+        perm = (agent.get('perm') or {}) if agent else {}
+        pending = None
+        if pendingPerm and pendingPerm != ignorePending                 and perm.get('requestId') == pendingPerm:
+            pending = {'requestId': pendingPerm,
+                       'callId': perm.get('callId') or '',
+                       'name': perm.get('title') or '',
+                       'args': perm.get('args'),
+                       'options': perm.get('options') or []}
+        lastSeq = task.get('seq', 0)
+        error = task.get('error', '')
+    return {'status': 'permission' if pending else status,
+            'finalText': _lastAssistantAfter(task, after),
+            'pending': pending, 'stats': stats,
+            'lastSeq': lastSeq, 'error': error}
+
+
+def _blockWait(task, after, timeout, ignorePendingRequestId=None):
+    """阻塞到「需要调用方决策」或回合结束；超时回当前态（queued/running
+    统一映射 running，调用方带新 after 再来）。ignorePendingRequestId：
+    刚被自己批掉的授权不算决策点（审批 wait 用）。"""
+    deadline = time.monotonic() + max(1, min(int(timeout or 300), 600))
+    snap = _waitSnapshot(task, after, ignorePendingRequestId)
+    while not (snap['pending'] or snap['status'] in WAIT_ENDERS):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if snap['status'] in ('queued', 'running'):
+                snap['status'] = 'running'
+            return snap
+        with store.repo.lock:
+            store.repo.evCond.wait(remaining)   # 放锁休眠，事件到达即醒
+        snap = _waitSnapshot(task, after, ignorePendingRequestId)
+    return snap
+
+
+@blueprint.route('/api/tasks/<taskId>/wait')
+@taskRoute
+def taskWait(task, taskId):
+    try:
+        after = int(request.args.get('after') or 0)
+    except ValueError:
+        after = 0
+    timeout = _parseWaitSeconds(request.args.get('timeout'), cap=600) or 300
+    return jsonify(_blockWait(task, after, timeout))
 
 
 @blueprint.route('/api/tasks/<taskId>/events')
@@ -205,6 +333,30 @@ def taskEvents(task, taskId):
     except ValueError:
         after = 0
     events = [e for e in task.get('events', []) if e.get('seq', 0) > after]
+    # R4-0：types=逗号分隔过滤；maxText=n 把 text 截到 n 字并带
+    # truncated/textLen——大字段按需取，缺省行为不变
+    typesArg = request.args.get('types') or ''
+    if typesArg.strip():
+        wanted = {t.strip() for t in typesArg.split(',') if t.strip()}
+        events = [e for e in events if e.get('type') in wanted]
+    maxTextArg = request.args.get('maxText')
+    if maxTextArg is not None:
+        try:
+            maxText = int(maxTextArg)
+        except ValueError:
+            return jsonify({'error': 'maxText 必须是非负整数'}), 400
+        if maxText < 0:
+            return jsonify({'error': 'maxText 必须是非负整数'}), 400
+        trimmed = []
+        for e in events:
+            text = e.get('text')
+            if isinstance(text, str) and len(text) > maxText:
+                e = dict(e)
+                e['text'] = text[:maxText]
+                e['truncated'] = True
+                e['textLen'] = len(text)
+            trimmed.append(e)
+        events = trimmed
     return jsonify({'status': task.get('status'), 'events': events,
                     'lastText': task.get('lastText', ''),
                     'resultFiles': task.get('resultFiles', []),
@@ -306,6 +458,9 @@ def taskMessage(task, taskId):
             task_state.transition(task, task_state.TaskState.RUNNING)
             task['awaitingAnswer'] = False
             store.repo.save()
+        waitSec = _parseWaitSeconds(data.get('wait'))
+        if waitSec:
+            return jsonify(_blockWait(task, task.get('seq', 0), waitSec)), 200
         return jsonify({'ok': True, 'status': 'running'}), 202
     if status in ('closed', 'cancelled'):
         return jsonify({'error': '会话已结束，请新建任务'}), 409
@@ -317,10 +472,14 @@ def taskMessage(task, taskId):
             task['error'] = ''
             task['resume'] = True
         store.repo.save()
+    afterSeq = task.get('seq', 0)
     try:
         runner._resumeWithMessage(task, text)
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 409
+    waitSec = _parseWaitSeconds(data.get('wait'))
+    if waitSec:
+        return jsonify(_blockWait(task, afterSeq, waitSec)), 200
     return jsonify({'ok': True, 'status': 'queued'}), 202
 
 
@@ -428,6 +587,13 @@ def taskPermission(task, taskId):
                 return jsonify({'error': '无效的选项'}), 400
         agent['permDecision']['value'] = optionId
         agent['permEvent'].set()
+    waitSec = _parseWaitSeconds(data.get('wait'))
+    if waitSec:
+        # 审批完直接等下一个决策点/回合结束（R4-3）
+        with store.repo.lock:
+            afterSeq = task.get('seq', 0)
+        return jsonify(_blockWait(task, afterSeq, waitSec,
+                                  ignorePendingRequestId=requestId)), 200
     return jsonify({'ok': True})
 
 
@@ -507,6 +673,35 @@ def listKimiSessions():
     return jsonify({'sessions': items,
                     'hint': 'POST /api/tasks {"kimiSessionId": "<id>"} '
                             '接手（默认 fork 副本，不干扰原会话）'})
+
+
+@blueprint.route('/api/tasks/<taskId>/policy', methods=['POST'])
+@taskRoute
+def taskPolicyUpdate(task, taskId):
+    """更新审批边界（R4-1/R4-2）：只影响下一次调用，挂起中的审批不重判。"""
+    data = request.get_json(force=True, silent=True) or {}
+    policy = data.get('policy', data)
+    try:
+        normalized = task_policy.validatePolicy(policy)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    with store.repo.lock:
+        if task.get('status') == 'running':
+            return jsonify({'error': '这一轮还在执行，回合结束再更新边界'}), 409
+        task['policy'] = normalized
+        store.repo.save()
+    store.repo.append_event(task, 'status', text='审批边界已更新: '
+                            + json.dumps(normalized, ensure_ascii=False)[:200])
+    with store.repo.lock:
+        agent = store.repo.agentOf(taskId)
+    client = agent.get('client') if agent else None
+    if normalized and hasattr(client, 'set_policy'):
+        try:
+            client.set_policy(normalized)
+        except Exception as e:
+            store.repo.append_event(task, 'status',
+                         text='边界已更新，但对端同步失败: %s' % str(e)[:160])
+    return jsonify({'ok': True, 'policy': normalized})
 
 
 def register(app):

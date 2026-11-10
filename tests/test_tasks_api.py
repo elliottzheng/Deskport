@@ -12,6 +12,7 @@ import config as configMod
 from modules import events as eventsMod
 from modules import tasks_api
 from modules import tasks_store as store
+from modules import task_state
 from modules.tasks_store import TaskRepository
 
 TOKEN = 'tok-' + 'c' * 24
@@ -193,7 +194,8 @@ def test_permission_request_carries_call_and_args(env):
     assert value == 'opt-allow'
     ev = [e for e in task['events'] if e['type'] == 'permission_request'][0]
     assert ev['callId'] == 'call-42'
-    assert 'pwd' in ev['args']
+    assert ev['args'] == {'command': 'pwd'}   # R4-1：args 升级为对象（rawInput 原样）
+    assert ev['name'] == 'Bash'
 
 
 def test_permission_falls_back_to_last_tool_call(env):
@@ -393,6 +395,70 @@ def test_local_kimi_models_cached(tmp_path, monkeypatch):
     assert nodesMod.localKimiModels(maxAgeSec=60)['default'] == 'm-d'
     nodesMod._modelsCache['at'] = 0.0
     assert nodesMod.localKimiModels(maxAgeSec=60)['default'] == 'z'
+
+
+# ---- R4-9：并发上限可配置 + 热加载 ----
+
+def _useCfg(tmp_path, monkeypatch):
+    """把 config 指到临时文件；返回可反复改写内容的路径对象。"""
+    path = tmp_path / 'config.json'
+    path.write_text(json.dumps({'port': 6788}), encoding='utf-8')
+    monkeypatch.setattr(configMod, 'CONFIG_PATH', str(path))
+    configMod._cache.update(mtime=None, data=None)
+    return path
+
+
+def test_task_max_running_hot_reload_and_429(env, tmp_path, monkeypatch):
+    import time as _time
+    cfg = _useCfg(tmp_path, monkeypatch)
+    try:
+        # 缺省 8 并回显
+        assert env.client.get('/api/tasks', headers=H).get_json()['limit'] == 8
+        # 热改成 1：不重启即生效；第 1 个占坑，第 2 个 429 带 holders
+        cfg.write_text(json.dumps({'taskMaxRunning': 1}), encoding='utf-8')
+        _time.sleep(0.05)
+        assert env.client.get('/api/tasks', headers=H).get_json()['limit'] == 1
+        first = create(env, {'prompt': '占用者-标题'}).get_json()['task']
+        assert first['owner'] == '测试智能体'   # 令牌通道建的任务 owner=令牌名
+        from modules import task_state
+        with env.repo.lock:   # _startTask 在夹具里被打桩：手动推进到 running
+            task_state.transition(env.repo.get(first['id']),
+                                  task_state.TaskState.RUNNING)
+        over = create(env, {'prompt': '第二个'})
+        assert over.status_code == 429
+        body = over.get_json()
+        assert body['limit'] == 1 and body['running'] == 1
+        assert body['holders'] == [{'id': first['id'], 'owner': '测试智能体',
+                                    'title': '占用者-标题'}]
+        # 热调回 2：第 2 个即可建（无需重启）
+        cfg.write_text(json.dumps({'taskMaxRunning': 2}), encoding='utf-8')
+        _time.sleep(0.05)
+        assert create(env, {'prompt': '第二个'}).status_code == 202
+        # 0 = 不限
+        cfg.write_text(json.dumps({'taskMaxRunning': 0}), encoding='utf-8')
+        _time.sleep(0.05)
+        assert create(env, {'prompt': '第三个'}).status_code == 202
+        assert create(env, {'prompt': '第四个'}).status_code == 202
+        assert env.client.get('/api/tasks', headers=H).get_json()['limit'] == 0
+    finally:
+        configMod._cache.update(mtime=None, data=None)
+
+
+def test_get_task_max_running_bad_values_fall_back(tmp_path, monkeypatch):
+    path = tmp_path / 'c.json'
+    path.write_text(json.dumps({'port': 6788}), encoding='utf-8')
+    monkeypatch.setattr(configMod, 'CONFIG_PATH', str(path))
+    configMod._cache.update(mtime=None, data=None)
+    for bad in ('abc', -3, {'x': 1}):
+        path.write_text(json.dumps({'taskMaxRunning': bad}), encoding='utf-8')
+        configMod._cache.update(mtime=None, data=None)
+        assert configMod.getTaskMaxRunning() == 8, bad
+    path.write_text(json.dumps({'taskMaxRunning': 0}), encoding='utf-8')
+    configMod._cache.update(mtime=None, data=None)
+    assert configMod.getTaskMaxRunning() == 0          # 0=不限，合法
+    path.write_text(json.dumps({'taskMaxRunning': '3'}), encoding='utf-8')
+    configMod._cache.update(mtime=None, data=None)
+    assert configMod.getTaskMaxRunning() == 3          # 数字字符串接受
 
 
 # ---- 第二轮反馈：close 立即回收 / 接手 Kimi 会话 / 节点模型自动上报 ----
@@ -609,3 +675,398 @@ def test_node_models_from_health_cache(monkeypatch):
     models, default = nodesMod.nodeModelsFor(
         'ai-xmyz', {'name': 'ai-xmyz', 'models': [], 'model': ''})
     assert models == ['m1', 'm2'] and default == 'm1'
+
+
+# ---- R4-0 任务接口默认响应瘦身 ----
+
+def test_get_task_omits_events_by_default(env):
+    """默认不带 events（几百字节级响应）；?events=1 保留旧行为。"""
+    tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+    body = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()
+    assert 'events' not in body['task']
+    assert 'sources' in body['task']
+    body = env.client.get('/api/tasks/%s?events=1' % tid, headers=H).get_json()
+    assert isinstance(body['task']['events'], list) and body['task']['events']
+
+
+def test_list_brief_fields_and_last_text_truncation(env):
+    """列表只给白名单字段；lastText 截 200 字并带 lastTextTruncated。"""
+    tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['lastText'] = 'word' * 100   # 400 字
+        env.repo.save()
+    body = env.client.get('/api/tasks', headers=H).get_json()
+    item = [t for t in body['tasks'] if t['id'] == tid][0]
+    assert item['lastText'] == 'word' * 50
+    assert item['lastTextTruncated'] is True
+    for key in ('id', 'title', 'status', 'engine', 'node', 'model',
+                'modelEffective', 'kimiSessionId', 'createdAt', 'endedAt',
+                'error', 'lastText', 'lastTextTruncated'):
+        assert key in item, key
+    for gone in ('prompt', 'resultFiles', 'events', 'createdLabel',
+                 'lastActiveLabel'):
+        assert gone not in item, gone
+    full = env.client.get('/api/tasks?full=1', headers=H).get_json()
+    itemFull = [t for t in full['tasks'] if t['id'] == tid][0]
+    assert itemFull['prompt'] == 'x' and 'resultFiles' in itemFull
+    assert 'lastTextTruncated' not in itemFull   # 完整摘要不截
+    assert itemFull['createdLabel']              # 面板 task-row 依赖这三个字段
+    assert isinstance(itemFull['resultFiles'], list)
+
+
+def test_events_types_filter_and_max_text(env):
+    """events 端点：types 过滤 + maxText 截断（truncated/textLen）；缺省不变。"""
+    tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        store.repo.append_event(task, 'assistant', text='long' * 100)   # 400 字
+        store.repo.append_event(task, 'error', text='oops')
+        store.repo.append_event(task, 'tool', name='Bash', args='ls')
+    r = env.client.get('/api/tasks/%s/events?types=assistant,error' % tid,
+                       headers=H).get_json()
+    assert {e['type'] for e in r['events']} == {'assistant', 'error'}
+    r = env.client.get('/api/tasks/%s/events?types=assistant&maxText=10' % tid,
+                       headers=H).get_json()
+    ev = r['events'][0]
+    assert ev['text'] == 'long' * 2 + 'lo'
+    assert ev['truncated'] is True and ev['textLen'] == 400
+    r = env.client.get('/api/tasks/%s/events' % tid, headers=H).get_json()
+    ev = [e for e in r['events'] if e['type'] == 'assistant'][0]
+    assert 'truncated' not in ev and len(ev['text']) == 400   # 缺省行为不变
+    assert env.client.get('/api/tasks/%s/events?maxText=-1' % tid,
+                          headers=H).status_code == 400
+
+
+def test_federation_resume_explicitly_requests_events(monkeypatch, tmp_path):
+    """R4-0 调用方适配：联邦 resume 显式 ?events=1，增量逻辑不变。"""
+    import modules.tasks_federation as fedMod
+    client = fedMod.FederationTaskClient(cwd=str(tmp_path), member='b',
+                                         first_prompt='hi')
+    calls = {}
+
+    def fakeCall(method, path, payload=None, timeout=20):
+        calls.setdefault(method, path)
+        if method == 'GET':
+            return 200, {'status': 'waiting', 'events': []}
+        return 202, {'task': {'id': 'bid9'}}
+    monkeypatch.setattr(client, '_call', fakeCall)
+    assert client.start(session_id='bid9') == 'bid9'
+    assert calls['GET'] == '/api/tasks/bid9?events=1'
+    client.close()
+
+
+# ---- R4-1/R4-2 审批边界 ----
+
+POLICY = {'allowCommands': [r'^echo\b'], 'denyCommands': ['6789'],
+          'default': 'ask'}
+
+
+def _adoptEnv(env, tid):
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    agent = {'perm': None, 'permDecision': None,
+             'permEvent': __import__('threading').Event()}
+    return task, agent
+
+
+def test_policy_auto_allows_and_records_event(env):
+    """allowCommands 命中的调用自动放行：auto_approved 落卡、无挂起事件。"""
+    from modules.tasks_runner import _handleAcpPermission
+    tid = create(env, {'prompt': 'x', 'policy': POLICY}).get_json()['task']['id']
+    task, agent = _adoptEnv(env, tid)
+    params = {'toolCall': {'toolCallId': 'c1', 'title': 'Bash', 'kind': 'execute',
+                           'rawInput': {'command': 'echo hi'}},
+              'options': [{'optionId': 'opt-allow', 'name': '允许',
+                           'kind': 'allow_once'}]}
+    assert _handleAcpPermission(task, agent, params, 'req-a') == 'opt-allow'
+    types = [e['type'] for e in task['events']]
+    assert 'auto_approved' in types and 'permission_request' not in types
+    approved = [e for e in task['events'] if e['type'] == 'auto_approved'][0]
+    assert approved['callId'] == 'c1' and approved['rule'] == 'allowCommands'
+
+
+def test_policy_deny_hit_holds_with_args_object(env):
+    """deny 命中 → ask：挂起事件带 callId 与原始命令对象；超时拒绝。"""
+    from modules.tasks_runner import _handleAcpPermission
+    tid = create(env, {'prompt': 'x', 'policy': dict(POLICY, timeoutSec=1)}
+                 ).get_json()['task']['id']
+    task, agent = _adoptEnv(env, tid)
+    cmd = 'curl http://127.0.0.1:6789/health'
+    params = {'toolCall': {'toolCallId': 'c2', 'title': 'Bash', 'kind': 'execute',
+                           'rawInput': {'command': cmd}},
+              'options': [{'optionId': 'opt-allow', 'name': '允许',
+                           'kind': 'allow_once'}]}
+    assert _handleAcpPermission(task, agent, params, 'req-b') is None
+    ask = [e for e in task['events'] if e['type'] == 'permission_request'][0]
+    assert ask['callId'] == 'c2' and ask['args'] == {'command': cmd}
+    assert ask['name'] == 'Bash'
+    assert [e for e in task['events']
+            if e['type'] == 'permission_result'][-1]['status'] == 'timeout'
+
+
+def test_policy_ask_waits_for_decision_no_timeout_when_zero(env):
+    """timeoutSec=0 = 不超时：晚到的决策（1.2s）仍然生效。"""
+    import threading
+    import time as _time
+    from modules.tasks_runner import _handleAcpPermission
+    tid = create(env, {'prompt': 'x',
+                       'policy': {'default': 'ask', 'timeoutSec': 0}}
+                 ).get_json()['task']['id']
+    task, agent = _adoptEnv(env, tid)
+    params = {'toolCall': {'toolCallId': 'c3', 'title': 'Edit', 'kind': 'edit',
+                           'rawInput': {'file_path': 'E:/any/x.py'}},
+              'options': [{'optionId': 'opt-allow', 'name': '允许',
+                           'kind': 'allow_once'}]}
+
+    def lateApprove():
+        _time.sleep(1.2)
+        if agent.get('perm'):
+            agent['permDecision']['value'] = 'opt-allow'
+            agent['permEvent'].set()
+    threading.Thread(target=lateApprove, daemon=True).start()
+    assert _handleAcpPermission(task, agent, params, 'req-c') == 'opt-allow'
+    assert 'permission_request' in [e['type'] for e in task['events']]
+
+
+def test_no_policy_task_behaves_exactly_as_before(env):
+    """无 policy：与旧行为完全一致（挂起 → 决策 → approved，无自动事件）。"""
+    from modules.tasks_runner import _handleAcpPermission
+    tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+    task, agent = _adoptEnv(env, tid)
+    _approveSoon(agent, 'opt-a')
+    params = {'toolCall': {'toolCallId': 'c4', 'title': 'Bash',
+                           'rawInput': {'command': 'anything'}},
+              'options': [{'optionId': 'opt-a', 'name': '允许',
+                           'kind': 'allow_once'}]}
+    assert _handleAcpPermission(task, agent, params, 'req-d') == 'opt-a'
+    types = [e['type'] for e in task['events']]
+    assert 'auto_approved' not in types and 'auto_denied' not in types
+
+
+def test_create_and_update_policy_route(env):
+    """create 校验非法正则 400；详情回显 policy；/policy 更新并落事件。"""
+    resp = create(env, {'prompt': 'x', 'policy': {'allowCommands': ['(bad']}})
+    assert resp.status_code == 400
+    assert 'allowCommands' in resp.get_json()['error']
+
+    tid = create(env, {'prompt': 'x',
+                       'policy': {'allowPaths': ['E:\w'], 'default': 'ask'}}
+                ).get_json()['task']['id']
+    detail = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
+    assert detail['policy']['default'] == 'ask'
+    assert detail['policy']['allowPaths'] == ['E:\w']
+
+    resp = env.client.post('/api/tasks/%s/policy' % tid, headers=H,
+                           data=json.dumps({'policy': {'default': 'allow'}}),
+                           content_type='application/json')
+    assert resp.status_code == 200
+    detail = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
+    assert detail['policy'] == {'allowPaths': [], 'allowCommands': [],
+                                'denyCommands': [], 'default': 'allow',
+                                'timeoutSec': None}
+    resp = env.client.post('/api/tasks/%s/policy' % tid, headers=H,
+                           data=json.dumps({'policy': {'default': 'bad'}}),
+                           content_type='application/json')
+    assert resp.status_code == 400
+
+
+def test_federation_client_forwards_policy(monkeypatch, tmp_path):
+    import modules.tasks_federation as fedMod
+    client = fedMod.FederationTaskClient(cwd=str(tmp_path), member='b',
+                                         first_prompt='hi',
+                                         policy={'default': 'ask'})
+    calls = {}
+
+    def fakeCall(method, path, payload=None, timeout=20):
+        calls.setdefault(method, []).append((path, payload))
+        if path.endswith('/policy'):
+            return 200, {'ok': True}
+        if method == 'GET':
+            return 200, {'status': 'waiting', 'events': []}
+        return 202, {'task': {'id': 'bid8'}}
+    monkeypatch.setattr(client, '_call', fakeCall)
+    assert client.start() == 'bid8'
+    assert calls['POST'][0][1]['policy'] == {'default': 'ask'}
+    client.set_policy({'default': 'allow'})
+    assert calls['POST'][-1][0] == '/api/tasks/bid8/policy'
+    client.close()
+
+
+# ---- R4-3：阻塞等待 + 精简结果 / R4-12 断线续接 ----
+
+def test_wait_returns_summary_when_already_waiting(env):
+    """已 waiting：立即返回；finalText 取流水全文（>MAX_TEXT 不截断）。"""
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    full = '长回答' * 2000   # 6000×? '长回答'=3 字×2000=6000；再拼 4000 超 MAX_TEXT
+    full = full + '尾缀' * 2000   # 总长 >8000，事件卡里只留前 8000
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        store.repo.append_event(task, 'assistant', text=full[:store.MAX_TEXT],
+                                full=full)
+        task_state.transition(task, task_state.TaskState.WAITING)
+        store.repo.append_event(task, 'status', text='这轮结束')
+    body = env.client.get('/api/tasks/%s/wait?after=0' % tid, headers=H).get_json()
+    assert body['status'] == 'waiting'
+    assert body['finalText'] == full        # 全文（从流水取），未按 8000 截断
+    assert body['lastSeq'] == task['seq']
+    assert body['stats']['events'] == len(task['events'])
+    assert body['error'] == ''
+
+
+def test_wait_blocks_until_wake_not_busy_timeout(env):
+    """阻塞中被状态事件唤醒，不等满 timeout（事件驱动验证）。"""
+    import threading as _th
+    import time as _time
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+
+    def finishSoon():
+        _time.sleep(0.8)
+        with env.repo.lock:
+            task_state.transition(task, task_state.TaskState.WAITING)
+            store.repo.append_event(task, 'status', text='这轮结束')
+    _th.Thread(target=finishSoon, daemon=True).start()
+    t0 = _time.monotonic()
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=15' % tid,
+                          headers=H).get_json()
+    elapsed = _time.monotonic() - t0
+    assert body['status'] == 'waiting'
+    assert elapsed < 10   # timeout=15 没等满 → 条件变量唤醒生效
+
+
+def test_wait_timeout_maps_running(env):
+    resp = create(env, {'prompt': 'x'})   # _startTask 打桩 → 恒 queued
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        seq = env.repo.get(tid)['seq']
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
+                          headers=H).get_json()
+    assert body['status'] == 'running'    # 规格：超时映射 running
+    assert body['lastSeq'] == seq
+
+
+def test_wait_reports_pending_permission_with_args(env):
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['pendingPermission'] = 'req-9'
+        env.repo.setAgent(tid, {'perm': {'requestId': 'req-9', 'callId': 'c9',
+                                         'title': 'Bash',
+                                         'args': {'command': 'curl http://x'},
+                                         'options': [
+                                             {'optionId': 'o1', 'name': '允许',
+                                              'kind': 'allow_once'}]}})
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=3' % tid,
+                          headers=H).get_json()
+    assert body['status'] == 'permission'
+    assert body['pending']['requestId'] == 'req-9'
+    assert body['pending']['args'] == {'command': 'curl http://x'}
+    assert body['pending']['options'][0]['optionId'] == 'o1'
+
+
+def test_wait_resume_from_old_seq_no_loss(env):
+    """R4-12：只存 lastSeq，从旧 after 续接——统计不重不漏。"""
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        store.repo.append_event(task, 'tool', name='Bash', args='pwd', callId='c1')
+        store.repo.append_event(task, 'auto_approved', callId='c1', rule='allowCommands')
+        store.repo.append_event(task, 'error', text='一次报错示例')
+        seqAfter = 1   # 跳过建卡事件；后续 3 条都计入
+        total = task['seq']
+    body = env.client.get('/api/tasks/%s/wait?after=%d&timeout=1' % (tid, seqAfter),
+                          headers=H).get_json()
+    assert body['stats']['events'] == total - seqAfter
+    assert body['stats']['errors'] == 1 and body['stats']['autoApproved'] == 1
+    assert body['lastSeq'] == total
+
+
+def test_message_wait_returns_waiting(env):
+    """续聊 wait：发完阻塞，消费线程落定后返回 waiting。"""
+    import threading as _th
+    import time as _time
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task_state.transition(task, task_state.TaskState.WAITING)
+        store.repo.save()
+        agent = {'queue': __import__('queue').Queue(), 'perm': None,
+                 'permDecision': None,
+                 'permEvent': __import__('threading').Event()}
+        env.repo.setAgent(tid, agent)
+
+    def consume():
+        item = agent['queue'].get(timeout=5)
+        _time.sleep(0.4)
+        with env.repo.lock:
+            task_state.transition(task, task_state.TaskState.RUNNING)
+            store.repo.append_event(task, 'user', text=item.get('text') or '')
+        _time.sleep(0.3)
+        with env.repo.lock:
+            task_state.transition(task, task_state.TaskState.WAITING)
+            store.repo.append_event(task, 'status', text='这轮结束')
+    _th.Thread(target=consume, daemon=True).start()
+    t0 = _time.monotonic()
+    resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
+                           data=json.dumps({'text': '继续', 'wait': 10}),
+                           content_type='application/json')
+    elapsed = _time.monotonic() - t0
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['status'] == 'waiting'
+    assert elapsed < 9   # 10s 没等满 → 事件唤醒
+
+
+def test_permission_wait_returns_after_settle(env):
+    """审批 wait：决策提交后阻塞，落定返回 waiting。"""
+    import threading as _th
+    import time as _time
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task_state.transition(task, task_state.TaskState.RUNNING)
+        task['pendingPermission'] = 'req-w1'
+        agent = {'perm': {'requestId': 'req-w1', 'callId': 'c1', 'title': 'Bash',
+                          'args': {'command': 'echo hi'},
+                          'options': [{'optionId': 'o1', 'name': '允许',
+                                       'kind': 'allow_once'}]},
+                 'permDecision': {'value': None},
+                 'permEvent': __import__('threading').Event(),
+                 'queue': __import__('queue').Queue()}
+        env.repo.setAgent(tid, agent)
+
+    def settle():
+        _time.sleep(0.4)
+        with env.repo.lock:
+            task['pendingPermission'] = ''
+            task_state.transition(task, task_state.TaskState.WAITING)
+            store.repo.append_event(task, 'status', text='这轮结束')
+    _th.Thread(target=settle, daemon=True).start()
+    t0 = _time.monotonic()
+    resp = env.client.post('/api/tasks/%s/permission' % tid, headers=H,
+                           data=json.dumps({'requestId': 'req-w1',
+                                            'optionId': 'o1', 'wait': 10}),
+                           content_type='application/json')
+    elapsed = _time.monotonic() - t0
+    assert resp.status_code == 200
+    assert resp.get_json()['status'] == 'waiting'
+    assert elapsed < 9
+
+
+def test_create_wait_maps_running_when_queued(env):
+    """create 带 wait：受理后阻塞；夹具里无人执行 → 超时映射 running。"""
+    resp = env.client.post('/api/tasks', headers=H,
+                           data=json.dumps({'prompt': 'x', 'wait': 1}),
+                           content_type='application/json')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['status'] == 'running'
+    assert body['lastSeq'] >= 1

@@ -9,6 +9,7 @@ import logging
 import queue
 import threading
 
+import config
 from modules import tasks_store as store
 from modules import task_state
 from modules import task_engines
@@ -16,10 +17,11 @@ from modules.kimi_acp import KimiAcp, extractText
 
 log = logging.getLogger('tasks')
 
-log = logging.getLogger('tasks')
 
-MAX_RUNNING = 2
-PERMISSION_TIMEOUT = 300
+def maxRunning():
+    """并发 running 上限（R4-9）：config.taskMaxRunning，缺省 8，0=不限。
+    每次判定现读（config.load 按 mtime 热读），改 config.json 不重启即生效。"""
+    return config.getTaskMaxRunning()
 
 def _appendAssistantText(task, text):
     """回合内的 chunk 只累积缓冲（log 留完整流水），不写事件流。
@@ -63,10 +65,12 @@ def _handleAcpUpdate(task, update):
         argsText = json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args
         with store.repo.lock:
             # 审批事件要能对回工具调用（反馈 §3.4）：ACP 的 permission 请求
-            # 不带 toolCallId 时，退而取最近一次 tool_call
+            # 不带 toolCallId 时，退而取最近一次 tool_call；rawArgs 保留对象
+            # 供审批边界（R4-1/R4-2）与审批事件回显
             task['_lastToolCall'] = {'callId': callId,
                                      'name': update.get('title') or '',
-                                     'args': argsText[:2000]}
+                                     'args': argsText[:2000],
+                                     'rawArgs': args}
         store.repo.append_event(task, 'tool',
                      name=update.get('title') or update.get('kind') or 'tool',
                      args=argsText[:store.MAX_TEXT],
@@ -110,23 +114,57 @@ def _handleAcpUpdate(task, update):
 
 
 def _handleAcpPermission(task, agent, params, requestId):
-    """把 ACP 的授权请求推到任务卡，等用户在前端点允许/拒绝。"""
+    """把 ACP 的授权请求推到任务卡，等用户在前端点允许/拒绝。
+
+    挂起前先过审批边界（R4-1/R4-2）：policy 命中 allow/deny 的调用在
+    这里直接短路（auto_approved/auto_denied 落卡，不产生 permission_request）；
+    联邦代理任务跳过本端判定——对端中枢已用同一份 policy 判过。
+    """
+    from modules import task_policy
     tool = params.get('toolCall') or {}
     title = tool.get('title') or '工具调用'
     callId = tool.get('toolCallId') or ''
-    args = tool.get('rawInput')
-    if args is None:
-        with store.repo.lock:
-            last = task.get('_lastToolCall') or {}
+    rawInput = tool.get('rawInput')
+    with store.repo.lock:
+        last = task.get('_lastToolCall') or {}
+    if rawInput is None:
         callId = callId or last.get('callId') or ''
-        args = last.get('args') or ''
-    argsText = args if isinstance(args, str) \
-        else json.dumps(args, ensure_ascii=False)
+        rawInput = last.get('rawArgs')
+    if rawInput is None:
+        rawInput = last.get('args') or ''
+    # 审批事件自带被审批调用的参数（对象优先），name=工具名（反馈 §1）
+    argsForEvent = rawInput if isinstance(rawInput, (dict, list)) \
+        else str(rawInput or '')
     options = []
     for opt in params.get('options') or []:
         options.append({'optionId': opt.get('optionId') or '',
                         'name': opt.get('name') or '',
                         'kind': opt.get('kind') or ''})
+
+    policy = task.get('policy') or {}
+    peerJudged = False
+    if policy and task.get('engine') == 'remote':
+        from modules import agent_nodes
+        peerJudged = bool(agent_nodes.findFederationMember(task.get('node') or ''))
+    if policy and options and not peerJudged:
+        kind = tool.get('kind') or ''
+        try:
+            decision, rule = task_policy.evaluate(policy, kind, title, rawInput)
+        except Exception:
+            decision, rule = 'ask', 'policy-error'
+        if decision == 'allow':
+            optionId = next((o['optionId'] for o in options
+                             if o.get('kind') in ('allow_once', 'allow_always')), '')
+            if optionId:
+                store.repo.append_event(task, 'auto_approved', callId=callId,
+                                        rule=rule, name=title)
+                return optionId
+            decision, rule = 'ask', 'no-allow-option'
+        elif decision == 'deny':
+            store.repo.append_event(task, 'auto_denied', callId=callId,
+                                    rule=rule, name=title)
+            return None
+
     if not options:
         store.repo.append_event(task, 'permission_result', requestId=str(requestId),
                      status='denied', text='没有可用选项，已拒绝：' + title)
@@ -135,24 +173,32 @@ def _handleAcpPermission(task, agent, params, requestId):
     with store.repo.lock:
         agent['perm'] = {'requestId': str(requestId), 'seq': 0,
                          'title': title, 'options': options,
-                         'callId': callId, 'args': argsText[:2000]}
+                         'callId': callId, 'args': argsForEvent}
         agent['permDecision'] = decision
         agent['permEvent'] = threading.Event()
         task['pendingPermission'] = str(requestId)
         store.repo.save()
     ev = store.repo.append_event(task, 'permission_request', requestId=str(requestId),
                       text='等待你授权：' + title, name=title, options=options,
-                      callId=callId, args=argsText[:store.MAX_TEXT])
+                      callId=callId, args=argsForEvent)
     with store.repo.lock:
         if agent.get('perm'):
             agent['perm']['seq'] = ev.get('seq')
-    deadline = store._now() + PERMISSION_TIMEOUT
-    while store._now() < deadline:
+    try:
+        timeoutSec = int((policy or {}).get('timeoutSec')
+                         if (policy or {}).get('timeoutSec') is not None
+                         else config.getTaskPermissionTimeoutSec())
+    except (TypeError, ValueError):
+        timeoutSec = config.getTaskPermissionTimeoutSec()
+    deadline = store._now() + timeoutSec if timeoutSec > 0 else None
+    while True:
         with store.repo.lock:
             if decision['value'] is not None:
                 break
             if task.get('closedByUser') or task.get('status') == 'closed':
                 break
+        if deadline is not None and store._now() >= deadline:
+            break
         agent['permEvent'].wait(0.5)
         agent['permEvent'].clear()
     with store.repo.lock:

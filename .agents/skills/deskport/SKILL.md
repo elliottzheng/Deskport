@@ -75,12 +75,19 @@ POST /api/tasks
   `POST /api/tasks/files {"name": "a.md", "contentB64": "..."}` → 返回 path 塞进 paths，
   或建任务时直接带 `attachments: [{name, contentB64}]`。
 
-**收事件**（SSE 推送，挂一条连接即可；轮询端点备用）：
+**收事件（推荐：阻塞 wait，一次请求等到需要你决策为止）**：
 
 ```text
-GET /api/tasks/<id>/events/stream?since=<上次最大seq>
-GET /api/tasks/<id>/events?after=<上次最大seq>    （since 等价接受）
+GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，上限600）
+→ {"status": "waiting|failed|permission|running", "finalText": "回答全文",
+   "pending": {"requestId","callId","name","args","options"} 或 null,
+   "stats": {...autoApproved...}, "lastSeq": n}
 ```
+
+- `pending` 非空 = 等审批；`waiting/failed` = 本轮结束（`finalText` 全文）；
+  超时 `running`——带 `lastSeq` 再调（断线续接只存 lastSeq，不丢不重）。
+- 派活/续聊/审批 POST 都支持 `"wait": <秒>`，发完直接阻塞返回。
+- 备用：SSE `events/stream?since=` 与轮询 `events?after=`。
 
 事件类型：`status` / `user` / `assistant`（Kimi 的回答终版）/ `tool` / `tool_result` /
 `plan` / `permission_request`（**带 `callId` 与 `args`**，能对回具体调用）/ `error`。
@@ -98,7 +105,9 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
 - 任务结束判定：`status: waiting`（这轮完成）或 `failed`（看 `error`）。
 - 会话接手：node 托管的会话 web 重启后 `message` 可续（`canResume`）；
   stdio 回退（未启用 node）时中断会明确 409，请重建任务。
-- 并发上限 2 个 running；202 是受理不是完成。
+- 并发上限 `taskMaxRunning` 可配置（config.json，缺省 8，0=不限，改完热
+  生效无需重启）；超限 429 响应带 `{limit, running, holders}`（谁占着名额）；
+  202 是受理不是完成。
 
 ## 规矩
 

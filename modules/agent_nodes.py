@@ -460,7 +460,7 @@ def clientFactoryFor(task):
                     mode=task.get('mode') or mode,
                     prompt_timeout=prompt_timeout,
                     member=nodeName, first_prompt=firstPrompt,
-                    model=taskModel)
+                    model=taskModel, policy=task.get('policy') or {})
             return fedFactory
         return remoteClientFactory(task)
     local = config.getLocalAgentNode()

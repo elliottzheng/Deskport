@@ -301,6 +301,33 @@ def getLocalAgentNodePort():
         return 0
 
 
+def getTaskPermissionTimeoutSec():
+    """任务审批挂起的超时秒数（反馈 R4-2：默认 ≥30 分钟，0=不超时）。"""
+    value = load().get('taskPermissionTimeoutSec')
+    if value is None:
+        return 1800
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 1800
+
+
+def getTaskMaxRunning():
+    """并发 running 任务上限（R4-9）：缺省 8，0=不限；load 按 mtime 热读，
+    改 config.json 即时生效无需重启。负数视为非法回退缺省（避免手滑 -1
+    变成"不限"）。"""
+    value = load().get('taskMaxRunning')
+    if value is None:
+        return 8
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 8
+    if value < 0:
+        return 8
+    return value
+
+
 def isInboxEnabled():
     r"""收件箱扫描开关；缺省关闭，需在设置页显式开启。"""
     return bool(load().get('inboxEnabled'))

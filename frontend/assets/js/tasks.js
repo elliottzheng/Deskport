@@ -106,7 +106,7 @@
             async refresh() {
                 if (document.visibilityState !== 'visible') { return; }
                 try {
-                    const r = await fetch('/api/tasks');
+                    const r = await fetch('/api/tasks?full=1');
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                     this.tasks = data.tasks || [];
@@ -117,14 +117,15 @@
                         const id = this.selectedId;
                         const cur = this.tasks.find(function (t) { return t.id === id; });
                         if (cur) {
-                            this.detail = Object.assign({}, this.detail, {
-                                status: cur.status, resultFiles: cur.resultFiles || [],
-                                error: cur.error || '', lastText: cur.lastText || '',
-                                canContinue: cur.canContinue, pendingPermission: cur.pendingPermission,
-                                canResume: cur.canResume, awaitingAnswer: cur.awaitingAnswer,
-                                mode: cur.mode,
-                                lastActiveLabel: cur.lastActiveLabel,
+                            // R4-0 列表是精简摘要：只合并存在的键，
+                            // 缺的字段（resultFiles/canContinue…）由 loadEvents 全量轮询补
+                            const patch = {};
+                            ['status', 'resultFiles', 'error', 'lastText', 'canContinue',
+                             'pendingPermission', 'canResume', 'awaitingAnswer', 'mode',
+                             'lastActiveLabel'].forEach(function (k) {
+                                if (cur[k] !== undefined) { patch[k] = cur[k]; }
                             });
+                            this.detail = Object.assign({}, this.detail, patch);
                         }
                     }
                 } catch (err) { /* 保持当前列表 */ }
@@ -136,7 +137,20 @@
                 this.after = 0;
                 this.message = '';
                 this.fullEvents = {};
+                this.loadDetail();   // R4-0 精简列表缺 resultFiles/createdLabel 等，详情端点补全
                 await this.loadEvents();
+            },
+            async loadDetail() {
+                if (!this.selectedId) { return; }
+                try {
+                    const r = await fetch('/api/tasks/' + encodeURIComponent(this.selectedId));
+                    if (!r.ok) { return; }
+                    const data = await r.json();
+                    // 详情默认不带 events（键不存在），不会覆盖 this.events
+                    if (data.task && data.task.id === this.selectedId) {
+                        this.detail = Object.assign({}, this.detail, data.task);
+                    }
+                } catch (err) { /* 单次失败保持现状 */ }
             },
             async loadEvents() {
                 if (!this.selectedId) { return; }

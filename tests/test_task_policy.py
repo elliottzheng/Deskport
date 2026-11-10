@@ -1,0 +1,133 @@
+# -*- coding: utf-8 -*-
+r"""审批边界判定器（R4-1/R4-2）：policy 校验与 evaluate 矩阵。
+
+规格例子逐条回归：引号内的 \| 与 $( 不误判、重定向豁免、
+deny 命中强制 ask、只读/allowPaths/allowCommands/default 各分支。
+"""
+import pytest
+
+from modules import task_policy as tp
+
+
+ALLOW = {'allowCommands': ['^grep\\b', '^head\\b', '^echo\\b', '^cat\\b',
+                           '^cd\\b', '^curl\\b'],
+         'denyCommands': ['6789'], 'default': 'ask'}
+
+
+def exe(command):
+    return 'execute', 'Bash', {'command': command}
+
+
+# ---- 校验 ----
+
+def test_validate_minimal_and_defaults():
+    p = tp.validatePolicy({'allowCommands': ['^ls\\b']})
+    assert p['default'] == 'ask' and p['allowPaths'] == []
+    assert p['allowCommands'] == ['^ls\\b'] and p['timeoutSec'] is None
+    assert tp.validatePolicy(None) == {}
+
+
+@pytest.mark.parametrize('bad', [
+    {'allowCommands': ['(unclosed']},
+    {'denyCommands': ['[bad']},
+    {'default': 'yolo'},
+    {'allowPaths': 'E:\\x'},
+    {'allowPaths': ['x'] * 21},
+    {'timeoutSec': -1},
+    {'timeoutSec': 'abc'},
+])
+def test_validate_rejects(bad):
+    with pytest.raises(ValueError):
+        tp.validatePolicy(bad)
+
+
+# ---- 规格例子 ----
+
+def test_command_substitution_is_ask_even_inside_double_quotes():
+    assert tp.evaluate(ALLOW, *exe('echo $(rm -rf x)'))[:2] == ('ask', '') or \
+        tp.evaluate(ALLOW, *exe('echo $(rm -rf x)'))[0] == 'ask'
+    assert tp.evaluate(ALLOW, *exe('echo `rm -rf x`'))[0] == 'ask'
+
+
+def test_redirect_is_ask_but_exempt_forms_allow():
+    assert tp.evaluate(ALLOW, *exe('cat a > b.py'))[0] == 'ask'
+    assert tp.evaluate(ALLOW, *exe('grep -n "x" f 2>/dev/null | head'))[0] == 'allow'
+
+
+def test_single_quoted_substitution_is_allowed():
+    decision, rule = tp.evaluate(ALLOW, *exe("grep -n '$(x)' f"))
+    assert decision == 'allow' and rule == 'allowCommands'
+
+
+def test_piped_pipeline_with_quote_pipe_and_cd_segment():
+    decision, rule = tp.evaluate(ALLOW, *exe('cd /tmp && grep -n "a\\|b" f | head'))
+    assert decision == 'allow' and rule == 'allowCommands'
+
+
+def test_deny_hit_forces_ask_even_if_allow_matches():
+    decision, rule = tp.evaluate(ALLOW, *exe('curl http://127.0.0.1:6789/health'))
+    assert decision == 'ask' and rule == 'deny:command'
+
+
+# ---- 分支矩阵 ----
+
+def test_readonly_tool_allows_without_command():
+    assert tp.evaluate(ALLOW, 'read', 'Read', {'path': 'E:/a/f.py'})[0] == 'allow'
+    assert tp.evaluate({}, 'read', 'Read', None)[0] == 'allow'
+    assert tp.evaluate(ALLOW, '', 'Grep', {'pattern': 'x'})[0] == 'allow'
+
+
+def test_write_inside_allow_paths_allows_outside_falls_to_default():
+    p = {'allowPaths': ['E:\\事项\\远程\\web-platform-dev'], 'default': 'ask'}
+    assert tp.evaluate(p, 'edit', 'Edit',
+                       {'file_path': 'E:/事项/远程/web-platform-dev/app.py'}
+                       )[0] == 'allow'
+    assert tp.evaluate(p, 'edit', 'Edit',
+                       {'file_path': 'E:/事项/其他/x.py'})[0] == 'ask'
+    pDeny = dict(p, default='deny')
+    assert tp.evaluate(pDeny, 'delete', 'Delete',
+                       {'path': 'E:/别处/x'})[0] == 'deny'
+
+
+def test_path_traversal_dotdot_escapes_allow_paths_is_ask():
+    """R4-2 验收漏洞回归：`..` 折叠后越出 allowPaths 必须 ask（实际指向 prod）。"""
+    p = {'allowPaths': ['E:\\事项\\远程\\web-platform-dev'], 'default': 'ask'}
+    assert tp.evaluate(p, 'edit', 'Edit',
+                       {'path': 'E:\\事项\\远程\\web-platform-dev\\..\\web-platform\\x.py'}
+                       )[0] == 'ask'
+    assert tp.evaluate(p, 'edit', 'Edit',
+                       {'file_path': 'E:/事项/远程/web-platform-dev/../web-platform/x.py'}
+                       )[0] == 'ask'
+    # 目录边界语义保持：兄弟目录不因前缀相似而误放行
+    assert tp.evaluate(p, 'edit', 'Edit',
+                       {'path': 'E:\\事项\\远程\\web-platform-dev-evil\\x.py'}
+                       )[0] == 'ask'
+    # 折叠后仍在根内的 ../ 不受影响
+    assert tp.evaluate(p, 'edit', 'Edit',
+                       {'path': 'E:\\事项\\远程\\web-platform-dev\\modules\\..\\app.py'}
+                       )[0] == 'allow'
+
+
+def test_each_segment_must_match_allow_commands():
+    assert tp.evaluate(ALLOW, *exe('grep -n foo bar'))[0] == 'allow'
+    assert tp.evaluate(ALLOW, *exe('grep -n foo && rm -rf x'))[0] == 'ask'   # rm 无 allow 正则
+    assert tp.evaluate(ALLOW, *exe('echo hi'))[0] == 'allow'
+
+
+def test_no_policy_command_without_allow_regex_is_default():
+    decision, _ = tp.evaluate({}, *exe('grep x'))
+    assert decision == 'ask'
+
+
+def test_default_allow_and_deny_branches():
+    pAllow = {'default': 'allow'}
+    assert tp.evaluate(pAllow, 'edit', 'Edit', None)[0] == 'allow'
+    pDeny = {'default': 'deny'}
+    assert tp.evaluate(pDeny, 'edit', 'Edit', None)[0] == 'deny'
+
+
+def test_args_without_command_skip_command_dimension():
+    """命令维度只在有命令文本时启用；Edit 无命令文本走路径分支。"""
+    p = {'allowPaths': ['E:\\w'], 'allowCommands': ['^grep\\b'], 'default': 'ask'}
+    assert tp.evaluate(p, 'edit', 'Edit', {'file_path': 'E:/w/a'})[0] == 'allow'
+    assert tp.evaluate(p, 'edit', 'Edit', {'file_path': '/tmp/a'})[0] == 'ask'

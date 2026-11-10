@@ -11,7 +11,9 @@ import time
 
 PROTOCOL_VERSION = 1
 MAX_EVENTS = 5000
-PERMISSION_TIMEOUT = 900          # node 端兜底；Deskport 端 300s 先到
+# 权限挂起不限时（反馈 R4-2）：由 Deskport 端按任务 timeoutSec 决定何时
+# 提交/放弃决策；node 只在会话被删除/停止时把未决决策置为 closed，
+# 避免 _handlePermission 线程随死会话泄漏
 IDLE_KILL_SECONDS = 45 * 60       # 空闲进程回收；会话可 resume，不丢上下文
 CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 KIMI_CONFIG_PATH = os.path.join(os.path.expanduser('~'), '.kimi-code',
@@ -177,10 +179,10 @@ class AcpSession:
                           'callId': toolCall.get('toolCallId') or '',
                           'args': argsText[:2000],
                           'options': options})
-        decision = {'value': None, 'event': threading.Event()}
+        decision = {'value': None, 'closed': False, 'event': threading.Event()}
         with self._lock:
             self._decisions[acpReqId] = decision
-        decision['event'].wait(PERMISSION_TIMEOUT)
+        decision['event'].wait()   # 不限时：Deskport 端按任务 timeoutSec 决断
         with self._lock:
             self._decisions.pop(acpReqId, None)
         value = decision.get('value')
@@ -337,6 +339,12 @@ class AcpSession:
             self.cancelTurn()
         except Exception:
             pass
+        # 会话停止时释放所有挂起的权限等待线程（closed 语义 → denied）
+        with self._lock:
+            pending = list(self._decisions.values())
+        for decision in pending:
+            decision['closed'] = True
+            decision['event'].set()
         try:
             if self.proc and self.proc.poll() is None:
                 self.proc.terminate()

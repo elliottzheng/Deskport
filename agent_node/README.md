@@ -12,8 +12,28 @@
 ```bash
 # 1. 目标机需已安装并登录 kimi CLI（kimi --version 可用）
 # 2. 拷贝本目录（agent_node/，共 3 个 py 文件）到目标机任意目录
-# 3. 启动（token 也可用 --token <明文> 或环境变量 AGENT_NODE_TOKEN）
-python3.11 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
+# 3. 建令牌文件（R4-6：令牌绝不进进程参数；也可用环境变量 AGENT_NODE_TOKEN）
+echo -n "<令牌>" > ~/.agent_node_token && chmod 600 ~/.agent_node_token
+# 4. 启动
+python3.11 agent_node.py --port 8622 --token-file ~/.agent_node_token \
+  --kimi ~/.kimi-code/bin/kimi
+```
+
+### 在 ai-xmyz 上从 --token 切换到 token-file（≤10 行，人工执行）
+
+```bash
+# 1. 写令牌文件（内容与现用 --token 一致，无需换令牌）
+echo -n '2FKshjYnIsVBDr8LV44SMl6vqDN1nuAS' > ~/deskport-agent-node/token && chmod 600 ~/deskport-agent-node/token
+# 2. 记下现进程 PID 并杀掉
+pgrep -f '^python3 agent_node.py'   # 记下输出
+kill <PID>
+# 3. 用 token-file 重启（注意用 ~/py3.13/bin/python3，见上方版本要求）
+cd ~/deskport-agent-node && setsid nohup ~/py3.13/bin/python3 agent_node.py \
+  --port 8622 --token-file ~/deskport-agent-node/token \
+  --kimi ~/.kimi-code/bin/kimi >> node.log 2>&1 < /dev/null &
+# 4. 验证：健康正常，且参数里再无明文令牌
+curl -s http://127.0.0.1:8622/health
+ps -eo args | grep -c -- '--token '   # 期望 0
 ```
 
 - 会话存档写在 `~/.deskport-agent-node/sessions.json`；日志自管（建议重定向）。

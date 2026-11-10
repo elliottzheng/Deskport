@@ -128,12 +128,13 @@ class FederationTaskClient:
 
     def __init__(self, cwd, on_update=None, on_permission=None,
                  mode='auto', prompt_timeout=1800, member='', first_prompt='',
-                 model=''):
+                 model='', policy=None):
         self.cwd = cwd                      # 不跨机；对端 workspace 自管
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or (lambda params, rid: '')
         self.mode = mode
         self.model = str(model or '').strip()
+        self.policy = policy if isinstance(policy, dict) else {}
         self.prompt_timeout = prompt_timeout
         self.member = member
         self.first_prompt = first_prompt
@@ -163,7 +164,8 @@ class FederationTaskClient:
             # resume：镜像对端既有任务，从当前 seq 之后开始只推新事件
             self.bid = session_id
             self._firstPending = False
-            status, data = self._call('GET', '/api/tasks/%s' % self.bid,
+            # R4-0 详情默认不带 events，显式要一份用于算增量起点
+            status, data = self._call('GET', '/api/tasks/%s?events=1' % self.bid,
                                       timeout=20)
             if status != 200:
                 raise RuntimeError('联邦任务不存在(%s): %s'
@@ -174,7 +176,7 @@ class FederationTaskClient:
             status, data = self._call(
                 'POST', '/api/tasks',
                 {'prompt': self.first_prompt, 'mode': self.mode,
-                 'model': self.model}, timeout=60)
+                 'model': self.model, 'policy': self.policy}, timeout=60)
             if status != 202:
                 raise RuntimeError('联邦任务创建失败(%s): %s'
                                    % (status, data.get('error') or data))
@@ -313,6 +315,14 @@ class FederationTaskClient:
                                   {'mode': mode}, timeout=15)
         if status != 200:
             raise RuntimeError('set_mode 失败(%s): %s'
+                               % (status, data.get('error') or data))
+
+    def set_policy(self, policy):
+        """审批边界更新转发对端（R4-1/R4-2）：对端以其文件系统语义重校验。"""
+        status, data = self._call('POST', '/api/tasks/%s/policy' % self.bid,
+                                  {'policy': policy}, timeout=15)
+        if status != 200:
+            raise RuntimeError('set_policy 失败(%s): %s'
                                % (status, data.get('error') or data))
 
     def cancel(self):

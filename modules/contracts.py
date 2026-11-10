@@ -31,6 +31,7 @@ class TaskSummary(TypedDict):
     prompt: str
     status: str
     createdAt: float
+    owner: str
     createdLabel: str
     startedAt: float
     endedAt: float
@@ -45,6 +46,7 @@ class TaskSummary(TypedDict):
     modelEffective: str
     kimiSessionId: str
     kimiSessionFork: bool
+    policy: dict
     node: str
     remoteCwd: str
     resume: bool

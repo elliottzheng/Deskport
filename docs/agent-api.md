@@ -130,7 +130,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/tasks | 任务列表 + `running`/`queued` 计数（全局口径） |
+| GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
 | POST | /api/tasks | 建任务 → 202 `{prompt, engine, node, cwd, mode, model, paths, attachments}` |
 | GET | /api/tasks/<id> | 任务状态（含 `model`、`workspace`、`remoteCwd`） |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
@@ -175,6 +175,26 @@ DELETE /api/agent/ssh/sessions/<sid>
 **任务事件类型**：`status` / `user` / `assistant`（回答终版，逐 chunk 流水在
 `/log`）/ `tool` / `tool_result` / `plan` / `permission_request` /
 `permission_result` / `error`。`status: waiting` = 本轮完成。
+
+**收事件（推荐：阻塞 wait，一次请求等到需要你决策为止）**：
+
+```text
+GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，上限600）
+→ {"status": "waiting|failed|permission|running|...", "finalText": "回答全文",
+   "pending": {"requestId","callId","name","args","options"} 或 null,
+   "stats": {"events":n, "tools":n, "autoApproved":n, "errors":n},
+   "lastSeq": n, "error": "..."}
+```
+
+- `pending` 非空 = 等你审批（policy 自动放行的不算，数量见
+  `stats.autoApproved`）；`status: waiting/failed/closed/cancelled` = 回合落定，
+  `finalText` 是 after 之后最后一条回答全文（不截断）；
+- 超时返回 `status: running`——带上 `lastSeq` 再调一次即可；断线/换端/重启
+  后续接也一样：只保存 lastSeq，`wait?after=lastSeq` 不丢、不重；
+- `POST /api/tasks`、`/message`、`/permission` 都支持 `"wait": <秒>`，
+  发完直接按同样语义阻塞返回，省一次往返；
+- 实现：服务端条件变量驱动（Flask threaded 模式，每个等待占一个工作线程，
+  无忙等）；SSE 与轮询端点保留作备用。
 
 ## 重启语义（如实版）
 
