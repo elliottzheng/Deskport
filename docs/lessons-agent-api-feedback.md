@@ -120,3 +120,29 @@ f649e18（选模型）→ c0647cd（本机全等价）→ 75cae14（文档）。
 - **接手会话的默认安全侧**：kimi fork 有会话锁（占用中直接报错），API
   默认 fork:true 让外部智能体永不与用户终端并发写同一会话；fork 输出用
   正则提 `session_<uuid>`，锁错误原文透传给调用方。
+
+## 8. 第三轮补充（2026-11-11，fbr4 复测后；条目为记录，修复单独派活）
+
+- **重启 prod web 会打断经由 prod 驱动的任务回合**：任务线程活在 web 进程里，
+  杀 web 即丢本轮 pending 输出与事件，任务落为 paused（部署命令的最后一步
+  输出因此丢失）。规则：部署窗口放在任务回合落定之后（`waiting` 态可跨重启）；
+  部署流程应加「有无 running/waiting 任务」预检，重启中断的回合要能被
+  `message` 显式续跑。
+- **重启后续聊死锁（待修，已复现）**：重启窗口内 node 侧会话发起的
+  permission_request web 收不到——node 权限挂起（900s）、`running=true` 不变，
+  web 侧 `message` 永远 409「远端会话正在执行」并把任务转 failed；`canResume`
+  再续仍撞同一堵墙。规则方向：node 对未决权限做留存并在客户端重连后重推；
+  web 对「远端忙」提供探测/强制取消出口，不允许无限 409 循环。
+- **session/load 回放污染事件流（待修）**：resume 时 update 事件已有
+  `replay` 过滤，但 `session/load` 回放的历史（旧 assistant 文本、旧
+  permission_request）仍被当新事件落卡；审批历史请求必然 409「授权请求已
+  失效」。规则：resume 路径回放的一切事件必须带 `replay` 标记并被任务卡
+  跳过，只有新事件才是审批候选。
+- **close 后 kimi acp 进程积压（归属未核实）**：close 后本机 node 下仍有
+  7 个 acp 进程——分不清「为续聊故意保留（45 分钟空闲回收）」还是
+  「宿主会话已删的泄漏进程」，node meta 没有 pid、审计没有进程清单。规则：
+  node 会话 meta 带 pid 并在 /api/sessions 暴露；回收路径（idle/close/delete）
+  各自留痕；诊断先列 pid↔sid 映射再下结论。
+- **联邦成员模型缓存重启后有 ~60s 暗窗**：health 后台探测冷启动，第一轮
+  刷新前 nodes 是灰的。规则：web 启动时主动预热一次（异步，不等它）；
+  nodes 响应可带 `cacheAge`，让调用方知道拿到的是冷启动数据。
