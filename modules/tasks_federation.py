@@ -15,14 +15,15 @@ import time
 import urllib.error
 import urllib.request
 
-from flask import jsonify
+from flask import Blueprint, jsonify
 
 import config
 from modules import task_engines
-from modules.agent_nodes import blueprint, findNode, nodeRequest
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 log = logging.getLogger('federation-tasks')
+
+blueprint = Blueprint('federation_tasks', __name__)
 
 
 # ---------------------------------------------------------------- 节点呈现
@@ -51,6 +52,24 @@ def nodeHealth(name):
     if status != 200:
         return jsonify({'ok': False, 'error': 'HTTP %s' % status})
     return jsonify({'ok': True, 'kind': 'federation'})
+
+
+def findNode(name):
+    from modules.agent_nodes import findNode as _find
+    return _find(name)
+
+
+def _agentNodeHealth(name):
+    from modules.agent_nodes import findNode, nodeRequest
+    try:
+        status, data = nodeRequest(findNode(name), 'GET', '/health', timeout=8)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)[:200]})
+    if status != 200:
+        return jsonify({'ok': False, 'error': 'HTTP %s' % status})
+    data.pop('ok', None)
+    data['ok'] = True
+    return jsonify(data)
 
 
 def _agentNodeHealth(name):

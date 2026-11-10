@@ -203,7 +203,8 @@ def gzipText(resp):
 # 显式注册表：蓝图模块与 register(app) 模块分开，新增模块必须在这里登记。
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
-                     pluginsModule, agentApiModule, agentNodesModule)
+                     pluginsModule, agentApiModule, agentNodesModule,
+                     tasksFederationModule)
 REGISTER_MODULES = (systemModule, metaModule, tasksModule)
 
 
