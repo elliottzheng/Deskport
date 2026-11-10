@@ -15,12 +15,24 @@ class StubHandler(BaseHTTPRequestHandler):
     """记录请求的上游桩; 类属性 LAST 保存最近一次请求供断言。"""
     LAST = {}
 
+    def _readBody(self):
+        if self.headers.get('Transfer-Encoding', '').lower() == 'chunked':
+            body = b''
+            while True:
+                size = int(self.rfile.readline().strip().split(b';')[0], 16)
+                if size == 0:
+                    self.rfile.readline()
+                    return body
+                body += self.rfile.read(size)
+                self.rfile.readline()
+        return self.rfile.read(int(self.headers.get('Content-Length') or 0))
+
     def _echo(self, code=None, extraHeaders=None, body=None):
         StubHandler.LAST = {
             'path': self.path,
             'headers': dict(self.headers.items()),
             'method': self.command,
-            'body': self.rfile.read(int(self.headers.get('Content-Length') or 0)),
+            'body': self._readBody(),
         }
         if body is None:
             body = b'upstream-ok'
@@ -144,6 +156,19 @@ def test_post_body_streamed(monkeypatch, upstream):
                        headers={'Content-Type': 'application/octet-stream'})
     assert resp.status_code == 200
     assert StubHandler.LAST['body'] == big
+
+
+def test_post_body_streamed_chunked_without_content_length(monkeypatch, upstream):
+    """流式 body 转发改用 chunked 时必须剥掉 Content-Length:
+    CL 与 TE 并存是非法组合, aiohttp 上游会直接 400 (远窗登录表单踩过)。"""
+    client = next(makeApp(monkeypatch, upstream, 'full'))
+    resp = client.post('/yuanchuang/login', data=b'username=admin&password=x',
+                       headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    assert resp.status_code == 200
+    last = StubHandler.LAST
+    assert last['body'] == b'username=admin&password=x'       # 内容原样到达
+    sent = last['headers']
+    assert not ('Content-Length' in sent and 'Transfer-Encoding' in sent)
 
 
 def test_sse_streams_live(monkeypatch, upstream):
