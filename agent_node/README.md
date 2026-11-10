@@ -7,12 +7,15 @@
 
 ```bash
 # 1. 目标机需已安装并登录 kimi CLI（kimi --version 可用）
-# 2. 拷贝 agent_node.py 到目标机任意目录
-# 3. 生成 token 并启动（端口按需）
+# 2. 拷贝本目录（agent_node/，共 3 个 py 文件）到目标机任意目录
+# 3. 启动（token 也可用 --token <明文> 或环境变量 AGENT_NODE_TOKEN）
 python3 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
 ```
 
-会话存档写在 `~/.deskport-agent-node/sessions.json`；日志自管（建议重定向）。
+- 会话存档写在 `~/.deskport-agent-node/sessions.json`；日志自管（建议重定向）。
+- `--token-file <路径>`：从文件读令牌，文件不存在则以随机值原子创建——
+  Deskport 侧与本机 node 共享令牌就用这个（本机部署时 Deskport 读
+  `~/.deskport-agent-node/token`，见 `config.getAgentNodeToken`）。
 
 ## Deskport 侧接入
 
@@ -22,12 +25,17 @@ python3 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
 "agentNodes": [
   {"name": "ai-xmyz", "url": "http://127.0.0.1:8622",
    "token": "<TOKEN>", "via": "<SSH主机id>", "remote": "127.0.0.1:8622"}
-]
+],
+"localAgentNodePort": 8622
 ```
 
 - 直连可达时省略 `via`/`remote`。
 - node 端口被防火墙过滤时填 `via`（SSH 主机 id 或名称）：Deskport 经 SSH
   direct-tcpip 隧道转发 HTTP，token 照常生效，无需改防火墙。
+- `localAgentNodePort`：本机 agent node 端口（>0 启用）。启用后 engine=acp
+  的任务也由本机 node 托管——web 重启任务无感存活；置 0 回退 web 内托管。
+- Windows 本机部署：仓库根的 `start-agentnode.vbs` + watchdog（`anode` 检查项）
+  负责常驻与自愈。
 
 ## 开机自启（Linux 无 sudo 时）
 
@@ -35,8 +43,8 @@ python3 agent_node.py --port 8622 --token <TOKEN> --kimi ~/.kimi-code/bin/kimi
 
 ```
 @reboot sleep 10 && cd <部署目录> && /usr/bin/python3 agent_node.py \
-  --port 8622 --token <TOKEN> --kimi /home/<user>/.kimi-code/bin/kimi \
-  >> <部署目录>/node.log 2>&1
+  --port 8622 --token-file ~/.deskport-agent-node/token \
+  --kimi /home/<user>/.kimi-code/bin/kimi >> <部署目录>/node.log 2>&1
 ```
 
 SSH 远程拉起时用 `setsid`，避免会话退出连带杀掉进程。
@@ -50,11 +58,15 @@ SSH 远程拉起时用 `setsid`，避免会话退出连带杀掉进程。
 | POST | /api/sessions | 建会话 `{cwd, mode, sessionId?}`，带 sessionId 即 resume |
 | GET | /api/sessions/<sid> | 会话元信息 |
 | POST | /api/sessions/<sid>/prompt | 派活 `{text}`，202 受理 |
-| GET | /api/sessions/<sid>/events?since=N | 增量事件流（update/权限/turn_end） |
+| GET | /api/sessions/<sid>/events?since=N | 增量事件快照（一次性返回） |
+| GET | /api/sessions/<sid>/events/stream?since=N | SSE 长连接推送（25s 心跳，断开以 since 续传） |
 | POST | /api/sessions/<sid>/permission | 权限决策 `{requestId, optionId}` |
 | POST | /api/sessions/<sid>/mode | 切换批准模式 `{mode}` |
 | POST | /api/sessions/<sid>/cancel | 中断当前回合 |
 | DELETE | /api/sessions/<sid> | 关闭并移除会话进程 |
+
+SSE 流格式：`data: {事件json}` 逐条推送；`: keepalive` 心跳行；
+`event: end` 表示进程已退出且事件推完（客户端可停止重连）。
 
 语义要点：
 
@@ -62,3 +74,5 @@ SSH 远程拉起时用 `setsid`，避免会话退出连带杀掉进程。
 - 同一 kimiSessionId 重复建会话时复用存活进程（多端接手同一会话）。
 - 空闲 45 分钟进程自动回收；kimiSessionId 已存档，随时可 resume 接续上下文。
 - 权限请求 900 秒无人决策自动取消。
+- 协议实现与 Deskport 内置客户端（KimiAcp）由 `tests/test_acp_parity.py`
+  对拍测试保证语义一致。

@@ -56,6 +56,37 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 - `get`：`{ "host": "...", "path": "..." }` → base64 内容（上限 8MB）
 - `put`：`{ "host": "...", "path": "...", "contentB64": "..." }`（上限 8MB，覆盖写）
 
+### GET /api/agent/ssh/sessions · POST /api/agent/ssh/sessions（持久会话）
+
+- `POST { "host": "...", "cwd": "/path" }` → `{ sessionId }`；同会话 cd/export 延续；
+- `POST /api/agent/ssh/sessions/<sid> { "command": "...", "timeoutSec": 30 }` 执行；
+  `DELETE` 关闭。见 `modules/agent_sessions.py`。
+
+## 任务 API（委托智能体）
+
+把目标交给 Deskport 托管的 Kimi 会话（本机或远端节点）执行，全程结构化事件回流，
+权限可审批——这是「智能体指挥智能体」的正道，同样走 `X-Agent-Token` 认证。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /api/tasks | 任务列表（`running` 上限 2） |
+| POST | /api/tasks | 建任务 → 202；`{prompt, engine, node, cwd, mode, paths}` |
+| GET | /api/tasks/<id> | 任务状态（status/lastText/error/pendingPermission） |
+| GET | /api/tasks/<id>/events?since=N | 增量事件（seq 单调递增） |
+| POST | /api/tasks/<id>/message | 续聊 `{text}`（waiting/paused 时自动接续上下文） |
+| POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
+| POST | /api/tasks/<id>/mode | 切换批准模式 `{mode}` |
+| POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话 |
+
+- `engine: "acp"` = 本机 Kimi（由本机 agent node 托管，web 重启任务无感存活；
+  `paths` 可带本机输入文件，复制到任务工作区）；
+- `engine: "remote"` = 远端节点，需 `node`（`GET /api/tasks/nodes` 列表）与 `cwd`（远端目录）；
+- `mode`：`auto` / `default`（逐项审批，`permission_request` 事件等决策）/
+  `plan` / `yolo`；
+- 事件类型见 `docs` 内任务页文档；`assistant` 即 Kimi 的回答文本，
+  `status: waiting` = 本轮完成，`failed` 时看 `error`；
+- 令牌来源的任务会写审计 `agent.task.create`（独立于任务卡事件）。
+
 ## 审计
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.list|get|put`），
@@ -70,7 +101,7 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 
 ## 技能封装（给智能体用）
 
-仓库内 `.agents/skills/deskport-ssh/SKILL.md` 是本 API 的智能体技能封装，
+仓库内 `.agents/skills/deskport/SKILL.md` 是本 API + 任务 API 的智能体技能封装，
 把它链入你自己的 agents 技能目录（如 `~/.agents/skills/`），智能体即可自动
-获得「远程执行命令 / SFTP 读写」的能力。令牌文件路径由部署约定（建议放
-部署目录旁并加入忽略清单），技能文件里不落明文。
+获得「远程执行 / SFTP 读写 / 任务派活给其他智能体」的能力。令牌文件路径由
+部署约定（建议放部署目录旁并加入忽略清单），技能文件里不落明文。
