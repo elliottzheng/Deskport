@@ -300,8 +300,15 @@ def remoteClientFactory(task):
     return factory
 
 
+def findFederationMember(name):
+    """按 id 或 name 查联邦成员 Deskport（可作任务执行点）。"""
+    from modules.tasks_federation import findFederationMember as _find
+    return _find(name)
+
+
 def clientFactoryFor(task):
-    """统一客户端选择：remote→指定节点；acp→本机节点（启用时）否则 web 内 stdio。
+    """统一客户端选择：remote→指定执行点（agent node 或联邦成员）；
+    acp→本机节点（启用时）否则 web 内 stdio。
 
     本机 node 化后 engine=acp 的会话也由本机 agent node 托管，
     web 重启不再打断任务；未启用（localAgentNodePort=0）时回退 KimiAcp。
@@ -309,6 +316,20 @@ def clientFactoryFor(task):
     from modules.kimi_acp import KimiAcp
     engine = (task.get('engine') or 'acp').lower()
     if engine == 'remote':
+        nodeName = task.get('node') or ''
+        if findFederationMember(nodeName) is not None:
+            from modules.tasks_federation import FederationTaskClient
+            firstPrompt = task.get('prompt') or ''
+
+            def fedFactory(cwd, on_update=None, on_permission=None,
+                           mode='auto', prompt_timeout=0):
+                return FederationTaskClient(
+                    cwd=cwd, on_update=on_update,
+                    on_permission=on_permission,
+                    mode=task.get('mode') or mode,
+                    prompt_timeout=prompt_timeout,
+                    member=nodeName, first_prompt=firstPrompt)
+            return fedFactory
         return remoteClientFactory(task)
     local = config.getLocalAgentNode()
     if local is not None:
@@ -327,8 +348,7 @@ def clientFactoryFor(task):
 
 def _remoteSessionThread(task, manifest):
     from modules import tasks_runner
-    tasks_runner._sessionThread(task, manifest,
-                                clientFactory=remoteClientFactory(task))
+    tasks_runner._sessionThread(task, manifest, clientFactory=clientFactoryFor(task))
 
 
 task_engines.register('remote', task_engines.ThreadEngine(_remoteSessionThread))
@@ -343,24 +363,5 @@ task_engines.register('acp', task_engines.ThreadEngine(_acpSessionThread))
 
 
 # ---------------------------------------------------------------- API
-
-@blueprint.route('/api/tasks/nodes')
-def nodesList():
-    return jsonify({'nodes': [{'name': n['name'], 'via': n['via']}
-                              for n in config.getAgentNodes()]})
-
-
-@blueprint.route('/api/tasks/nodes/<name>/health')
-def nodeHealth(name):
-    node = findNode(name)
-    if node is None:
-        return jsonify({'error': '节点不存在'}), 404
-    try:
-        status, data = nodeRequest(node, 'GET', '/health', timeout=8)
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)[:200]})
-    if status != 200:
-        return jsonify({'ok': False, 'error': 'HTTP %s' % status})
-    data.pop('ok', None)
-    data['ok'] = True
-    return jsonify(data)
+# 节点列表与健康检查路由在 modules/tasks_federation.py
+# （agent_nodes 与联邦成员统一呈现，agent_nodes 行数预算紧张）。

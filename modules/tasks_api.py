@@ -66,9 +66,10 @@ def createTask():
     remoteCwd = ''
     if engine == 'remote':
         node = str(data.get('node') or '').strip()
-        if agent_nodes.findNode(node) is None:
-            return jsonify({'error': 'agent node 不存在',
-                            'nodes': [n['name'] for n in agent_nodes.listNodeNames()]}), 400
+        if agent_nodes.findNode(node) is None \
+                and agent_nodes.findFederationMember(node) is None:
+            return jsonify({'error': '执行点不存在（agent node 或联邦成员）',
+                            'nodes': agent_nodes.listNodeNames()}), 400
         remoteCwd = str(data.get('cwd') or '').strip()
         if len(remoteCwd) > 500:
             return jsonify({'error': 'cwd 过长'}), 400
