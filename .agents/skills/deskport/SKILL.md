@@ -61,11 +61,12 @@ POST /api/tasks
 - `mode`: `auto`（自动批准，推荐）/ `default`（逐项审批）/ `plan` / `yolo`
 - `paths`（仅 acp）：本机输入文件路径数组，会复制到任务工作区（只读原件）
 
-**收事件**（轮询，间隔 2~3 秒）：
+**收事件**（SSE 推送，挂一条连接即可；JSON 轮询端点保留备用）：
 
 ```text
-GET /api/tasks/<id>/events?since=<上次最大seq>
-→ {events: [{seq, type, text, name, options, ...}], running, dead}
+GET /api/tasks/<id>/events/stream?since=<上次最大seq>
+→ data: {seq, type, text, name, options, ...} 逐条推送；18s 心跳；closed 后 end
+GET /api/tasks/<id>/events?after=<上次最大seq>    → {events: [...]}（轮询备用）
 ```
 
 事件类型：`status`（状态流转）、`user`（输入）、`assistant`（Kimi 的回答文本）、

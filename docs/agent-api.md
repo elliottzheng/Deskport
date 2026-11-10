@@ -72,7 +72,8 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 | GET | /api/tasks | 任务列表（`running` 上限 2） |
 | POST | /api/tasks | 建任务 → 202；`{prompt, engine, node, cwd, mode, paths}` |
 | GET | /api/tasks/<id> | 任务状态（status/lastText/error/pendingPermission） |
-| GET | /api/tasks/<id>/events?since=N | 增量事件（seq 单调递增） |
+| GET | /api/tasks/<id>/events?after=N | 增量事件（轮询备用） |
+| GET | /api/tasks/<id>/events/stream?since=N | SSE 推送（外部智能体实时观察） |
 | POST | /api/tasks/<id>/message | 续聊 `{text}`（waiting/paused 时自动接续上下文） |
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
 | POST | /api/tasks/<id>/mode | 切换批准模式 `{mode}` |
