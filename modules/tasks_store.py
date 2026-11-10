@@ -25,6 +25,48 @@ MAX_TEXT = 8000
 MAX_TOOL_RESULT = 4000
 MAX_RUNNING = 2
 PERMISSION_TIMEOUT = 300
+MAX_UPLOAD_MB = 32        # /api/tasks/files 单文件上限（§7b 过渡：智能体没有
+                          # exec/sftp 之前的文件投递通道）
+
+
+def _safeAttachmentName(name):
+    """附件只允许纯文件名：无路径分隔符、无控制字符、≤120 字符。"""
+    text = str(name or '').strip()
+    if not text or len(text) > 120:
+        return ''
+    if re.search(r'[\\/:*?"<>|\x00-\x1f]', text):
+        return ''
+    return text
+
+
+def _saveAttachments(attachments, workspace):
+    """把任务请求里的 attachments 写进 inputs/，返回清单（§7b 过渡）。"""
+    inputsDir = os.path.join(workspace, 'inputs')
+    os.makedirs(inputsDir, exist_ok=True)
+    manifest = []
+    total = 0
+    for item in attachments or []:
+        if not isinstance(item, dict):
+            raise ValueError('attachments 条目必须是 {name, contentB64} 对象')
+        name = _safeAttachmentName(item.get('name'))
+        if not name:
+            raise ValueError('附件名不合法（需纯文件名，≤120 字符）')
+        try:
+            raw = fsutil.decodeBase64(item.get('contentB64'))
+        except ValueError:
+            raise ValueError('附件 %s 的 contentB64 不是合法 base64' % name)
+        if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
+            raise ValueError('附件 %s 超过 %dMB 上限' % (name, MAX_UPLOAD_MB))
+        total += len(raw)
+        if total > MAX_TASK_MB * 1024 * 1024:
+            raise ValueError('附件总量超过 %dMB' % MAX_TASK_MB)
+        target = _uniqueName(inputsDir, name)
+        with open(target, 'wb') as f:
+            f.write(raw)
+        manifest.append({'source': '(智能体上传)',
+                         'input': os.path.relpath(target, os.path.dirname(inputsDir)),
+                         'size': len(raw)})
+    return manifest
 
 
 def taskRoot():

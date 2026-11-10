@@ -13,7 +13,6 @@
 """
 import base64
 import hashlib
-import re
 import secrets
 import stat as statMod
 
@@ -21,6 +20,7 @@ from flask import jsonify, request
 
 from modules import events
 from modules.agent_api import _agentRequired, _resolveHost, blueprint
+from modules.fsutil import decodeBase64 as _decodeB64
 from modules.ssh_sftp import _openSftp
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -42,6 +42,11 @@ def _sftpFor(hostNameOrId):
         return None, None, str(e)
 
 
+def isLocal(hostNameOrId):
+    from modules.agent_local import isLocalHost
+    return isLocalHost(hostNameOrId)
+
+
 def _mapSftpError(e):
     """IOError → (status, 说明)。13=权限, 2=不存在, 其余按用法错误。"""
     errno = getattr(e, 'errno', None)
@@ -51,16 +56,6 @@ def _mapSftpError(e):
     if errno == 2 or 'No such file' in text:
         return 404, text
     return 400, text
-
-
-def _decodeB64(contentB64):
-    """严格 base64 解码：剔除空白后必须只含 base64 字母表；坏了抛 ValueError。"""
-    s = re.sub(r'\s+', '', str(contentB64 or ''))
-    if not s:
-        raise ValueError('empty')
-    if not re.fullmatch(r'[A-Za-z0-9+/]+={0,2}', s):
-        raise ValueError('not base64')
-    return base64.b64decode(s + '=' * (-len(s) % 4), validate=True)
 
 
 def _joinPath(base, name):
@@ -105,6 +100,11 @@ def agentSftpList():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    if isLocal(data.get('host')):
+        from modules.agent_local import localEnabled, sftpListLocal
+        if not localEnabled():
+            return jsonify({'error': '主机不存在'}), 404
+        return sftpListLocal(data.get('path'))
     _host, sftp, err = _sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404
@@ -131,6 +131,16 @@ def agentSftpGet():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    if isLocal(data.get('host')):
+        from modules.agent_local import localEnabled, sftpGetLocal
+        if not localEnabled():
+            return jsonify({'error': '主机不存在'}), 404
+        try:
+            return sftpGetLocal(data.get('path'),
+                                int(data.get('offset') or 0),
+                                int(data.get('length') or 0))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'offset/length 必须是整数'}), 400
     _host, sftp, err = _sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404
@@ -192,6 +202,12 @@ def agentSftpPut():
     if request.content_length and request.content_length > MAX_FILE_BYTES * 2 + 65536:
         return jsonify({'error': '请求体超过上限（文件上限 %d bytes）' % MAX_FILE_BYTES}), 413
     data = request.get_json(silent=True) or {}
+    if isLocal(data.get('host')):
+        from modules.agent_local import localEnabled, sftpPutLocal
+        if not localEnabled():
+            return jsonify({'error': '主机不存在'}), 404
+        return sftpPutLocal(data.get('path'), data.get('contentB64'),
+                            str(data.get('sha256') or ''))
     _host, sftp, err = _sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404

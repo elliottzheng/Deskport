@@ -152,23 +152,40 @@ def agentSessionOpen():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
-    hostEntry = _resolveHost(str(data.get('host') or ''))
-    if hostEntry is None:
-        names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
-        return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
     cwd = str(data.get('cwd') or '').strip()
-
+    isLocal = str(data.get('host') or '').strip().lower() == 'local'
     with _sessionsLock:
         openCount = sum(1 for s in _sessions.values() if s['alive'])
     if openCount >= SESSION_MAX_OPEN:
         return jsonify({'error': '存活会话已达上限 (%d)，请先关闭部分会话'
                         % SESSION_MAX_OPEN}), 429
+    if isLocal:
+        from modules.agent_local import (localEnabled, openLocalSession,
+                                         normalizeLocalPath, _resolveShell)
+        if not localEnabled():
+            names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
+            return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
+        shell, shellErr = _resolveShell(data)
+        if shellErr:
+            return jsonify(shellErr), 400
+        chan, errResp = openLocalSession(cwd, shell)
+        if errResp:
+            return jsonify(errResp[0]), errResp[1]
+        hostName = 'local'
+        cwd = normalizeLocalPath(cwd)
+    else:
+        hostEntry = _resolveHost(str(data.get('host') or ''))
+        if hostEntry is None:
+            names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
+            return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
+        try:
+            channel = _openChannel(hostEntry, cwd)
+        except paramiko.SSHException as e:
+            return jsonify({'error': 'SSH 会话建立失败: %s' % e}), 502
+        chan = channel
+        hostName = hostEntry.get('name') or hostEntry.get('host')
 
-    try:
-        channel = _openChannel(hostEntry, cwd)
-    except paramiko.SSHException as e:
-        return jsonify({'error': 'SSH 会话建立失败: %s' % e}), 502
-    chan = _SessionChannel(channel)
+    chan = _SessionChannel(chan)
     # 就绪探针：内层 bash 能读 stdin 时回显 __READY；cd 失败则通道直接关闭
     readyNonce = secrets.token_hex(6)
     chan.sendLine('printf "__READY_' + readyNonce + '\\n"')
@@ -186,20 +203,20 @@ def agentSessionOpen():
         time.sleep(0.05)
     if not ready:
         try:
-            channel.close()
+            chan.ch.close()
         except Exception:
             pass
         return jsonify({'error': '会话启动超时，请重试'}), 504
     sid = secrets.token_hex(8)
     with _sessionsLock:
         _sessions[sid] = {'id': sid, 'chan': chan, 'lock': threading.Lock(),
-                          'host': hostEntry.get('name') or hostEntry.get('host'),
+                          'host': hostName, 'local': isLocal,
                           'cwd': cwd or '~', 'alive': True, 'pending': '',
                           'pendingFrom': 0, 'createdAt': time.time(),
                           'deadAt': 0}
-    events.log('agent.session.open', hostEntry.get('name'), 'ok',
-               cwd or '~', request.remote_addr)
-    return jsonify({'sessionId': sid, 'host': hostEntry.get('name') or '',
+    events.log('agent.session.open', hostName, 'ok', cwd or '~',
+               request.remote_addr)
+    return jsonify({'sessionId': sid, 'host': hostName,
                     'cwd': cwd or '~'})
 
 
@@ -368,7 +385,11 @@ def agentSessionExec(sid):
         outText = (outText.rstrip('\n') + '\n' + errText).strip('\n')
         errText = ''
     if cwdReport:
-        sess['cwd'] = cwdReport
+        if sess.get('local'):
+            from modules.agent_local import normalizeLocalPath
+            sess['cwd'] = normalizeLocalPath(cwdReport)
+        else:
+            sess['cwd'] = cwdReport
     events.log('agent.exec.session', sess['host'],
                reason or 'ok', command[:160], request.remote_addr)
     return jsonify({'exit': exitCode, 'out': outText,
@@ -397,7 +418,11 @@ def _resolvePending(sess, chan):
             sess['pending'] = ''
             sess['pendingFrom'] = 0
             if pwd:
-                sess['cwd'] = pwd
+                if sess.get('local'):
+                    from modules.agent_local import normalizeLocalPath
+                    sess['cwd'] = normalizeLocalPath(pwd)
+                else:
+                    sess['cwd'] = pwd
             return ''
         if chan.dead():
             sess['alive'] = False

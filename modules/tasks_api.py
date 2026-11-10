@@ -109,9 +109,13 @@ def createTask():
                                  datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
                                  + '-' + store._slug(prompt) + '-' + taskId[:4])
     # 复制可能很慢，不能持有全局锁——否则列表/事件轮询全被阻塞
+    attachments = data.get('attachments') or []
+    if not isinstance(attachments, list) or len(attachments) > 20:
+        return jsonify({'error': 'attachments 必须是数组且不超过 20 项'}), 400
     try:
         os.makedirs(workspace, exist_ok=False)
         manifest = store._collectSources(paths, workspace)
+        manifest += store._saveAttachments(attachments, workspace)
     except (OSError, ValueError, shutil.Error) as e:
         try:
             shutil.rmtree(workspace, ignore_errors=True)
@@ -410,6 +414,39 @@ def downloadResult(task, taskId):
     if not os.path.isfile(full):
         return jsonify({'error': '文件不存在'}), 404
     return send_file(full, as_attachment=True, download_name=os.path.basename(full))
+
+
+@blueprint.route('/api/tasks/files', methods=['POST'])
+def uploadTaskFile():
+    """智能体文件投递（§7b 过渡）：上传到本机暂存区，路径塞进 paths 用。
+
+    等本机 exec/sftp 全等价上线后，这条只是便利通道，不是唯一路径。
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    name = store._safeAttachmentName(data.get('name'))
+    if not name:
+        return jsonify({'error': 'name 必须是纯文件名（无路径分隔符，≤120 字符）'}), 400
+    try:
+        raw = fsutil.decodeBase64(data.get('contentB64'))
+    except ValueError:
+        return jsonify({'error': 'contentB64 不是合法 base64（已拒绝写入）'}), 400
+    if len(raw) > store.MAX_UPLOAD_MB * 1024 * 1024:
+        return jsonify({'error': '文件超过 %dMB 上限' % store.MAX_UPLOAD_MB}), 413
+    root = os.path.join(store.taskRoot(), '_uploads', uuid.uuid4().hex[:8])
+    try:
+        os.makedirs(root, exist_ok=True)
+        path = fsutil.uniquePath(root, name)
+        with open(path, 'wb') as f:
+            f.write(raw)
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+    tokenName = getattr(g, 'agentTokenName', '')
+    if tokenName:
+        events.log('agent.task.upload', tokenName, 'ok',
+                   '%s (%d bytes)' % (name, len(raw)), request.remote_addr)
+    return jsonify({'ok': True, 'path': os.path.abspath(path),
+                    'size': len(raw),
+                    'hint': '把该 path 放进 POST /api/tasks 的 paths 数组即可作为任务输入'})
 
 
 def register(app):

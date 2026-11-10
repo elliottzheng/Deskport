@@ -93,6 +93,10 @@ def _safeHosts():
     for item in hosts.repo.all():
         out.append({'id': item.get('id'), 'name': item.get('name'),
                     'host': item.get('host'), 'port': item.get('port')})
+    # Deskport 本机也是一台主机（§7b 全等价）；agentLocalEnabled=false 时不出现
+    from modules.agent_local import localEnabled, localHostEntry
+    if localEnabled():
+        out.append(localHostEntry())
     return out
 
 
@@ -229,6 +233,12 @@ def agentExec():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    from modules.agent_local import isLocalHost as _isLocalHost, localEnabled
+    if _isLocalHost(data.get('host')):
+        if not localEnabled():
+            return jsonify({'error': '主机不存在'}), 404
+        from modules.agent_local import agentLocalExec as _localExecRoute
+        return _localExecRoute()
     rawCommand = data.get('command')
     command = str(rawCommand or '').strip()
     cwd = str(data.get('cwd') or '').strip()
