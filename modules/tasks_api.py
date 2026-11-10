@@ -5,10 +5,12 @@ import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from functools import wraps
 
-from flask import Blueprint, g, jsonify, request, send_file
+from flask import (Blueprint, Response, g, jsonify, request, send_file,
+                   stream_with_context)
 
 from modules.kimi_acp import KimiAcp
 from modules import tasks_runner as runner
@@ -142,6 +144,50 @@ def taskEvents(task, taskId):
                                   and bool(task.get('sessionId'))),
                     'awaitingAnswer': bool(task.get('awaitingAnswer')),
                     'mode': task.get('mode') or 'auto'})
+
+
+@blueprint.route('/api/tasks/<taskId>/events/stream')
+@taskRoute
+def taskEventStream(task, taskId):
+    """SSE：任务事件推送（cookie 与令牌均可）。
+
+    轮询端点保留不变；本端点面向外部智能体的实时观察——
+    事件到达即推，18s 心跳，closed/cancelled 后发 end 关流。
+    """
+    since = 0
+    try:
+        since = int(request.args.get('since') or 0)
+    except ValueError:
+        pass
+
+    def gen():
+        nonlocal since
+        heartbeat = time.monotonic()
+        try:
+            while True:
+                with store.repo.lock:
+                    events = list(task.get('events') or [])
+                    status = task.get('status') or ''
+                for event in events:
+                    if event.get('seq', 0) <= since:
+                        continue
+                    since = max(since, event.get('seq', 0))
+                    yield 'data: %s\n\n' % json.dumps(event, ensure_ascii=False)
+                if status in ('closed', 'cancelled'):
+                    yield 'event: end\n\n'
+                    return
+                now = time.monotonic()
+                if now - heartbeat >= 18:
+                    yield ': keepalive\n\n'
+                    heartbeat = now
+                time.sleep(0.6)
+        except GeneratorExit:
+            return
+
+    resp = Response(stream_with_context(gen()),
+                    mimetype='text/event-stream; charset=utf-8')
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 
 @blueprint.route('/api/tasks/<taskId>/cancel', methods=['POST'])
