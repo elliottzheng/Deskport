@@ -91,17 +91,6 @@ def _agentNodeHealth(name):
     return jsonify(data)
 
 
-def _agentNodeHealth(name):
-    try:
-        status, data = nodeRequest(findNode(name), 'GET', '/health', timeout=8)
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)[:200]})
-    if status != 200:
-        return jsonify({'ok': False, 'error': 'HTTP %s' % status})
-    data.pop('ok', None)
-    data['ok'] = True
-    return jsonify(data)
-
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 

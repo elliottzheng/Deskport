@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -21,19 +22,33 @@ KIMI_CONFIG_PATH = os.path.join(os.path.expanduser('~'), '.kimi-code',
 def discoverModels(configPath=None):
     """从 kimi CLI 的 config.toml 枚举可选模型（反馈 §7.2 自动发现）。
 
-    返回 {models: [别名...], default: 别名}；文件缺失/损坏返回空，
-    由调用方按"节点未声明模型"处理。
+    返回 {models: [别名...], default: 别名}；文件缺失/损坏返回空。
+    node 可能跑在老 Python 上（系统 python3 无 tomllib）——那时退化为
+    轻量正则解析，只覆盖顶层 default_model 与 [models."别名"] 段名。
     """
     path = configPath or KIMI_CONFIG_PATH
     try:
-        import tomllib
         with open(path, 'rb') as f:
-            data = tomllib.load(f)
-    except (OSError, ValueError):
+            text = f.read()
+    except OSError:
         return {'models': [], 'default': ''}
-    raw = data.get('models')
-    models = sorted(str(k) for k in raw.keys()) if isinstance(raw, dict) else []
-    return {'models': models, 'default': str(data.get('default_model') or '')}
+    try:
+        import tomllib
+        data = tomllib.loads(text.decode('utf-8'))
+        raw = data.get('models')
+        models = sorted(str(k) for k in raw.keys()) if isinstance(raw, dict) else []
+        default = str(data.get('default_model') or '')
+    except ImportError:
+        try:
+            text = text.decode('utf-8', 'replace')
+        except Exception:
+            return {'models': [], 'default': ''}
+        models = sorted(set(re.findall(r'\[models\."([^"\]]+)"\]', text)))
+        m = re.search(r'^\s*default_model\s*=\s*"([^"]+)"', text, re.M)
+        default = m.group(1) if m else ''
+    except Exception:
+        return {'models': [], 'default': ''}
+    return {'models': models, 'default': default}
 
 
 def nowMs():
