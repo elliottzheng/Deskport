@@ -52,6 +52,13 @@ class TaskSummary(TypedDict):
 
 
 class TaskEvent(TypedDict, total=False):
+    """任务卡事件。
+
+    事件为不可变追加（append-only，seq 单调递增）：
+    assistant 事件在回合结束时以单条完整文本落卡（tasks_runner._flushAssistant），
+    流式 chunk 只进 log（/log 端点），不进入本事件流——
+    因此按 seq 去重的增量订阅者（轮询/SSE）拿到的 assistant 文本总是完整终版。
+    """
     seq: int
     at: float
     type: str
