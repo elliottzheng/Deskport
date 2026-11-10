@@ -178,19 +178,49 @@ class Handler(BaseHTTPRequestHandler):
             session = _MANAGER.get(sid)
             if not session:
                 return self._json(404, {'error': '会话不存在'})
+            if path.endswith('/events/stream'):
+                return self._streamEvents(session, self._querySince())
             if path.endswith('/events'):
-                qs = parse_qs(urlparse(self.path).query)
-                try:
-                    since = int((qs.get('since') or ['0'])[0])
-                except ValueError:
-                    since = 0
                 ring = session.ring
-                return self._json(200, {'events': ring.since(since),
+                return self._json(200, {'events': ring.since(self._querySince()),
                                         'seq': ring.seq(),
                                         'running': session.running,
                                         'dead': session.dead})
             return self._json(200, {'session': session.meta()})
         return self._json(404, {'error': 'not found'})
+
+    def _querySince(self):
+        qs = parse_qs(urlparse(self.path).query)
+        try:
+            return int((qs.get('since') or ['0'])[0])
+        except ValueError:
+            return 0
+
+    def _streamEvents(self, session, since):
+        """SSE：一条连接持续推送事件；25s 无事件发心跳，断开即退出。
+
+        事件留在 ring 里，客户端重连带 since 即补差量。
+        """
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+        self.send_header('Cache-Control', 'no-cache')
+        self.end_headers()
+        ring = session.ring
+        try:
+            while True:
+                events, latest = ring.waitSince(since, timeout=25)
+                for event in events:
+                    since = max(since, event.get('seq', 0))
+                    self.wfile.write(('data: %s\n\n' % json.dumps(
+                        event, ensure_ascii=False)).encode('utf-8'))
+                if session.dead and latest == since:
+                    self.wfile.write(b'event: end\n\n')
+                    self.wfile.flush()
+                    return
+                self.wfile.write(b': keepalive\n\n')
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def do_POST(self):
         if not self._authed():

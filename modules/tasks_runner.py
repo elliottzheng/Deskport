@@ -276,11 +276,8 @@ def _resumeWithMessage(task, text):
         store.repo.save()
     def run():
         try:
-            factory = KimiAcp
-            if task.get('engine') == 'remote':
-                from modules.agent_nodes import remoteClientFactory
-                factory = remoteClientFactory(task)
-            _sessionThread(task, [], True, text, clientFactory=factory)
+            from modules.agent_nodes import clientFactoryFor
+            _sessionThread(task, [], True, text, clientFactory=clientFactoryFor(task))
         finally:
             with store.repo.lock:
                 task['resuming'] = False
@@ -305,5 +302,6 @@ def _shutdownClients():
 
 atexit.register(_shutdownClients)
 
-task_engines.register('acp', task_engines.ThreadEngine(_sessionThread))
+# acp/remote 引擎由 modules/agent_nodes 注册（clientFactoryFor 统一选择
+# 本机 node / 远端节点 / web 内 stdio）；这里只保留与智能体无关的 legacy。
 task_engines.register('p', task_engines.ThreadEngine(runTask))

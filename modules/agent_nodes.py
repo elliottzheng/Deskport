@@ -32,6 +32,9 @@ _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def findNode(name):
     wanted = str(name or '').strip()
+    local = config.getLocalAgentNode()
+    if local is not None and local['name'] == wanted:
+        return local
     for item in config.getAgentNodes():
         if item['name'] == wanted:
             return item
@@ -126,37 +129,59 @@ class RemoteAcpClient:
         self.session_id = data.get('kimiSessionId') or ''
         if not self.node_sid or not self.session_id:
             raise RuntimeError('远端会话创建返回不完整: %s' % data)
-        threading.Thread(target=self._pollLoop, daemon=True).start()
+        threading.Thread(target=self._streamLoop, daemon=True).start()
         return self.session_id
 
-    def _pollLoop(self):
+    def _openStream(self, node, since, timeout=45):
+        """打开 SSE 事件流；返回未读完的 response（逐行迭代）。"""
+        base = node['url']
+        if node.get('via'):
+            base = 'http://127.0.0.1:%d' % tunnelPort(node)
+        req = urllib.request.Request(
+            base + '/api/sessions/%s/events/stream?since=%d' % (self.node_sid, since))
+        req.add_header('X-Agent-Token', node.get('token') or '')
+        return _opener.open(req, timeout=timeout)
+
+    def _streamLoop(self):
+        """SSE 长连接：事件到达即回调；断开自动重连（since 补差）。"""
         since = 0
         fails = 0
         while not self._closed:
+            sessionEnded = False
             try:
-                status, data = nodeRequest(
-                    self._node(),
-                    'GET', '/api/sessions/%s/events?since=%d'
-                    % (self.node_sid, since), timeout=15)
-                if status == 404:
-                    # 会话已被 node 侧删除：不再有事件，安静待命直至 close
+                resp = self._openStream(self._node(), since)
+                fails = 0
+                for raw in resp:
+                    line = raw.decode('utf-8', 'replace').strip()
+                    if not line or line.startswith(':'):
+                        continue   # 空行 / 心跳
+                    if line.startswith('event:'):
+                        sessionEnded = True   # node 标记会话已结束且事件推完
+                        continue
+                    if line.startswith('data: '):
+                        try:
+                            event = json.loads(line[6:])
+                        except ValueError:
+                            continue
+                        since = max(since, event.get('seq', 0))
+                        self._handleEvent(event)
+                if sessionEnded:
+                    return   # 进程已退出且事件推完，无需再连
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    # 会话已被 node 侧删除：安静待命直至 close
                     time.sleep(10)
                     continue
-                if status != 200:
-                    raise RuntimeError('events %s' % status)
-                fails = 0
-                for event in data.get('events') or []:
-                    since = max(since, event.get('seq', 0))
-                    self._handleEvent(event)
-                if data.get('dead') and self.exit_code is None:
-                    self.exit_code = -1
-                    self._turnEvent.set()
-                time.sleep(0.4)
             except Exception:
-                # 断连（隧道重建/NAT 掐断）是暂时的：放慢节奏持续重试，
-                # 直到 close；事件会在恢复后从 since 追平
-                fails += 1
-                time.sleep(min(fails, 10))
+                pass
+            # 断连（NAT 掐断/隧道死）是暂时的：重建隧道、放慢节奏重连，
+            # 事件从 since 补差，不会丢失
+            try:
+                dropTunnelsFor(self._node())
+            except Exception:
+                pass
+            fails += 1
+            time.sleep(min(fails, 10))
 
     def _handleEvent(self, event):
         kind = event.get('type')
@@ -263,6 +288,31 @@ def remoteClientFactory(task):
     return factory
 
 
+def clientFactoryFor(task):
+    """统一客户端选择：remote→指定节点；acp→本机节点（启用时）否则 web 内 stdio。
+
+    本机 node 化后 engine=acp 的会话也由本机 agent node 托管，
+    web 重启不再打断任务；未启用（localAgentNodePort=0）时回退 KimiAcp。
+    """
+    from modules.kimi_acp import KimiAcp
+    engine = (task.get('engine') or 'acp').lower()
+    if engine == 'remote':
+        return remoteClientFactory(task)
+    local = config.getLocalAgentNode()
+    if local is not None:
+        nodeName = local['name']
+
+        def factory(cwd, on_update=None, on_permission=None,
+                    mode='auto', prompt_timeout=0):
+            return RemoteAcpClient(cwd=cwd,
+                                   on_update=on_update,
+                                   on_permission=on_permission,
+                                   mode=mode, prompt_timeout=prompt_timeout,
+                                   node=nodeName)
+        return factory
+    return KimiAcp
+
+
 def _remoteSessionThread(task, manifest):
     from modules import tasks_runner
     tasks_runner._sessionThread(task, manifest,
@@ -270,6 +320,14 @@ def _remoteSessionThread(task, manifest):
 
 
 task_engines.register('remote', task_engines.ThreadEngine(_remoteSessionThread))
+
+
+def _acpSessionThread(task, manifest):
+    from modules import tasks_runner
+    tasks_runner._sessionThread(task, manifest, clientFactory=clientFactoryFor(task))
+
+
+task_engines.register('acp', task_engines.ThreadEngine(_acpSessionThread))
 
 
 # ---------------------------------------------------------------- API

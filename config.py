@@ -246,6 +246,58 @@ def getSessiondToken(kind='local'):
     return ''
 
 
+def getAgentNodeToken():
+    r"""本机智能体节点共享令牌；与 agent_node --token-file 读同一文件。
+
+    路径固定在 node 自己的数据目录（~/.deskport-agent-node/token），
+    不随 stateDirName 变化 —— 本机 node 是 dev/prod 共享的单例服务。
+    """
+    path = os.path.join(os.path.expanduser('~'), '.deskport-agent-node', 'token')
+    if not os.path.isfile(path):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'x', encoding='utf-8') as f:
+                f.write(secrets.token_hex(24))
+                f.flush()
+                os.fsync(f.fileno())
+        except FileExistsError:
+            pass
+        except OSError:
+            return ''
+    for _ in range(20):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                token = f.read().strip()
+            if token:
+                return token
+        except OSError:
+            pass
+        time.sleep(0.02)
+    return ''
+
+
+def getLocalAgentNode():
+    """本机智能体节点（engine=acp 任务的托管者）；localAgentNodePort=0 表示未启用。
+
+    返回与 agentNodes 条目同构的 dict（无 via，本机直连），None = 未启用。
+    """
+    try:
+        port = int(load().get('localAgentNodePort') or 0)
+    except (TypeError, ValueError):
+        return None
+    if port <= 0:
+        return None
+    return {'name': 'local', 'url': 'http://127.0.0.1:%d' % port,
+            'token': getAgentNodeToken(), 'via': '', 'remote': ''}
+
+
+def getLocalAgentNodePort():
+    try:
+        return int(load().get('localAgentNodePort') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def isInboxEnabled():
     r"""收件箱扫描开关；缺省关闭，需在设置页显式开启。"""
     return bool(load().get('inboxEnabled'))

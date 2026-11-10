@@ -36,7 +36,12 @@ def _checks():
         'local': config.getSessiondPort('local'),
         'ssh': config.getSessiondPort('ssh'),
     }
-    return [(name, url % ports[name], vbs) for name, url, vbs in CHECKS]
+    checks = [(name, url % ports[name], vbs) for name, url, vbs in CHECKS]
+    nodePort = config.getLocalAgentNodePort()
+    if nodePort:
+        checks.append(('anode', 'http://127.0.0.1:%d/health' % nodePort,
+                       'start-agentnode.vbs'))
+    return checks
 
 
 def _rotate():

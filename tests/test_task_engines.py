@@ -3,7 +3,8 @@
 import threading
 
 from modules import task_engines
-from modules import tasks_runner  # noqa: F401  注册 acp/p 引擎
+from modules import agent_nodes  # noqa: F401  注册 acp/remote 引擎（node 化后）
+from modules import tasks_runner  # noqa: F401  注册 p 引擎（legacy）
 
 
 def test_register_and_get():
@@ -15,7 +16,7 @@ def test_register_and_get():
     task_engines.register('test-engine', fake)
     assert task_engines.get('test-engine') is fake
     assert task_engines.get('TEST-ENGINE') is fake
-    # 未知引擎回退 acp（runner 导入后已注册）
+    # 未知引擎回退 acp（agent_nodes 导入后已注册）
     assert task_engines.get('no-such-engine') is not None
 
 

@@ -32,15 +32,33 @@ def main():
     parser = argparse.ArgumentParser(description='Deskport Agent Node')
     parser.add_argument('--port', type=int, default=8622)
     parser.add_argument('--token', default=os.environ.get('AGENT_NODE_TOKEN', ''))
+    parser.add_argument('--token-file', default='',
+                        help='从文件读令牌；不存在则以随机值原子创建（与 Deskport 共享）')
     parser.add_argument('--kimi', default=os.environ.get('KIMI_BIN') or shutil.which('kimi'))
     parser.add_argument('--data', default=os.path.join(os.path.expanduser('~'), '.deskport-agent-node'))
     args = parser.parse_args()
     if not args.kimi:
         print('找不到 kimi 可执行文件，请用 --kimi 指定', file=sys.stderr)
         sys.exit(2)
+    token = args.token
+    if not token and args.token_file:
+        import secrets
+        path = args.token_file
+        if not os.path.isfile(path):
+            try:
+                os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+                with open(path, 'x', encoding='utf-8') as f:
+                    f.write(secrets.token_hex(24))
+            except FileExistsError:
+                pass
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                token = f.read().strip()
+        except OSError:
+            token = ''
     os.makedirs(args.data, exist_ok=True)
     MANAGER = SessionManager(args.kimi, args.data)
-    init(MANAGER, args.token)
+    init(MANAGER, token)
 
     def reap():
         while True:

@@ -21,15 +21,15 @@ def nowMs():
 
 
 class Ring:
-    """seq 单调递增的事件环形缓冲；客户端按 since 增量拉取。"""
+    """seq 单调递增的事件环形缓冲；客户端按 since 增量拉取，可阻塞等待新事件。"""
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._cond = threading.Condition()
         self._items = []
         self._seq = 0
 
     def append(self, record):
-        with self._lock:
+        with self._cond:
             self._seq += 1
             record = dict(record)
             record['seq'] = self._seq
@@ -37,15 +37,23 @@ class Ring:
             self._items.append(record)
             if len(self._items) > MAX_EVENTS:
                 del self._items[:len(self._items) - MAX_EVENTS]
+            self._cond.notify_all()
             return self._seq
 
     def seq(self):
-        with self._lock:
+        with self._cond:
             return self._seq
 
     def since(self, n):
-        with self._lock:
+        with self._cond:
             return [e for e in self._items if e.get('seq', 0) > n]
+
+    def waitSince(self, n, timeout=25):
+        """阻塞直到出现 seq>n 的事件或超时；返回 (events, latestSeq)。"""
+        with self._cond:
+            self._cond.wait_for(lambda: self._seq > n, timeout)
+            events = [e for e in self._items if e.get('seq', 0) > n]
+            return events, self._seq
 
 
 class AcpSession:
