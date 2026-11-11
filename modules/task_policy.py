@@ -6,6 +6,8 @@
 
 判定顺序（反馈 R4-1 规格 + 安全补充）:
     1. 命令段命中 denyCommands → ask（deny 的语义是"强制人工"）；
+    1b. 命令段或文件工具的路径参数命中敏感文件（config.json / 令牌文件）
+        → ask（R5-2 内建 deny，policy 压不掉，read-only 白名单也压不掉）；
     2. 危险模式（ask，即使段首命中 allowCommands）：
        - 原始命令里（单引号内除外）出现 $( 或反引号——双引号不保护命令替换；
        - 剔除引号内容与豁免项（2>&1、>/dev/null、2>/dev/null、1>/dev/null）
@@ -44,6 +46,16 @@ XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
 CD_RE = re.compile(r'\bcd\s+(?:"([^"]+)"|\'([^\']+)"?|([^\s;&|]+))', re.I)
 HEREDOC_RE = re.compile(r'<<-?\s*[\'"]?([A-Za-z_][\w.-]*)[\'"]?')
+# R5-2 内建 deny：读中枢配置/令牌文件的调用一律 ask——命中即 ask，独立于
+# 调用方 denyCommands（policy 写了 allowCommands 也压不过它）。模式：
+# 中枢/成员 config.json、.agent-token / agent_node_token 类令牌文件、
+# 本机 node 令牌 ~/.deskport-agent-node/token
+SENSITIVE_FILE_RE = tuple(re.compile(p, re.I) for p in (
+    r'config\.json',
+    r'\.agent[_-]?token',
+    r'agent[_-]?node[_-]?token',
+    r'deskport-agent-node[/\\]token',
+))
 
 
 def _stripHeredocs(cmd):
@@ -293,6 +305,14 @@ def evaluate(policy, kind='', name='', args=None, cwd=None):
                 return 'ask', 'danger:xargs'
         if any(r.search(seg) for seg in segments for r in denyRes):
             return 'ask', 'deny:command'
+        if any(r.search(seg) for seg in segments for r in SENSITIVE_FILE_RE):
+            return 'ask', 'deny:sensitive-file'
+    else:
+        # 非命令工具（Read/Edit/Grep 等）：路径参数命中敏感文件同样 ask
+        argsText = args if isinstance(args, str) \
+            else ' '.join(_pathsInArgs(args))
+        if argsText and any(r.search(argsText) for r in SENSITIVE_FILE_RE):
+            return 'ask', 'deny:sensitive-file'
 
     if kind in READONLY_KINDS or READONLY_NAMES.match(name or ''):
         return 'allow', 'read-only'

@@ -164,6 +164,14 @@ DELETE /api/agent/ssh/sessions/<sid>
   结果缓存 24h；默认只测 defaultModel + 近 7 天用过的，全量走
   `POST /api/tasks/nodes/<node>/probe` 手动触发。建任务时**指定的** model
   已知 usable=false → 400 附 `usableModels`；没探测过的照常放行；
+- **敏感值不进事件流（R5-2）**：`tool` / `tool_result` / `assistant` /
+  `permission_request` 事件（含 /log 的 jsonl 流水与 full 全文）写入前，
+  中枢已知的明文令牌（remotes[].token、agentNodes[].token、federationToken、
+  password、decisionApiKey、本机 node token-file；<12 字符不纳入）替换为
+  `<redacted:来源>`，config.json 热改即时生效。`exec` / `sftp` / `get` 响应
+  **不脱敏**（主控显式取数据）。policy 内建 deny：命令或文件工具路径命中
+  `config.json` / 令牌文件（`*.agent-token`、`agent_node_token`、
+  `deskport-agent-node/token`）→ 一律 ask，`allowCommands` 压不掉；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（仅
   engine=acp）。默认先 `kimi fork` 复制副本再加载——不干扰用户开着的
   终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，

@@ -14,6 +14,7 @@ import time
 
 import config
 from modules import contracts, fsutil, task_state
+from modules import sensitive_values
 
 log = logging.getLogger('tasks')
 
@@ -220,6 +221,7 @@ class TaskRepository:
 
     def append_event(self, task, etype, **payload) -> contracts.TaskEvent:
         full = payload.pop('full', None)
+        payload, full = sensitive_values.redactEvent(etype, payload, full)
         with self.lock:
             task['seq'] = task.get('seq', 0) + 1
             task['lastActiveAt'] = _now()   # 每次事件都刷新（R4-8：轮中可见活跃）
