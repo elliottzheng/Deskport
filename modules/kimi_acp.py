@@ -287,7 +287,13 @@ class KimiAcp:
                             {'sessionId': self.session_id, 'modeId': mode},
                             timeout=10)
 
-    def prompt(self, text, timeout=None):
+    def prompt(self, text, timeout=None, _reattached=False):
+        if self.session_id and self.proc and self.proc.poll() is not None \
+                and not _reattached and not self._closed:
+            # 进程已退出（node 空闲回收 / kimi 崩溃）：session/load 自动
+            # 接续后重试本轮（R4-5 余项 B），任务不 failed
+            self.start(session_id=self.session_id)
+            return self.prompt(text, timeout=timeout, _reattached=True)
         return self.request('session/prompt', {
             'sessionId': self.session_id,
             'prompt': [{'type': 'text', 'text': text}],

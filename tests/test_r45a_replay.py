@@ -236,3 +236,108 @@ def test_wait_rebuild_ignores_pre_live_permission(env):
                           headers=H).get_json()
     assert body['status'] != 'permission'       # 回放旧审批不得返回
     assert body['pending'] is None
+
+
+# ---- R4-5 余项：close 释放会话锁 / 进程回收自动接续 ----
+
+def test_close_without_agent_releases_node_session(env, monkeypatch):
+    """web 重启后 agent 不在内存：close 仍须按 kimiSessionId 释放 node 侧
+    会话（终止持锁进程），不能"既不能续、又不释放"（R4-5 余项 A）。"""
+    import modules.agent_nodes as nodesMod
+    calls = []
+    monkeypatch.setattr(nodesMod, 'shutdownNodeSession',
+                        lambda node, sid: calls.append((node, sid)) or True)
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['sessionId'] = 'kimi-abc'
+        task['status'] = 'waiting'
+        env.repo.save()
+    resp = env.client.post('/api/tasks/%s/close' % tid, headers=H)
+    assert resp.status_code == 200
+    assert calls == [('local', 'kimi-abc')]
+    with env.repo.lock:
+        assert env.repo.get(tid)['status'] == 'closed'
+
+
+def test_remote_prompt_reattaches_on_410(monkeypatch):
+    """R4-5 余项 B：node 回收进程（prompt 410）→ 自动 session/load 接续 →
+    重试本轮，不向任务暴露 410。"""
+    import threading as _th
+    client = nodesMod.RemoteAcpClient(cwd='/tmp', node='ai-xmyz',
+                                      prompt_timeout=5)
+    client.node_sid = 's1'
+    client.session_id = 'k1'
+    calls = []
+
+    def fakeRequest(node, method, path, payload=None, timeout=30):
+        calls.append((method, path))
+        if path.endswith('/prompt') and path.startswith('/api/sessions/s1'):
+            return 410, {'error': '进程已回收'}
+        if method == 'POST' and path == '/api/sessions':
+            return 200, {'sid': 's2', 'kimiSessionId': 'k2',
+                         'attachSeq': 0, 'replayCount': 0}
+        if path.endswith('/prompt'):
+            _th.Timer(0.2, client._handleEvent,
+                      args=({'type': 'turn_end', 'stopReason': 'end_turn'},)).start()
+            return 202, {'accepted': True}
+        return 200, {}
+
+    monkeypatch.setattr(nodesMod, 'nodeRequest', fakeRequest)
+    monkeypatch.setattr(nodesMod, 'findNode',
+                        lambda name: {'name': name, 'url': 'x'})
+    monkeypatch.setattr(nodesMod, 'tunnelPort', lambda node: 0, raising=False)
+
+    class _Resp:
+        def __iter__(self):
+            return iter([])
+
+        def close(self):
+            pass
+    monkeypatch.setattr(client, '_openStream', lambda node, since, timeout=45: _Resp())
+    result = client.prompt('继续', timeout=5)
+    assert result['stopReason'] == 'end_turn'
+    paths = [c[1] for c in calls if c[0] == 'POST' and c[1].endswith('/prompt')]
+    assert '/api/sessions/s1/prompt' in paths and '/api/sessions/s2/prompt' in paths
+    assert client.node_sid == 's2' and client.session_id == 'k2'
+
+
+def test_kimiacp_prompt_restarts_dead_process(tmp_path, monkeypatch):
+    """stdio 链路：kimi 进程退出后 prompt 自动 session/load 重启并重试。"""
+    k = kacp.KimiAcp(cwd=str(tmp_path))
+    k.session_id = 'k-dead'
+    k.proc = SimpleNamespace(poll=lambda: 1, stdin=None)
+    starts = []
+    monkeypatch.setattr(k, 'start',
+                        lambda session_id=None: starts.append(session_id) or 'k-dead')
+    asked = []
+
+    def fakeRequest(method, params, timeout=120):
+        asked.append(method)
+        return {'stopReason': 'end_turn'}
+    monkeypatch.setattr(k, 'request', fakeRequest)
+    result = k.prompt('继续')
+    assert result['stopReason'] == 'end_turn'
+    assert starts == ['k-dead']
+    assert asked == ['session/prompt']
+
+
+def test_node_delete_by_kimi_session_id(tmp_path):
+    """node DELETE 兜底：web 重启后只有 kimiSessionId 也能找到并终止会话。"""
+    import sys
+    sys.path.insert(0, 'agent_node')
+    try:
+        from node_api import SessionManager
+        from acp_session import AcpSession
+        mgr = SessionManager('kimi', str(tmp_path))
+        s = AcpSession('s9', str(tmp_path), 'auto', 'kimi')
+        s.kimi_session_id = 'kimi-xyz'
+        s.proc = None
+        with mgr._lock:
+            mgr._sessions['s9'] = s
+        assert mgr.deleteByAny('kimi-xyz') is True
+        assert mgr.get('s9') is None
+        assert mgr.deleteByAny('kimi-xyz') is False
+    finally:
+        sys.path.pop(0)

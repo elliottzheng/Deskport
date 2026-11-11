@@ -1326,7 +1326,11 @@ def test_inter_turn_perm_unknown_callid_asks_not_borrow(env):
                 break
         _time.sleep(0.05)
     assert task.get('pendingPermission') == '30'   # ask：挂起等人，不默认拒绝
-    evs = [e for e in task['events'] if e.get('type') == 'permission_request']
+    for _ in range(40):   # 事件落卡与标记存在微小间隙，轮询到为准
+        evs = [e for e in task['events'] if e.get('type') == 'permission_request']
+        if evs:
+            break
+        _time.sleep(0.05)
     assert evs and evs[-1]['requestId'] == '30'
     # 批准收尾，让漏斗线程退出
     with env.repo.lock:

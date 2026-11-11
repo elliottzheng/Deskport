@@ -112,6 +112,24 @@ def nodeModelsFor(name, entry=None):
     return [], ''
 
 
+def shutdownNodeSession(nodeName, sessionId):
+    """释放 node 侧会话（终止持锁的 kimi 进程），按 sid 或 kimiSessionId。
+
+    web 重启后任务的 agent 已不在内存，close 只剩 kimiSessionId 可用——
+    node 的 DELETE 按 kimiSessionId 兜底查找（R4-5 余项 A）。best-effort：
+    找不到执行点/已下线时静默返回 False。"""
+    wanted = str(nodeName or '').strip() or 'local'
+    node = findNode(wanted)
+    if node is None:
+        return False
+    try:
+        status, _data = nodeRequest(node, 'DELETE', '/api/sessions/%s' % sessionId,
+                                    timeout=15)
+        return status == 200
+    except Exception:
+        return False
+
+
 def localKimiModels(maxAgeSec=60):
     """本机 kimi CLI 的可选模型（config.toml 自动发现，60s 缓存）。
 
@@ -356,7 +374,7 @@ class RemoteAcpClient:
             self._turnEvent.set()
 
     # ---- turns ----
-    def prompt(self, text, timeout=None):
+    def prompt(self, text, timeout=None, _reattached=False):
         self._turnEvent.clear()
         self._stopReason = ''
         node = self._node()
@@ -365,6 +383,11 @@ class RemoteAcpClient:
             {'text': text}, timeout=30)
         if status == 409:
             raise RuntimeError('远端会话正在执行，请稍候')
+        if status == 410 and not _reattached:
+            # node 空闲回收了进程（R4-5 余项 B）：自动 session/load 接续后
+            # 重试本轮，任务不 failed、不向调用方暴露 410
+            self._ensureLive()
+            return self.prompt(text, timeout=timeout, _reattached=True)
         if status != 202:
             raise RuntimeError('远端派活失败(%s): %s'
                                % (status, data.get('error') or data))
@@ -376,6 +399,20 @@ class RemoteAcpClient:
         if self.exit_code is not None and not self._stopReason:
             raise RuntimeError('远端 ACP 进程已退出 (code=%s)' % self.exit_code)
         return {'stopReason': self._stopReason}
+
+    def _ensureLive(self):
+        """进程被回收后自动 session/load 接续：新建 node 会话（回放走
+        R4-5a 门禁），换用新 sid；旧事件流线程用新 node_sid 自然重连。"""
+        status, data = nodeRequest(
+            self._node(), 'POST', '/api/sessions',
+            {'cwd': self.cwd, 'mode': self.mode, 'sessionId': self.session_id,
+             'model': self.model}, timeout=90)
+        if status != 200:
+            raise RuntimeError('自动接续失败(%s): %s'
+                               % (status, data.get('error') or data))
+        self.node_sid = data.get('sid') or ''
+        self.session_id = data.get('kimiSessionId') or self.session_id
+        self.attachSeq = int(data.get('attachSeq') or 0)
 
     def set_mode(self, mode):
         self.mode = mode

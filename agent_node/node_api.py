@@ -104,6 +104,23 @@ class SessionManager:
         self._save()
         return session is not None
 
+    def deleteByAny(self, sidOrKimiId):
+        """按 node sid 或 kimiSessionId 删除并终止进程。
+
+        web 重启后任务卡上只剩 kimiSessionId（agent 内存态已清）——close
+        释放会话锁必须能用它找到会话（R4-5 余项 A）。"""
+        with self._lock:
+            if sidOrKimiId in self._sessions:
+                return self.delete(sidOrKimiId)
+            target = None
+            for s in self._sessions.values():
+                kid = s.get('kimiSessionId') if isinstance(s, dict) \
+                    else getattr(s, 'kimi_session_id', None)
+                if kid == sidOrKimiId:
+                    target = s.sid if hasattr(s, 'sid') else s.get('sid')
+                    break
+        return self.delete(target) if target else False
+
     def reapIdle(self):
         cutoff = nowMs() - IDLE_KILL_SECONDS * 1000   # nowMs 是毫秒
         with self._lock:
@@ -290,6 +307,6 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authed():
             return self._json(401, {'error': '认证失败'})
         if urlparse(self.path).path.startswith('/api/sessions/'):
-            ok = _MANAGER.delete(self._sid())
+            ok = _MANAGER.deleteByAny(self._sid())
             return self._json(200 if ok else 404, {'ok': ok})
         return self._json(404, {'error': 'not found'})

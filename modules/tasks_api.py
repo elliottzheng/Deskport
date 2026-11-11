@@ -600,6 +600,11 @@ def closeTask(task, taskId):
         task_state.transition(task, task_state.TaskState.CLOSED)
         task['endedAt'] = store._now()
         store.repo.append_event(task, 'status', text='会话已结束')
+        # web 重启后 agent 已不在内存——close 仍须释放 node 侧会话锁，
+        # 终止持锁的 kimi 进程（R4-5 余项 A：不能"既不能续、又不释放"）
+        if task.get('sessionId'):
+            from modules.agent_nodes import shutdownNodeSession
+            shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     # close 语义：返回的就是终态（已 cancel 的任务保持 cancelled，不会改判）
     return jsonify({'ok': True, 'status': task.get('status')})
 

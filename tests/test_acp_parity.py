@@ -85,7 +85,7 @@ class FakeAcpProc:
         return item
 
     def poll(self):
-        return 0
+        return None   # 建模活着的 kimi acp 子进程（None=运行中）
 
     def terminate(self):
         pass
