@@ -48,3 +48,23 @@ def uniquePath(directory, name, isDir=False, start=1, sep=' ',
             return cand
     raise OSError('同名条目过多: %s' % name)
 
+
+
+def ensureParentDir(parent, mkdirs=False):
+    """R5-3：父目录缺失时按 mkdirs 决定创建或报错。
+
+    返回 None = 目录就绪；返回 (status, payload) = 应答给调用方的 404/403。
+    """
+    if os.path.isdir(parent):
+        return None
+    if not mkdirs:
+        return 404, {'error': '父目录不存在：%s' % parent,
+                     'hint': '加 mkdirs:true 自动创建'}
+    try:
+        os.makedirs(parent, exist_ok=True)
+    except OSError as e:
+        return 403, {'error': '创建父目录失败：%s' % str(e)}
+    if not os.path.isdir(parent):   # makedirs 静默失败兜底
+        return 404, {'error': '父目录不存在：%s' % parent,
+                     'hint': '加 mkdirs:true 自动创建'}
+    return None

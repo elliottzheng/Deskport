@@ -29,6 +29,7 @@ from modules import events
 from modules.agent_api import MAX_OUTPUT_BYTES, _agentRequired, blueprint, \
     parseTimeoutSec
 from modules.fsutil import decodeBase64 as _decodeB64
+from modules.fsutil import ensureParentDir
 from modules.agent_sftp import _mapSftpError
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -361,7 +362,7 @@ def sftpGetLocal(path, offset=0, length=0):
                     'contentB64': base64.b64encode(chunk).decode('ascii')})
 
 
-def sftpPutLocal(path, contentB64, wantSha=''):
+def sftpPutLocal(path, contentB64, wantSha='', mkdirs=False):
     try:
         native = normalizeLocalPath(os.path.expanduser(str(path or '')))
         raw = _decodeB64(contentB64)
@@ -373,6 +374,9 @@ def sftpPutLocal(path, contentB64, wantSha=''):
     if wantSha and hashlib.sha256(raw).hexdigest() != wantSha.lower():
         return jsonify({'error': 'sha256 校验失败：内容与调用方摘要不一致'}), 400
     parent = os.path.dirname(native) or '.'
+    bad = ensureParentDir(parent, mkdirs)   # R5-3：缺父目录时创建或干净报错
+    if bad:
+        return jsonify(bad[1]), bad[0]
     try:
         oldMode = None
         try:
@@ -479,7 +483,9 @@ def agentLocalSftpPut():
         return jsonify({'error': '请求体超过上限（文件上限 %d bytes）' % MAX_FILE_BYTES}), 413
     data = request.get_json(silent=True) or {}
     resp = sftpPutLocal(data.get('path'), data.get('contentB64'),
-                        str(data.get('sha256') or ''))
-    if resp[1] == 200:
-        events.log('agent.sftp.put', data.get('path'), 'ok', '', request.remote_addr)
+                        str(data.get('sha256') or ''),
+                        mkdirs=bool(data.get('mkdirs')))
+    if isinstance(resp, tuple):   # 错误 = (jsonify, status)；成功 = 裸 Response
+        return resp
+    events.log('agent.sftp.put', data.get('path'), 'ok', '', request.remote_addr)
     return resp

@@ -88,11 +88,15 @@ POST /api/agent/ssh/exec
 ```text
 POST /api/agent/sftp/list  {"host": "...", "path": "/srv"}      → {path, entries}
 POST /api/agent/sftp/get   {"host": "...", "path": "...", "offset": 0, "length": 4096}
-POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "sha256": "<可选>"}
+POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "sha256": "<可选>",
+                            "mkdirs": true（可选，父目录不存在时自动创建，本机/SSH 主机均支持）}
 ```
 
 - 错误码语义：权限不足 **403** / 不存在 **404** / 用法错误（对目录 get、
   对文件 list）**400** / 超限 **413**；
+- put 父目录不存在 → **404** `{"error": "父目录不存在：<目录>",
+  "hint": "加 mkdirs:true 自动创建"}`（不带内部临时文件名）；传
+  `mkdirs: true` 自动逐级创建后写入；
 - `list` 的 path 接受 `~` 与相对路径，响应 path 是规范化绝对路径；每项带
   `type`（file/dir/symlink/fifo/…）、`mode`（八进制）、symlink 带跟随前的
   `target`，`dir`/`size` 跟随链接目标；

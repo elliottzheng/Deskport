@@ -58,6 +58,32 @@ def _mapSftpError(e):
     return 400, text
 
 
+def _sftpParentOf(path):
+    """远端路径的父目录（/ 与 \\ 都认）；无分隔符 = 相对当前目录。"""
+    norm = str(path or '').replace('\\', '/')
+    return norm[:norm.rfind('/')] if '/' in norm else ''
+
+
+def _sftpMakedirs(sftp, parent):
+    """逐级创建远端目录（SFTP 无递归 mkdir）；入参就是父目录。
+    已存在/无法创建的段跳过，最终缺失由调用方 stat 兜底给出干净错误
+    （不暴露临时文件名）。"""
+    parent = str(parent or '').replace('\\', '/').rstrip('/')
+    if not parent or parent == '/':
+        return
+    prefix = '/' if parent.startswith('/') else ''
+    acc = ''
+    for part in [p for p in parent.split('/') if p]:
+        acc = (acc + '/' + part) if (acc or prefix) else part
+        try:
+            sftp.stat(acc)
+        except IOError:
+            try:
+                sftp.mkdir(acc)
+            except IOError:
+                pass
+
+
 def _joinPath(base, name):
     if base == '/':
         return '/' + name
@@ -207,7 +233,8 @@ def agentSftpPut():
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
         return sftpPutLocal(data.get('path'), data.get('contentB64'),
-                            str(data.get('sha256') or ''))
+                            str(data.get('sha256') or ''),
+                            mkdirs=bool(data.get('mkdirs')))
     _host, sftp, err = _sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404
@@ -224,6 +251,21 @@ def agentSftpPut():
     wantSha = str(data.get('sha256') or '').lower()
     if wantSha and hashlib.sha256(raw).hexdigest() != wantSha:
         return jsonify({'error': 'sha256 校验失败：内容与调用方摘要不一致'}), 400
+    parent = _sftpParentOf(path)
+    try:
+        sftp.stat(parent or '.')
+    except IOError:
+        # R5-3：父目录缺失 → 干净的 404（不暴露临时文件名），mkdirs 可自动创建
+        if not bool(data.get('mkdirs')):
+            events.log('agent.sftp.put', path, 'fail', '父目录不存在',
+                       request.remote_addr)
+            return jsonify({'error': '父目录不存在：%s' % parent,
+                            'hint': '加 mkdirs:true 自动创建'}), 404
+        _sftpMakedirs(sftp, parent)
+        try:
+            sftp.stat(parent or '.')
+        except IOError:
+            return jsonify({'error': '父目录不存在：%s（自动创建失败）' % parent}), 404
     try:
         oldMode = 0
         try:
