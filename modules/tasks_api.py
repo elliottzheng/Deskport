@@ -719,10 +719,15 @@ def listKimiSessions():
         if target is None:
             return jsonify({'error': '节点不存在', 'nodes': agent_nodes.listNodeNames()}), 404
         from urllib.parse import quote
-        status, data = agent_nodes.nodeRequest(
-            target, 'GET',
-            '/api/kimi-sessions?cwd=%s&limit=%d' % (quote(cwd), limit),
-            timeout=120)
+        try:
+            status, data = agent_nodes.nodeRequest(
+                target, 'GET',
+                '/api/kimi-sessions?cwd=%s&limit=%d' % (quote(cwd), limit),
+                timeout=120)
+        except Exception as e:
+            # 隧道瞬断等传输错误：502 JSON 让调用方可重试，不再 500
+            return jsonify({'error': '节点请求失败: %s' % str(e)[:200],
+                            'node': node}), 502
         if status != 200:
             return jsonify({'error': (data or {}).get('error') or 'HTTP %s' % status,
                             'node': node}), 502

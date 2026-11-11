@@ -1479,3 +1479,45 @@ def test_last_active_bumped_per_event(env):
     with env.repo.lock:
         agent['permDecision']['value'] = 'approve_once'
         agent['permEvent'].set()
+
+
+# ---- 第三批上线复测：隧道瞬断下的加固 ----
+
+def test_kimi_sessions_proxy_connection_reset_is_502(env, monkeypatch):
+    """node 重启后隧道瞬断（ConnectionReset 穿透重试）→ 502 JSON，不再 500。"""
+    import modules.agent_nodes as nodesMod
+
+    def reset(node, method, path, payload=None, timeout=30):
+        import ConnectionResetError  # noqa — 占位防误改
+    monkeypatch.setattr(nodesMod, 'findNode',
+                        lambda name: {'name': name, 'url': 'x'} if name == 'ai-xmyz' else None)
+
+    def raiseReset(node, method, path, payload=None, timeout=30):
+        raise ConnectionResetError(10054, '远程主机强迫关闭了一个现有的连接')
+    monkeypatch.setattr(nodesMod, 'nodeRequest', raiseReset)
+    resp = env.client.get('/api/tasks/kimi-sessions?node=ai-xmyz',
+                          headers=H)
+    assert resp.status_code == 502
+    body = resp.get_json()
+    assert body['node'] == 'ai-xmyz' and '节点请求失败' in body['error']
+
+
+def test_health_models_refresh_retries_until_all_answer(monkeypatch):
+    """node 重启后个别探测失败：刷新线程持续重试，不再钉死空缓存 60 秒。"""
+    import modules.agent_nodes as nodesMod
+    seq = {'n': 0}
+
+    def flaky(node, method, path, payload=None, timeout=30):
+        seq['n'] += 1
+        if seq['n'] == 1:
+            raise ConnectionResetError('瞬断')
+        return 200, {'models': ['m1'], 'defaultModel': 'm1'}
+    monkeypatch.setattr(nodesMod, 'nodeRequest', flaky)
+    monkeypatch.setattr(nodesMod.config, 'getAgentNodes',
+                        lambda: [{'name': 'ai-xmyz', 'via': '', 'models': [], 'model': ''}])
+    monkeypatch.setattr(nodesMod.config, 'getLocalAgentNode', lambda: None)
+    monkeypatch.setattr(nodesMod, '_healthModels',
+                        {'at': 0.0, 'data': {}})
+    nodesMod._refreshHealthModels(rounds=3, interval=0.01)
+    cached = nodesMod._healthModels['data']
+    assert cached['ai-xmyz']['models'] == ['m1']

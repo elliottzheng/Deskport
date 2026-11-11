@@ -52,41 +52,49 @@ _healthModels = {'at': 0.0, 'data': {}}
 _healthModelsLock = threading.Lock()
 
 
-def _refreshHealthModels():
+def _refreshHealthModels(rounds=8, interval=5):
     """拉取各 node /health 的 models 字段（新版 node 自动上报 kimi 模型清单）。
 
     联邦成员额外查它自己的 /api/tasks/nodes——成员的 local 节点模型即
     成员可提供的模型（第三轮反馈：i7-4710MQ 之前一直 selectable=false）。
-    """
-    result = {}
+
+    node 重启/隧道瞬断会让个别探测失败——整体持续重试直到全部应答或
+    轮数用尽，不再一轮失败就把空缓存钉死 60 秒（第三批上线实测踩坑：
+    ai-xmyz 升级后 1 分钟 modelSelectable 仍为 false）。"""
     targets = list(config.getAgentNodes())
     local = config.getLocalAgentNode()
     if local is not None:
         targets.append(local)
-    for node in targets:
-        try:
-            status, data = nodeRequest(node, 'GET', '/health', timeout=5)
-        except Exception:
-            continue
-        if status == 200 and isinstance(data, dict):
-            result[node['name']] = {'models': data.get('models') or [],
-                                    'default': data.get('defaultModel') or ''}
-    for member in config.getRemotes():
-        try:
-            from modules.tasks_federation import _memberCall
-            status, data = _memberCall(member, 'GET', '/api/tasks/nodes',
-                                       timeout=8)
-        except Exception:
-            continue
-        if status == 200 and isinstance(data, dict):
-            own = next((n for n in data.get('nodes') or []
-                        if n.get('name') == 'local'), None)
-            if own and (own.get('models') or own.get('defaultModel')):
-                result[member['name']] = {'models': own.get('models') or [],
-                                          'default': own.get('defaultModel') or ''}
-    with _healthModelsLock:
-        _healthModels['data'] = result
-        _healthModels['at'] = time.monotonic()
+    members = list(config.getRemotes())
+    for attempt in range(max(1, rounds)):
+        result = {}
+        for node in targets:
+            try:
+                status, data = nodeRequest(node, 'GET', '/health', timeout=10)
+            except Exception:
+                continue
+            if status == 200 and isinstance(data, dict):
+                result[node['name']] = {'models': data.get('models') or [],
+                                        'default': data.get('defaultModel') or ''}
+        for member in members:
+            try:
+                from modules.tasks_federation import _memberCall
+                status, data = _memberCall(member, 'GET', '/api/tasks/nodes',
+                                           timeout=8)
+            except Exception:
+                continue
+            if status == 200 and isinstance(data, dict):
+                own = next((n for n in data.get('nodes') or []
+                            if n.get('name') == 'local'), None)
+                if own and (own.get('models') or own.get('defaultModel')):
+                    result[member['name']] = {'models': own.get('models') or [],
+                                              'default': own.get('defaultModel') or ''}
+        with _healthModelsLock:
+            _healthModels['data'] = result
+            _healthModels['at'] = time.monotonic()
+        if len(result) >= len(targets) + len(members):
+            break
+        time.sleep(interval)
 
 
 def _healthModelsCached(maxAgeSec=60):
