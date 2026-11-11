@@ -222,6 +222,7 @@ class TaskRepository:
         full = payload.pop('full', None)
         with self.lock:
             task['seq'] = task.get('seq', 0) + 1
+            task['lastActiveAt'] = _now()   # 每次事件都刷新（R4-8：轮中可见活跃）
             event = {'seq': task['seq'], 'at': _now(), 'type': etype}
             event.update(payload)
             events = task.setdefault('events', [])

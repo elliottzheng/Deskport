@@ -214,6 +214,13 @@ def createTask():
 def getTask(task, taskId):
     out = store.repo.summary(task)
     out['sources'] = task.get('sources', [])
+    # R4-8：执行方状态可观测
+    usage = task.get('usage') or {}
+    if usage.get('used') is not None:
+        out['context'] = {'used': usage.get('used'), 'max': usage.get('size')}
+    out['commands'] = task.get('commands') or []
+    out['lastSeq'] = task.get('seq', 0)
+    out['currentTool'] = task.get('_currentTool') or None
     if request.args.get('events') == '1':
         # 默认不带 events（调用方字节预算）；增量订阅走 /events 端点，
         # ?events=1 保留旧行为供一次性全量对账

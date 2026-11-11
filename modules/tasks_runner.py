@@ -85,6 +85,9 @@ def _handleAcpUpdate(task, update):
                                      'kind': update.get('kind') or '',
                                      'args': argsText[:2000],
                                      'rawArgs': args}
+            # 主控可观测（R4-8）：执行方正在跑的工具，tool_result 到达即清
+            task['_currentTool'] = {'name': update.get('title') or '',
+                                    'since': store._now()}
         store.repo.append_event(task, 'tool',
                      name=update.get('title') or update.get('kind') or 'tool',
                      args=argsText[:store.MAX_TEXT],
@@ -99,6 +102,8 @@ def _handleAcpUpdate(task, update):
         if raw is None:
             raw = extractText(update.get('content'))
         rawText = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
+        with store.repo.lock:
+            task['_currentTool'] = None   # 工具收尾（R4-8 currentTool 清空）
         store.repo.append_event(task, 'tool_result',
                      text=rawText[:store.MAX_TOOL_RESULT],
                      full=rawText,
@@ -115,6 +120,15 @@ def _handleAcpUpdate(task, update):
             else:
                 lines.append(str(item))
         store.repo.append_event(task, 'plan', text='\n'.join(lines)[:store.MAX_TEXT])
+        return
+    if kind == 'available_commands_update':
+        # R4-8：只存名字列表进任务详情（commands），其余忽略
+        names = [c.get('name') for c in (update.get('commands') or [])
+                 if isinstance(c, dict) and c.get('name')]
+        if names:
+            with store.repo.lock:
+                task['commands'] = names[:200]
+                store.repo.save()
         return
     if kind == 'session_info_update':
         # Kimi 会用首轮 prompt 自动起标题（现在开头是平台约束），覆盖后任务名就没意义了。

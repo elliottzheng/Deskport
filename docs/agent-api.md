@@ -196,6 +196,18 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 - 实现：服务端条件变量驱动（Flask threaded 模式，每个等待占一个工作线程，
   无忙等）；SSE 与轮询端点保留作备用。
 
+### 压缩执行方上下文
+
+给任务发一条 `/compact` 消息（POST /api/tasks/<id>/message {"text": "/compact"}）
+会触发 Kimi 压缩会话上下文（2026-11-10 实测可用）。什么时候该用：
+
+- 任务详情 `context.used / context.max > 70%` 时（上下文快满，回答质量会掉）；
+- 一批活结束、开始下一批之前（带着干净上下文开工）。
+
+压缩是异步的：/compact 发出后等 status=waiting 且 lastText 出现压缩摘要即可继续。
+
+## 重启语义（如实版）
+
 ## 重启语义（如实版）
 
 - 交互式终端/SSH 会话：守护进程托管，web 重启**不打断**；

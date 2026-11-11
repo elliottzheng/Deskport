@@ -5,6 +5,7 @@
 """
 import json
 import queue
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -1392,3 +1393,89 @@ def test_wait_returns_permission_while_waiting_remote_shape(env):
     assert body['status'] == 'permission'
     assert body['pending']['requestId'] == '24'
     assert body['pending']['args'] == ''    # 轮间审批 args 为空也如实回报
+
+
+# ---- R4-8：执行方状态可观测 ----
+
+def test_detail_context_commands_current_tool(env):
+    """usage→context、available_commands→commands、currentTool 生命周期、
+    lastSeq；无 usage 的任务不带 context 字段。"""
+    import threading
+    import time as _time
+    from modules import tasks_runner as runner
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+
+    def detail():
+        return env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
+
+    assert 'context' not in detail()      # 没有 usage 就不带
+
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        runner._handleAcpUpdate(task, {'sessionUpdate': 'usage_update',
+                                       'used': 40462, 'size': 1048576})
+        runner._handleAcpUpdate(task, {'sessionUpdate': 'available_commands_update',
+                                       'commands': [{'name': 'view'},
+                                                    {'name': 'compact'},
+                                                    'bad-entry']})
+        runner._handleAcpUpdate(task, {'sessionUpdate': 'tool_call',
+                                       'toolCallId': 'c1', 'title': 'Bash',
+                                       'rawInput': 'sleep 1'})
+    d = detail()
+    assert d['context'] == {'used': 40462, 'max': 1048576}
+    assert d['commands'] == ['view', 'compact']
+    assert d['currentTool']['name'] == 'Bash'
+    assert d['lastSeq'] >= 2
+    seq_before = d['lastSeq']
+    with env.repo.lock:
+        env.repo.get(tid)['seq'] = seq_before   # 保持稳定便于比较
+        env.repo.append_event(env.repo.get(tid), 'status', text='事件刷新活跃时间')
+    d2 = detail()
+    assert d2['lastActiveAt'] >= d['lastActiveAt']   # 事件写入即刷新活跃
+    with env.repo.lock:
+        runner._handleAcpUpdate(env.repo.get(tid),
+                                {'sessionUpdate': 'tool_call_update',
+                                 'toolCallId': 'c1', 'title': 'Bash',
+                                 'status': 'completed', 'rawOutput': 'done'})
+    assert detail()['currentTool'] is None
+
+
+def test_last_active_bumped_per_event(env):
+    """R4-8 #3：一轮进行中每写一条事件，lastActiveAt 都前进。"""
+    import time as _time
+    import modules.agent_nodes as nodesMod
+    from modules import tasks_runner as runner
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['policy'] = {'allowPaths': ['e:/x'], 'allowCommands': [], 'default': 'ask'}
+        agent = {'perm': None, 'permDecision': None,
+                 'permEvent': __import__('threading').Event()}
+        env.repo.setAgent(tid, agent)
+    params = {'toolCall': {'toolCallId': 'cx', 'title': 'Edit',
+                           'rawInput': REAL_EDIT_ARGS},
+              'options': [{'optionId': 'approve_once', 'name': 'Approve once',
+                           'kind': 'allow_once'}]}
+    tP = threading.Thread(target=runner._handleAcpPermission,
+                          args=(task, agent, params, '40'), daemon=True)
+    tP.start()
+    for _ in range(100):
+        with env.repo.lock:
+            if task.get('pendingPermission') == '40':
+                break
+        _time.sleep(0.05)
+    d1 = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
+    la1 = d1['lastActiveAt']
+    _time.sleep(0.1)
+    with env.repo.lock:
+        runner._handleAcpUpdate(task, {'sessionUpdate': 'tool_call',
+                                       'toolCallId': 'c2', 'title': 'Bash',
+                                       'rawInput': 'echo 进度'})
+    d2 = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
+    assert d2['lastActiveAt'] > la1      # 一轮进行中也在前进
+    # 收尾：批准并结束漏斗线程
+    with env.repo.lock:
+        agent['permDecision']['value'] = 'approve_once'
+        agent['permEvent'].set()
