@@ -24,7 +24,8 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from node_api import Handler, SessionManager, init
+from node_api import Handler, SessionManager, discoverModels, init
+from model_probe import ModelProber
 
 MANAGER = None
 
@@ -90,7 +91,26 @@ def main():
               '建议 --token-file 或 AGENT_NODE_TOKEN', file=sys.stderr)
     os.makedirs(args.data, exist_ok=True)
     MANAGER = SessionManager(args.kimi, args.data)
-    init(MANAGER, token)
+    PROBER = ModelProber(args.kimi, args.data)
+    init(MANAGER, token, PROBER)
+
+    # R4-10 默认探测集 = defaultModel + 近 7 天用过的（成本可控；全量走
+    # POST /api/probe-models 手动触发）。每 30 分钟复查一次，默认集里
+    # 超 24h 过期的自动补测，worker 并发 ≤2、绝不阻塞 /health。
+    def sweepModels():
+        models = [discoverModels()['default']]
+        models += PROBER.recentModels(MANAGER.list())
+        PROBER.probe([m for m in models if m], force=False)
+
+    def sweepLoop():
+        sweepModels()
+        while True:
+            time.sleep(1800)
+            try:
+                sweepModels()
+            except Exception:
+                pass
+    threading.Thread(target=sweepLoop, daemon=True).start()
 
     def reap():
         while True:

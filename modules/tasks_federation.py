@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 import config
 from modules import task_engines
@@ -32,29 +32,46 @@ blueprint = Blueprint('federation_tasks', __name__)
 @blueprint.route('/api/tasks/nodes')
 def nodesList():
     from modules.agent_nodes import nodeModelsFor
+    from modules.model_availability import nodeModelStatus
     nodes = []
+
+    def entry(name, via):
+        models, defaultModel = nodeModelsFor(name)
+        avail = nodeModelStatus(name)   # R4-10：usable=null=还没探测
+        nodes.append({'name': name, 'via': via,
+                      'models': models, 'defaultModel': defaultModel,
+                      'modelSelectable': bool(models or defaultModel),
+                      'modelStatus': avail['modelStatus'],
+                      'usableModels': avail['usableModels']})
+
     for n in config.getAgentNodes():
-        models, defaultModel = nodeModelsFor(n['name'], n)
-        nodes.append({'name': n['name'], 'via': n['via'],
-                      'models': models, 'defaultModel': defaultModel,
-                      'modelSelectable': bool(models or defaultModel)})
+        entry(n['name'], n['via'])
     local = config.getLocalAgentNode()
-    if local is not None:
-        models, defaultModel = nodeModelsFor(local['name'], local)
-        nodes.append({'name': local['name'], 'via': '',
-                      'models': models, 'defaultModel': defaultModel,
-                      'modelSelectable': bool(models or defaultModel)})
-    else:
-        models, defaultModel = nodeModelsFor('local', {'name': 'local'})
-        nodes.append({'name': 'local', 'via': '',
-                      'models': models, 'defaultModel': defaultModel,
-                      'modelSelectable': bool(models or defaultModel)})
+    entry(local['name'] if local is not None else 'local', '')
     for member in config.getRemotes():
-        models, defaultModel = nodeModelsFor(member['name'], member)
-        nodes.append({'name': member['name'], 'via': 'federation',
-                      'models': models, 'defaultModel': defaultModel,
-                      'modelSelectable': bool(models or defaultModel)})
+        entry(member['name'], 'federation')
     return jsonify({'nodes': nodes})
+
+
+@blueprint.route('/api/tasks/nodes/<name>/probe', methods=['POST'])
+def nodeProbe(name):
+    """R4-10 手动触发模型可用性探测（models 缺省 = 该执行点声明全部）。
+
+    node/本机立即入队后台探测（≤2 并发）；联邦成员转发到对端
+    /api/tasks/nodes/local/probe。响应立即返回，结果随后从
+    /api/tasks/nodes 或本路由再次调用读取。
+    """
+    from modules.model_availability import probeNodeModels
+    data = request.get_json(force=True, silent=True) or {}
+    models = data.get('models')
+    if models is not None and (not isinstance(models, list)
+                               or len(models) > 200
+                               or any(not isinstance(m, str) for m in models)):
+        return jsonify({'error': 'models 必须是字符串数组且不超过 200 项'}), 400
+    status, payload = probeNodeModels(name, models)
+    payload = dict(payload or {})
+    payload['node'] = name
+    return jsonify(payload), status
 
 
 @blueprint.route('/api/tasks/nodes/<name>/health')

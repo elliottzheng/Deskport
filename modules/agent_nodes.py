@@ -75,7 +75,9 @@ def _refreshHealthModels(rounds=8, interval=5):
                 continue
             if status == 200 and isinstance(data, dict):
                 result[node['name']] = {'models': data.get('models') or [],
-                                        'default': data.get('defaultModel') or ''}
+                                        'default': data.get('defaultModel') or '',
+                                        'modelStatus': data.get('modelStatus') or {},
+                                        'usableModels': data.get('usableModels') or []}
         for member in members:
             try:
                 from modules.tasks_federation import _memberCall
@@ -88,7 +90,9 @@ def _refreshHealthModels(rounds=8, interval=5):
                             if n.get('name') == 'local'), None)
                 if own and (own.get('models') or own.get('defaultModel')):
                     result[member['name']] = {'models': own.get('models') or [],
-                                              'default': own.get('defaultModel') or ''}
+                                              'default': own.get('defaultModel') or '',
+                                              'modelStatus': own.get('modelStatus') or {},
+                                              'usableModels': own.get('usableModels') or []}
         with _healthModelsLock:
             _healthModels['data'] = result
             _healthModels['at'] = time.monotonic()

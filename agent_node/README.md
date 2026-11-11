@@ -96,7 +96,8 @@ SSH 远程拉起时用 `setsid`，避免会话退出连带杀掉进程。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /health | 健康检查（免认证） |
+| GET | /health | 健康检查（免认证）；含 `models`/`defaultModel`/`modelStatus`/`usableModels`（R4-10 模型可用性） |
+| POST | /api/probe-models | 手动触发模型探测 `{models?: [...]}`（缺省=全部声明模型），后台 ≤2 并发，结果缓存 24h |
 | GET | /api/sessions | 会话列表（含归档） |
 | POST | /api/sessions | 建会话 `{cwd, mode, sessionId?}`，带 sessionId 即 resume |
 | GET | /api/sessions/<sid> | 会话元信息 |

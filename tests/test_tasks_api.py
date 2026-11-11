@@ -290,7 +290,7 @@ def test_nodes_list_includes_model_info(env, monkeypatch):
         {'name': 'ai-xmyz', 'via': 'h1', 'models': ['k2'], 'model': 'k2'}])
     monkeypatch.setattr(fedMod.config, 'getLocalAgentNode', lambda: None)
     monkeypatch.setattr(fedMod.config, 'getRemotes', lambda: [
-        {'name': 'win4710', 'models': [], 'model': ''}])
+        {'id': 'w1', 'name': 'win4710', 'models': [], 'model': ''}])
     resp = env.client.get('/api/tasks/nodes', headers=H).get_json()
     byName = {n['name']: n for n in resp['nodes']}
     assert byName['ai-xmyz']['models'] == ['k2']

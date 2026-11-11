@@ -21,6 +21,7 @@ from modules import task_state
 from modules import tasks_store as store
 from modules import fsutil
 from modules import agent_nodes
+from modules import model_availability
 from modules import events
 
 blueprint = Blueprint('tasks', __name__)
@@ -142,6 +143,15 @@ def createTask():
         return jsonify({'error': '执行点 %s 不支持模型 %s' % (decl['name'], model),
                         'models': decl['models'],
                         'defaultModel': decl['default']}), 400
+    # R4-10 模型可用性门禁：24h 内探测失败的直接拒绝，省一次必然失败的派活；
+    # 没探测过的（usable=null）照常放行
+    gateErr, gateAvail = model_availability.modelGate(
+        node or ('local' if engine == 'acp' else ''), model)
+    if gateErr:
+        return jsonify({'error': gateErr,
+                        'usableModels': gateAvail['usableModels'],
+                        'model': model,
+                        'probedModelStatus': (gateAvail['modelStatus'].get(model))}), 400
     # 实际生效的模型：用户没传就落执行点默认（可追溯"这个结论是哪个模型给的"）
     modelEffective = model or decl['default']
     with store.repo.lock:

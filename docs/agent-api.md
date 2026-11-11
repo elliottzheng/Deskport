@@ -139,7 +139,8 @@ DELETE /api/agent/ssh/sessions/<sid>
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
-| GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable` |
+| GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`modelStatus`/`usableModels` |
+| POST | /api/tasks/nodes/<node>/probe | 手动触发模型可用性探测 `{models?: [...]}`（缺省=全部声明模型），立即入队后台探测 |
 | POST | /api/tasks/files | 上传文件 → 返回本机路径（塞进 paths 用） |
 | GET | /api/tasks/kimi-sessions?cwd= | 已存在的 Kimi CLI 会话（接手候选，按最近更新排序） |
 
@@ -156,6 +157,13 @@ DELETE /api/agent/ssh/sessions/<sid>
   节点升级即自动点亮）→ 本机自动发现。声明白名单的执行点校验不命中 →
   400 附可选列表；选错别名会在任务 error 里看到 kimi 原始报错；
   联邦成员转发该字段（对端与本中枢保持同版，见下方版本策略）；
+- **模型可用性（R4-10）**：`GET /api/tasks/nodes` 每个执行点另带
+  `modelStatus`（`{<model>: {usable: true|false|null, checkedAt, error}}`，
+  null=还没探测）与 `usableModels`（只列 usable=true）。探测 = 一次最小
+  调用（`kimi -p ok --model`，30s 超时），node 侧后台异步跑（并发 ≤2），
+  结果缓存 24h；默认只测 defaultModel + 近 7 天用过的，全量走
+  `POST /api/tasks/nodes/<node>/probe` 手动触发。建任务时**指定的** model
+  已知 usable=false → 400 附 `usableModels`；没探测过的照常放行；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（仅
   engine=acp）。默认先 `kimi fork` 复制副本再加载——不干扰用户开着的
   终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，

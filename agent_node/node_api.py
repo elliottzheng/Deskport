@@ -12,18 +12,21 @@ from urllib.parse import urlparse, parse_qs
 
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
     discoverModels, forkKimiSession, listKimiSessions
+from model_probe import MAX_QUEUE_MODELS
 
 CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限；超时杀掉卡住的
                                # kimi 子进程并报错（防止无限等会话锁）
 
 _MANAGER = None
+_PROBER = None     # R4-10 模型可用性探测（缓存 + 后台 worker）
 _TOKEN = ''
 _STARTED = nowMs()
 
 
-def init(manager, token):
-    global _MANAGER, _TOKEN, _STARTED
+def init(manager, token, prober=None):
+    global _MANAGER, _PROBER, _TOKEN, _STARTED
     _MANAGER = manager
+    _PROBER = prober
     _TOKEN = token
     _STARTED = nowMs()
 
@@ -51,6 +54,7 @@ class SessionManager:
             sid = str(item.get('sid') or uuid.uuid4().hex[:12])
             meta = {'sid': sid, 'cwd': item.get('cwd') or os.path.expanduser('~'),
                     'mode': item.get('mode') or 'auto', 'title': item.get('title') or '',
+                    'model': str(item.get('model') or ''),
                     'kimiSessionId': item.get('kimiSessionId'),
                     'createdAt': item.get('createdAt') or nowMs(),
                     'running': False, 'dead': True, 'exitCode': None,
@@ -214,12 +218,17 @@ class Handler(BaseHTTPRequestHandler):
             sessions = _MANAGER.list()
             alive = sum(1 for s in sessions if isinstance(s.get('dead'), bool) and not s['dead'])
             models = discoverModels()
+            modelStatus = _PROBER.status(models['models']) if _PROBER else {}
             return self._json(200, {'ok': True, 'service': 'deskport-agent-node',
                                     'protocolVersion': PROTOCOL_VERSION,
                                     'sessions': len(sessions), 'alive': alive,
                                     'uptime': nowMs() - _STARTED,
                                     'models': models['models'],
-                                    'defaultModel': models['default']})
+                                    'defaultModel': models['default'],
+                                    'modelStatus': modelStatus,
+                                    'usableModels': sorted(
+                                        m for m, v in modelStatus.items()
+                                        if v['usable'] is True)})
         if not self._authed():
             return self._json(401, {'error': '认证失败'})
         if path == '/api/kimi-sessions':
@@ -318,6 +327,22 @@ class Handler(BaseHTTPRequestHandler):
                                     'kimiSessionId': session.kimi_session_id,
                                     'attachSeq': session.ring.seq(),
                                     'replayCount': getattr(session, 'replayCount', 0)})
+        if path == '/api/probe-models':
+            # R4-10 手动触发探测；models 缺省/空 = 该 node 声明的全部模型
+            models = data.get('models')
+            if models is not None and (
+                    not isinstance(models, list) or len(models) > MAX_QUEUE_MODELS
+                    or any(not isinstance(m, str) for m in models)):
+                return self._json(400, {'error': 'models 必须是字符串数组'
+                                                 '且不超过 %d 项' % MAX_QUEUE_MODELS})
+            declared = discoverModels()['models']
+            target = [m.strip() for m in models] if models else declared
+            if _PROBER is None:
+                return self._json(503, {'error': '探测组件未初始化'})
+            queued = _PROBER.probe(target, force=True)
+            return self._json(200, {'queued': queued,
+                                    'modelStatus': _PROBER.status(declared),
+                                    'usableModels': _PROBER.usableModels(declared)})
         sid = self._sid()
         session = _MANAGER.get(sid)
         if not session:
