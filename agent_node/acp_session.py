@@ -89,6 +89,9 @@ class AcpSession:
         self.title = (title or '')[:60]
         self.model = str(model or '').strip()
         self.kimi_session_id = None
+        self.replayCount = 0      # session/load 回放的 update 条数（R4-5a）
+        self.replayPerms = 0      # 回放中被直接取消的旧审批条数
+        self.kimi_session_id = None
         self.created_at = nowMs()
         self.last_active = nowMs()
         self.running = False
@@ -166,6 +169,13 @@ class AcpSession:
                         'error': {'code': -32601, 'message': 'method not found'}})
 
     def _handlePermission(self, params, acpReqId):
+        if self._loading:
+            # session/load 回放里的旧审批不能成为 live 挂起（R4-5a #2）：
+            # 直接取消，不落 ring、不计数为 live
+            self.replayPerms += 1
+            self._send({'jsonrpc': '2.0', 'id': acpReqId,
+                        'result': {'outcome': {'outcome': 'cancelled'}}})
+            return
         requestId = str(acpReqId)
         toolCall = params.get('toolCall') or {}
         options = [{'optionId': o.get('optionId') or '', 'name': o.get('name') or '',
@@ -253,6 +263,10 @@ class AcpSession:
             finally:
                 self._loading = False
             self.kimi_session_id = resume_session_id
+            # 回放结束 = session/load 返回（R4-5a #4）；统计被门禁挡下的
+            # 回放 update 条数，供 web 侧写「已加载历史 N 条」
+            self.replayCount = sum(1 for e in self.ring.since(0)
+                                   if e.get('type') == 'update' and e.get('replay'))
         else:
             session = self._request('session/new', {
                 'cwd': self.cwd, 'mcpServers': [], 'additionalDirectories': [],

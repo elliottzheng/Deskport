@@ -300,10 +300,20 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             task['resume'] = True
             task['startedAt'] = task.get('startedAt') or store._now()
             store.repo.save()
+        replayed = int(getattr(client, 'replayCount', 0) or 0)
+        if replayed:
+            # session/load 回放已被客户端门禁拦截（R4-5a），落一条汇总
+            store.repo.append_event(task, 'status',
+                                    text='已加载历史 %d 条' % replayed)
         store.repo.append_event(task, 'status',
                      text=('已接手既有 Kimi 会话' if task.get('kimiSessionId')
                            else '会话已接续' if resume else 'ACP 会话已建立'),
                      **({'model': task['model']} if task.get('model') else {}))
+        with store.repo.lock:
+            # liveFrom 之后的事件才是本轮 live 的（R4-5a #3）：wait 重建
+            # pending 只认这条水位线之后产生的 permission_request
+            task['liveFrom'] = task.get('seq', 0)
+            store.repo.save()
         if resume:
             _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
             if firstMessage:

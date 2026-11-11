@@ -294,9 +294,13 @@ def _waitSnapshot(task, after, ignorePending=None):
                 # perm 记账与 pendingPermission 标记不一致（fork/接手链路上
                 # 曾实测漏报：标记在、perm 没了 → wait 空等到超时）。规格 R4-3b
                 # #1：只要标记是 live 的就如实回报 pending，内容从最近一条
-                # 同 id 的 permission_request 事件重建
+                # 同 id 的 permission_request 事件重建。只认 liveFrom 水位线
+                # 之后的事件（R4-5a #3）：回放窗口的旧审批不是 live 的
+                liveFrom = task.get('liveFrom', 0)
                 lastReq = None
                 for e in reversed(task.get('events', [])):
+                    if e.get('seq', 0) < liveFrom:
+                        break
                     if e.get('type') == 'permission_request' \
                             and str(e.get('requestId') or '') == pendingPerm:
                         lastReq = e

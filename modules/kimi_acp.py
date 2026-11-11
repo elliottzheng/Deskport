@@ -106,6 +106,9 @@ class KimiAcp:
         self._reader = None
         self._errReader = None
         self._closed = False
+        self._loading = False      # session/load 进行中（回放窗口，R4-5a）
+        self.replayCount = 0       # 窗口内被门禁挡下的回放 update 条数
+        self.replayPerms = 0       # 窗口内被直接取消的回放审批条数
 
     # ---- transport ----
     def _send(self, obj):
@@ -142,42 +145,7 @@ class KimiAcp:
                 except ValueError:
                     log.warning('ACP 非 JSON 输出: %s', line[:200])
                     continue
-                if obj.get('id') is not None and 'method' not in obj:
-                    with self._lock:
-                        fut = self._pending.get(obj.get('id'))
-                    if fut and not fut.done():
-                        if obj.get('error'):
-                            fut.set_exception(AcpError(str(obj['error'].get('message') or obj['error'])))
-                        else:
-                            fut.set_result(obj.get('result') or {})
-                    continue
-                method = obj.get('method')
-                if method == 'session/update':
-                    update = (obj.get('params') or {}).get('update') or {}
-                    try:
-                        self.on_update(update)
-                    except Exception as e:
-                        log.warning('ACP update handler error: %s', e)
-                elif method == 'session/request_permission':
-                    params = obj.get('params') or {}
-                    optionId = None
-                    try:
-                        optionId = self.on_permission(params, obj.get('id'))
-                    except TypeError:
-                        optionId = self.on_permission(params)
-                    except Exception as e:
-                        log.warning('ACP permission handler error: %s', e)
-                    if optionId:
-                        self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
-                                    'result': {'outcome': {'outcome': 'selected',
-                                                           'optionId': optionId}}})
-                    else:
-                        self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
-                                    'result': {'outcome': {'outcome': 'cancelled'}}})
-                elif method:
-                    log.info('ACP 未处理的 agent 请求: %s', method)
-                    self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
-                                'error': {'code': -32601, 'message': 'method not found'}})
+                self._handleMessage(obj)
         except Exception as e:
             log.warning('ACP reader stopped: %s', e)
         finally:
@@ -186,6 +154,54 @@ class KimiAcp:
                     if not fut.done():
                         fut.set_exception(AcpError('ACP 进程已退出'))
                 self._pending.clear()
+
+    def _handleMessage(self, obj):
+        """分发一条 ACP 消息；session/load 回放窗口内的 update 与旧审批
+        不外发（R4-5a）：update 计数不转发，旧审批直接回 cancelled。"""
+        if obj.get('id') is not None and 'method' not in obj:
+            with self._lock:
+                fut = self._pending.get(obj.get('id'))
+            if fut and not fut.done():
+                if obj.get('error'):
+                    fut.set_exception(AcpError(str(obj['error'].get('message') or obj['error'])))
+                else:
+                    fut.set_result(obj.get('result') or {})
+            return
+        method = obj.get('method')
+        if method == 'session/update':
+            update = (obj.get('params') or {}).get('update') or {}
+            if self._loading:
+                self.replayCount += 1
+                return
+            try:
+                self.on_update(update)
+            except Exception as e:
+                log.warning('ACP update handler error: %s', e)
+        elif method == 'session/request_permission':
+            params = obj.get('params') or {}
+            if self._loading:
+                self.replayPerms += 1
+                self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
+                            'result': {'outcome': {'outcome': 'cancelled'}}})
+                return
+            optionId = None
+            try:
+                optionId = self.on_permission(params, obj.get('id'))
+            except TypeError:
+                optionId = self.on_permission(params)
+            except Exception as e:
+                log.warning('ACP permission handler error: %s', e)
+            if optionId:
+                self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
+                            'result': {'outcome': {'outcome': 'selected',
+                                                   'optionId': optionId}}})
+            else:
+                self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
+                            'result': {'outcome': {'outcome': 'cancelled'}}})
+        elif method:
+            log.info('ACP 未处理的 agent 请求: %s', method)
+            self._send({'jsonrpc': '2.0', 'id': obj.get('id'),
+                        'error': {'code': -32601, 'message': 'method not found'}})
 
     def _readStderr(self):
         try:
@@ -232,10 +248,15 @@ class KimiAcp:
         self.agent_info = init.get('agentInfo') or {}
         self.capabilities = init.get('agentCapabilities') or {}
         if session_id:
-            loaded = self.request('session/load', {
-                'sessionId': session_id, 'cwd': self.cwd,
-                'mcpServers': [], 'additionalDirectories': [],
-            }, timeout=60)
+            # 回放窗口 = session/load 请求在途（R4-5a #4：load 返回即结束）
+            self._loading = True
+            try:
+                loaded = self.request('session/load', {
+                    'sessionId': session_id, 'cwd': self.cwd,
+                    'mcpServers': [], 'additionalDirectories': [],
+                }, timeout=60)
+            finally:
+                self._loading = False
             self.session_id = session_id
             self.modes = loaded.get('modes') or {}
             if self.mode:

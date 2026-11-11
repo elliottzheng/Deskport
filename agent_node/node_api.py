@@ -244,7 +244,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._json(502, {'error': 'ACP 启动失败: %s' % e})
             return self._json(200, {'sid': session.sid,
-                                    'kimiSessionId': session.kimi_session_id})
+                                    'kimiSessionId': session.kimi_session_id,
+                                    'attachSeq': session.ring.seq(),
+                                    'replayCount': getattr(session, 'replayCount', 0)})
         sid = self._sid()
         session = _MANAGER.get(sid)
         if not session:

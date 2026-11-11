@@ -247,6 +247,10 @@ class RemoteAcpClient:
         self.session_id = data.get('kimiSessionId') or ''
         if not self.node_sid or not self.session_id:
             raise RuntimeError('远端会话创建返回不完整: %s' % data)
+        # R4-5a：attachSeq = 接手时刻 ring 的水位——进程复用（live）时 ring
+        # 里是完整旧历史，事件流从水位之后取，旧事件不得涌入任务卡
+        self.attachSeq = int(data.get('attachSeq') or 0)
+        self.replayCount = int(data.get('replayCount') or 0)
         threading.Thread(target=self._streamLoop, daemon=True).start()
         return self.session_id
 
@@ -262,7 +266,7 @@ class RemoteAcpClient:
 
     def _streamLoop(self):
         """SSE 长连接：事件到达即回调；断开自动重连（since 补差）。"""
-        since = 0
+        since = getattr(self, 'attachSeq', 0)
         fails = 0
         while not self._closed:
             sessionEnded = False
@@ -313,6 +317,8 @@ class RemoteAcpClient:
             except Exception:
                 pass
         elif kind == 'permission_request':
+            if event.get('replay'):
+                return   # session/load 回放里的旧审批不能成为 live（R4-5a）
             params = {'toolCall': {'title': event.get('title') or '',
                                    'toolCallId': event.get('callId') or '',
                                    'rawInput': event.get('args') or ''},
