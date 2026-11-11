@@ -212,6 +212,9 @@ def _handleAcpPermission(task, agent, params, requestId):
         agent['permEvent'] = threading.Event()
         task['pendingPermission'] = str(requestId)
         store.repo.save()
+        # 挂起标记赋值路径显式唤醒（R4-3b #3）：不依赖 append_event 的
+        # notify——标记先于事件落卡，等待者醒来即可读到完整状态
+        store.repo.evCond.notify_all()
     ev = store.repo.append_event(task, 'permission_request', requestId=str(requestId),
                       text='等待你授权：' + title, name=title, options=options,
                       callId=callId, args=argsForEvent)

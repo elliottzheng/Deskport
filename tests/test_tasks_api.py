@@ -1192,3 +1192,96 @@ def test_get_wait_has_taskid(env):
                           headers=H).get_json()
     assert body['taskId'] == tid
     assert body['status'] in ('queued', 'running')
+
+
+# ---- R4-3b：wait 漏报挂起审批 ----
+
+def test_wait_reports_live_pending_even_if_perm_bookkeeping_diverged(env):
+    """现场形状（prod 4b1c65a28843）：pendingPermission='24' 在卡上，
+    agent['perm'] 记账却没了 → 旧判定把 live 挂起漏成 running。
+    规格化后：标记 live 即回报 permission，pending 从事件重建。"""
+    import threading
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    evArgs = json.dumps({'new_string': 'x', 'old_string': 'y',
+                         'path': 'E:\事项\远程\web-platform-dev\m.py'})
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['seq'] = 2
+        task['events'] = [
+            {'seq': 1, 'at': store._now(), 'type': 'tool', 'name': 'Edit',
+             'callId': 'callX', 'args': evArgs, 'status': 'pending'},
+            {'seq': 2, 'at': store._now(), 'type': 'permission_request',
+             'requestId': '24', 'name': 'Edit', 'callId': 'callX',
+             'args': evArgs,
+             'options': [{'optionId': 'approve_once', 'name': 'Approve once',
+                          'kind': 'allow_once'}]},
+        ]
+        task['pendingPermission'] = '24'
+        env.repo.setAgent(tid, {'perm': None, 'permDecision': None,
+                                'permEvent': threading.Event()})
+        env.repo.save()
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=2' % tid,
+                          headers=H).get_json()
+    assert body['status'] == 'permission'
+    assert body['pending']['requestId'] == '24'
+    assert body['pending']['options'], 'pending 从事件重建时带 options'
+
+
+def test_approve_wait_wakes_on_new_approval(env):
+    """规格例子：批准 A（wait=60）→ 稍后审批 B 到达 → 该 wait 立刻返回 B。"""
+    import queue
+    import threading
+    import time as _time
+    from modules import tasks_runner as runner
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    agent = {'queue': queue.Queue(), 'client': None, 'perm': None,
+             'permDecision': None, 'permEvent': threading.Event(), 'ready': True}
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        env.repo.setAgent(tid, agent)
+
+    opts = [{'optionId': 'approve_once', 'name': 'Approve once',
+             'kind': 'allow_once'}]
+    params = lambda cid: {'toolCall': {'toolCallId': cid, 'title': 'Edit'},
+                          'options': opts}
+
+    # 审批 A 挂起（真实漏斗，requestId='23'）
+    tA = threading.Thread(target=runner._handleAcpPermission,
+                          args=(task, agent, params('callA'), '23'), daemon=True)
+    tA.start()
+    for _ in range(100):
+        with env.repo.lock:
+            if task.get('pendingPermission') == '23':
+                break
+        _time.sleep(0.05)
+    assert task.get('pendingPermission') == '23'
+
+    # 批准 A 带 wait=5（此时 B 还没来）
+    result = {}
+
+    def approveA():
+        r = env.client.post('/api/tasks/%s/permission' % tid, headers=H,
+                            data=json.dumps({'requestId': '23',
+                                             'optionId': 'approve_once',
+                                             'wait': 5}),
+                            content_type='application/json')
+        result['at'] = _time.monotonic()
+        result['body'] = r.get_json()
+    t0 = _time.monotonic()
+    threading.Thread(target=approveA, daemon=True).start()
+    _time.sleep(1.0)   # 2 秒后审批 B 到达
+    tB = threading.Thread(target=runner._handleAcpPermission,
+                          args=(task, agent, params('callB'), '24'), daemon=True)
+    tB.start()
+    for _ in range(100):
+        with env.repo.lock:
+            if task.get('pendingPermission') == '24':
+                break
+        _time.sleep(0.05)
+    _time.sleep(2.5)
+    assert result['body'], '审批 wait 无响应'
+    assert _time.monotonic() - result['at'] < 4.5, '应在 B 挂起时立刻返回'
+    assert result['body'].get('status') == 'permission'
+    assert result['body'].get('pending', {}).get('requestId') == '24'

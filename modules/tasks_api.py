@@ -283,12 +283,30 @@ def _waitSnapshot(task, after, ignorePending=None):
         agent = store.repo.agentOf(task['id'])
         perm = (agent.get('perm') or {}) if agent else {}
         pending = None
-        if pendingPerm and pendingPerm != ignorePending                 and perm.get('requestId') == pendingPerm:
-            pending = {'requestId': pendingPerm,
-                       'callId': perm.get('callId') or '',
-                       'name': perm.get('title') or '',
-                       'args': perm.get('args'),
-                       'options': perm.get('options') or []}
+        if pendingPerm and pendingPerm != ignorePending:
+            if perm.get('requestId') == pendingPerm:
+                pending = {'requestId': pendingPerm,
+                           'callId': perm.get('callId') or '',
+                           'name': perm.get('title') or '',
+                           'args': perm.get('args'),
+                           'options': perm.get('options') or []}
+            else:
+                # perm 记账与 pendingPermission 标记不一致（fork/接手链路上
+                # 曾实测漏报：标记在、perm 没了 → wait 空等到超时）。规格 R4-3b
+                # #1：只要标记是 live 的就如实回报 pending，内容从最近一条
+                # 同 id 的 permission_request 事件重建
+                lastReq = None
+                for e in reversed(task.get('events', [])):
+                    if e.get('type') == 'permission_request' \
+                            and str(e.get('requestId') or '') == pendingPerm:
+                        lastReq = e
+                        break
+                if lastReq:
+                    pending = {'requestId': pendingPerm,
+                               'callId': lastReq.get('callId') or '',
+                               'name': lastReq.get('name') or lastReq.get('title') or '',
+                               'args': lastReq.get('args') or '',
+                               'options': lastReq.get('options') or []}
         lastSeq = task.get('seq', 0)
         error = task.get('error', '')
     # taskId 必须在所有 wait 响应里（R4 复测缺陷：调用方拿不到自己刚建的任务）
