@@ -151,12 +151,16 @@ def _handleAcpPermission(task, agent, params, requestId):
     # 真实链路（R4 验收）：Kimi 的 request_permission 常不带 rawInput，
     # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，
     # 字符串统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉
-    if not rawInput and byCall is not None:
-        rawInput = byCall
-    if not rawInput:
-        callId = callId or last.get('callId') or ''
+    if callId and byCall is not None:
+        rawInput = byCall               # 按 callId 精确回查：找到就用（空也认）
+    if not rawInput and not callId:
+        # 无 callId 才借用最近一次调用（R4-2b，连 callId 一起认领）；callId
+        # 带着但查不到说明是另一次调用（后台/轮间请求，事件流里无对应 tool
+        # 事件）——保持空参数走 policy default（ask），不借用、不默认拒绝
+        # （R4-3c #1）
+        callId = last.get('callId') or callId
         rawInput = last.get('rawArgs')
-    if not rawInput:
+    if not rawInput and not callId:
         rawInput = last.get('args') or ''
     if isinstance(rawInput, str) and rawInput.strip()[:1] in ('{', '['):
         try:

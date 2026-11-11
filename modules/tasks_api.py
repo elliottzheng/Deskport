@@ -475,6 +475,13 @@ def taskMessage(task, taskId):
     status = task.get('status')
     with store.repo.lock:
         agent = store.repo.agentOf(taskId)
+    # live 挂起审批未处理时拒绝续聊（R4-3c #3）：否则旧审批 5 分钟超时
+    # 拒绝会把刚开的新一轮带死
+    pending = _waitSnapshot(task, task.get('seq', 0) or 0).get('pending')
+    if pending:
+        return jsonify({'error': '有等待处理的审批（可能是上一轮的后台调用），'
+                                 '先通过 /permission 批准或拒绝，再续聊',
+                        'pending': pending}), 409
     if agent:
         if status == 'running':
             return jsonify({'error': '这一轮还在执行，等结束或先点停止'}), 409

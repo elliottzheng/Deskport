@@ -4,6 +4,7 @@
 不启动真实 runner：_startTask 打桩，任务停在 queued，专测校验与字段。
 """
 import json
+import queue
 from types import SimpleNamespace
 
 import pytest
@@ -1285,3 +1286,104 @@ def test_approve_wait_wakes_on_new_approval(env):
     assert _time.monotonic() - result['at'] < 4.5, '应在 B 挂起时立刻返回'
     assert result['body'].get('status') == 'permission'
     assert result['body'].get('pending', {}).get('requestId') == '24'
+
+
+# ---- R4-3c：轮间审批 / message 409 / 超时只取消单调用 ----
+
+REAL_EDIT_ARGS = {'new_string': 'x', 'old_string': 'y',
+                  'path': 'E:/事项/远程/web-platform-dev/m.py'}
+
+
+def test_inter_turn_perm_unknown_callid_asks_not_borrow(env):
+    """R4-3c #1：后台/轮间审批 args 为空、callId 查不到 → 不借用最近调用
+    的参数做自动放行，按 ask 处理（落 permission_request 等人处理）。"""
+    import threading
+    import time as _time
+    from modules import tasks_runner as runner
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    agent = {'queue': queue.Queue(), 'client': None, 'perm': None,
+             'permDecision': None, 'permEvent': threading.Event(), 'ready': True}
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        env.repo.setAgent(tid, agent)
+        # 最近一次调用是边界内的 Edit（若错误借用会被自动放行）
+        runner._handleAcpUpdate(task, {'sessionUpdate': 'tool_call',
+                                       'toolCallId': 'call_old', 'kind': 'edit',
+                                       'title': 'Edit', 'rawInput': REAL_EDIT_ARGS})
+        task['policy'] = {'allowPaths': ['e:/事项/远程/web-platform-dev'],
+                          'allowCommands': [], 'default': 'ask'}
+    # 轮间审批：callId 带上一轮前缀、args 为空、byCall 查不到
+    params = {'toolCall': {'toolCallId': '3:call_bg999', 'title': 'Bash'},
+              'options': [{'optionId': 'approve_once', 'name': 'Approve once',
+                           'kind': 'allow_once'}]}
+    tP = threading.Thread(target=runner._handleAcpPermission,
+                          args=(task, agent, params, '30'), daemon=True)
+    tP.start()
+    for _ in range(100):
+        with env.repo.lock:
+            if task.get('pendingPermission') == '30':
+                break
+        _time.sleep(0.05)
+    assert task.get('pendingPermission') == '30'   # ask：挂起等人，不默认拒绝
+    evs = [e for e in task['events'] if e.get('type') == 'permission_request']
+    assert evs and evs[-1]['requestId'] == '30'
+    # 批准收尾，让漏斗线程退出
+    with env.repo.lock:
+        decision = agent.get('permDecision')
+        if decision is not None:
+            decision['value'] = 'approve_once'
+        ev = agent.get('permEvent')
+        if ev is not None:
+            ev.set()
+
+
+def test_message_with_live_pending_is_409(env):
+    """R4-3c #3：waiting 状态下有 live 挂起审批 → message 409 带 pending。"""
+    import threading
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task_state_mark_waiting(task)
+        task['pendingPermission'] = '24'
+        env.repo.setAgent(tid, {'perm': {'requestId': '24', 'title': 'Bash',
+                                         'callId': 'callB', 'args': 'docker ps',
+                                         'options': []},
+                                 'permDecision': {'value': None},
+                                 'permEvent': threading.Event()})
+        env.repo.save()
+    resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
+                           data=json.dumps({'text': '继续'}),
+                           content_type='application/json')
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body['pending']['requestId'] == '24'
+
+
+def task_state_mark_waiting(task):
+    task['status'] = 'waiting'
+
+
+def test_wait_returns_permission_while_waiting_remote_shape(env):
+    """R4-3c #2：waiting + live 挂起 → wait 返回 permission（remote 同链路）。"""
+    import threading
+    from modules import tasks_runner as runner
+    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local',
+                        'cwd': '/tmp'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['status'] = 'waiting'
+        env.repo.setAgent(tid, {'perm': {'requestId': '24', 'title': 'Bash',
+                                         'callId': 'callB', 'args': '',
+                                         'options': []},
+                                 'permDecision': {'value': None},
+                                 'permEvent': threading.Event()})
+        task['pendingPermission'] = '24'
+        env.repo.save()
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
+                          headers=H).get_json()
+    assert body['status'] == 'permission'
+    assert body['pending']['requestId'] == '24'
+    assert body['pending']['args'] == ''    # 轮间审批 args 为空也如实回报
