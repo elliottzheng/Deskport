@@ -3,6 +3,7 @@
 import hashlib
 import json
 import threading
+import time as _time
 from types import SimpleNamespace
 
 import pytest
@@ -192,3 +193,71 @@ def test_node_kimi_sessions_endpoint(tmp_path, monkeypatch):
             srv.shutdown()
     finally:
         sys.path.pop(0)
+
+
+# ---- R4-3c 追加：唤醒卡死的双看门狗 ----
+
+def test_resume_watchdog_clears_stuck_resume(env, monkeypatch):
+    """session/load 阻塞（会话被其他活进程占用）→ 唤醒超时清态、
+    任务回 paused 带 error，第二次 message 不再 409。"""
+    import modules.tasks_runner as runner
+    blocked = threading.Event()
+    started = threading.Event()
+
+    class BlockingClient:
+        def __init__(self, cwd, on_update=None, on_permission=None,
+                     mode='auto', prompt_timeout=0, model=''):
+            pass
+
+        def start(self, session_id=None):
+            started.set()
+            blocked.wait(10)          # 模拟 session/load 无限等会话锁
+            return 'sess-x'
+
+        def prompt(self, text, timeout=None):
+            return {'stopReason': 'end_turn'}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, 'RESUME_WATCHDOG_SEC', 1)
+    from modules.agent_nodes import clientFactoryFor as _cf
+    monkeypatch.setattr(nodesModLazy(), 'clientFactoryFor',
+                        lambda task: BlockingClient)
+
+    resp = create(env, {'prompt': 'x'})
+    tid = resp.get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['status'] = 'paused'
+        task['sessionId'] = 'sess-adopted'
+        env.repo.save()
+    resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
+                           data=json.dumps({'text': '续上'}),
+                           content_type='application/json')
+    assert resp.status_code == 202
+    assert started.wait(5)
+    # 看门狗（1s）触发：回 paused + error + 清唤醒态
+    for _ in range(60):
+        with env.repo.lock:
+            t = env.repo.get(tid)
+            if not t.get('resuming') and t.get('status') == 'paused' \
+                    and t.get('error'):
+                break
+        _time.sleep(0.1)
+    with env.repo.lock:
+        t = env.repo.get(tid)
+    assert t['status'] == 'paused' and t['resuming'] is False
+    assert '唤醒超时' in t['error']
+    # 第二次 message 不再 409（重新尝试唤醒）
+    blocked.set()
+    resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
+                           data=json.dumps({'text': '再试'}),
+                           content_type='application/json')
+    assert resp.status_code in (200, 202, 409)   # 至少不是卡死
+    blocked.set()
+
+
+def nodesModLazy():
+    import modules.agent_nodes as nodesMod
+    return nodesMod

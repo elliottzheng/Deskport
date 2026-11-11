@@ -8,6 +8,7 @@ import json
 import logging
 import queue
 import threading
+import time
 
 import config
 from modules import tasks_store as store
@@ -407,6 +408,9 @@ def _denyPendingPermission(agent):
             pass
 
 
+RESUME_WATCHDOG_SEC = 90   # 唤醒看门狗：超时清唤醒态回 paused（R4-5 余项补遗）
+
+
 def _resumeWithMessage(task, text):
     with store.repo.lock:
         if task.get('resuming'):
@@ -423,6 +427,29 @@ def _resumeWithMessage(task, text):
                 task['resuming'] = False
                 store.repo.save()
     threading.Thread(target=run, daemon=True).start()
+
+    # 唤醒看门狗（R4-3c 复测缺陷）：session/load 可能阻塞在被其他活进程
+    # 持有的 kimi 会话锁上（如接手一个正被交互使用的会话）且无限等——
+    # 超时清唤醒态、任务回 paused 并带上原因，调用方可改用 fork 接手
+    def watchdog():
+        deadline = time.monotonic() + RESUME_WATCHDOG_SEC
+        while time.monotonic() < deadline:
+            with store.repo.lock:
+                if not task.get('resuming') or task.get('status') != 'queued':
+                    return   # 唤醒线程自己完成了/已进入其它状态
+            time.sleep(1)
+        with store.repo.lock:
+            if not task.get('resuming'):
+                return
+            task['resuming'] = False
+            if task.get('status') == 'queued':
+                task_state.transition(task, task_state.TaskState.PAUSED)
+            task['error'] = ('唤醒超时（%ds）：会话加载未完成，可能正被其他 '
+                             'Kimi 进程占用——改用 fork 接手或稍后重试'
+                             % RESUME_WATCHDOG_SEC)
+            store.repo.append_event(task, 'error', text=task['error'])
+            store.repo.save()
+    threading.Thread(target=watchdog, daemon=True).start()
 
 
 def _startTask(task, manifest):

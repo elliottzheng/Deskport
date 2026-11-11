@@ -13,6 +13,9 @@ from urllib.parse import urlparse, parse_qs
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
     discoverModels, forkKimiSession, listKimiSessions
 
+CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限；超时杀掉卡住的
+                               # kimi 子进程并报错（防止无限等会话锁）
+
 _MANAGER = None
 _TOKEN = ''
 _STARTED = nowMs()
@@ -85,7 +88,26 @@ class SessionManager:
             resume_session_id = forkKimiSession(self.kimi_bin, kimi_session_id)
         sid = uuid.uuid4().hex[:12]
         session = AcpSession(sid, cwd, mode, self.kimi_bin, title, model)
-        session.start(resume_session_id)
+        # session/load 可能阻塞在被其他活进程持有的 kimi 会话锁上且无限等
+        # （R4-3c 复测缺陷：接手一个正被交互使用的会话）——限时守护：
+        # 超时杀掉卡住的 kimi 子进程并报错，任务可明确失败而非无限唤醒
+        err = []
+
+        def _start():
+            try:
+                session.start(resume_session_id)
+            except Exception as e:
+                err.append(e)
+        t = threading.Thread(target=_start, daemon=True)
+        t.start()
+        t.join(CREATE_LOAD_TIMEOUT_SEC)
+        if t.is_alive():
+            session.stop()
+            raise RuntimeError('会话加载超时（%ds）：会话可能正被其他 Kimi '
+                               '进程占用，请改用 fork 接手'
+                               % CREATE_LOAD_TIMEOUT_SEC)
+        if err:
+            raise err[0]
         with self._lock:
             self._sessions[sid] = session
         self._save()
