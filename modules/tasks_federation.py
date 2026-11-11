@@ -128,13 +128,15 @@ class FederationTaskClient:
 
     def __init__(self, cwd, on_update=None, on_permission=None,
                  mode='auto', prompt_timeout=1800, member='', first_prompt='',
-                 model='', policy=None):
+                 model='', policy=None, kimi_session_id='', fork=True):
         self.cwd = cwd                      # 不跨机；对端 workspace 自管
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or (lambda params, rid: '')
         self.mode = mode
         self.model = str(model or '').strip()
         self.policy = policy if isinstance(policy, dict) else {}
+        self.kimi_session_id = str(kimi_session_id or '').strip()
+        self.fork = bool(fork)
         self.prompt_timeout = prompt_timeout
         self.member = member
         self.first_prompt = first_prompt
@@ -176,7 +178,9 @@ class FederationTaskClient:
             status, data = self._call(
                 'POST', '/api/tasks',
                 {'prompt': self.first_prompt, 'mode': self.mode,
-                 'model': self.model, 'policy': self.policy}, timeout=60)
+                 'model': self.model, 'policy': self.policy,
+                 'kimiSessionId': self.kimi_session_id,
+                 'fork': self.fork}, timeout=120)
             if status != 202:
                 raise RuntimeError('联邦任务创建失败(%s): %s'
                                    % (status, data.get('error') or data))

@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
-    discoverModels
+    discoverModels, forkKimiSession, listKimiSessions
 
 _MANAGER = None
 _TOKEN = ''
@@ -68,7 +68,8 @@ class SessionManager:
         except OSError:
             pass
 
-    def create(self, cwd, mode, title, resume_session_id=None, model=''):
+    def create(self, cwd, mode, title, resume_session_id=None, model='',
+               kimi_session_id='', fork=True):
         if resume_session_id:
             with self._lock:
                 for session in self._sessions.values():
@@ -78,6 +79,10 @@ class SessionManager:
                         # 该会话进程仍存活：直接复用（多端接手同一会话）
                         session.last_active = nowMs()
                         return session
+        if kimi_session_id:
+            # R4-7 远端接手：先 fork 副本（避免与原进程并发写同一会话），
+            # 再对副本做 session/load（回放走 _loading 门禁）
+            resume_session_id = forkKimiSession(self.kimi_bin, kimi_session_id)
         sid = uuid.uuid4().hex[:12]
         session = AcpSession(sid, cwd, mode, self.kimi_bin, title, model)
         session.start(resume_session_id)
@@ -108,18 +113,21 @@ class SessionManager:
         """按 node sid 或 kimiSessionId 删除并终止进程。
 
         web 重启后任务卡上只剩 kimiSessionId（agent 内存态已清）——close
-        释放会话锁必须能用它找到会话（R4-5 余项 A）。"""
+        释放会话锁必须能用它找到会话（R4-5 余项 A）。stop 在 mgr 锁外执行。"""
         with self._lock:
             if sidOrKimiId in self._sessions:
-                return self.delete(sidOrKimiId)
-            target = None
-            for s in self._sessions.values():
-                kid = s.get('kimiSessionId') if isinstance(s, dict) \
-                    else getattr(s, 'kimi_session_id', None)
-                if kid == sidOrKimiId:
-                    target = s.sid if hasattr(s, 'sid') else s.get('sid')
-                    break
-        return self.delete(target) if target else False
+                target = sidOrKimiId
+            else:
+                target = None
+                for s in self._sessions.values():
+                    kid = s.get('kimiSessionId') if isinstance(s, dict) \
+                        else getattr(s, 'kimi_session_id', None)
+                    if kid == sidOrKimiId:
+                        target = s.sid if hasattr(s, 'sid') else s.get('sid')
+                        break
+        if not target:
+            return False
+        return self.delete(target)
 
     def reapIdle(self):
         cutoff = nowMs() - IDLE_KILL_SECONDS * 1000   # nowMs 是毫秒
@@ -192,6 +200,22 @@ class Handler(BaseHTTPRequestHandler):
                                     'defaultModel': models['default']})
         if not self._authed():
             return self._json(401, {'error': '认证失败'})
+        if path == '/api/kimi-sessions':
+            # R4-7：远端接手候选列表（kimi session list + cwd 过滤）
+            qs = parse_qs(urlparse(self.path).query)
+            cwd = (qs.get('cwd') or [''])[0].strip()
+            try:
+                limit = int((qs.get('limit') or ['30'])[0])
+            except ValueError:
+                limit = 30
+            try:
+                sessions = listKimiSessions(_MANAGER.kimi_bin,
+                                            cwd=cwd or None, limit=limit)
+            except RuntimeError as e:
+                return self._json(502, {'error': str(e)})
+            except subprocess.TimeoutExpired:
+                return self._json(502, {'error': 'session list 超时'})
+            return self._json(200, {'sessions': sessions})
         if path == '/api/sessions':
             return self._json(200, {'sessions': _MANAGER.list()})
         if path.startswith('/api/sessions/'):
@@ -256,8 +280,16 @@ class Handler(BaseHTTPRequestHandler):
             title = str(data.get('title') or '').strip()
             model = str(data.get('model') or '').strip()
             resume = str(data.get('sessionId') or '').strip() or None
+            kimiSessionId = str(data.get('kimiSessionId') or '').strip()
+            fork = data.get('fork', True)
+            fork = fork is not False and str(fork).lower() != 'false'
             try:
-                session = _MANAGER.create(cwd, mode, title, resume, model)
+                session = _MANAGER.create(cwd, mode, title, resume, model,
+                                          kimi_session_id=kimiSessionId,
+                                          fork=fork)
+            except RuntimeError as e:
+                # fork 失败（会话被占用/不存在）按 400 透传原文（R4-7）
+                return self._json(400, {'error': str(e)})
             except Exception as e:
                 return self._json(502, {'error': 'ACP 启动失败: %s' % e})
             return self._json(200, {'sid': session.sid,

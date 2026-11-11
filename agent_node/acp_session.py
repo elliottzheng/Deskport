@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -40,6 +41,57 @@ def discoverModels(configPath=None):
 
 def nowMs():
     return int(time.time() * 1000)
+
+
+def forkKimiSession(kimi_bin, sessionId, timeout=600):
+    """kimi fork：复制已有会话并返回新 id（R4-7；532M 会话实测秒级）。
+
+    失败（会话被占用/不存在/超时）抛 RuntimeError，原文透传给调用方。
+    """
+    proc = subprocess.run(
+        [kimi_bin, 'fork', '-y', sessionId], capture_output=True,
+        text=True, encoding='utf-8', errors='replace', timeout=timeout,
+        creationflags=0x08000000 if os.name == 'nt' else 0)
+    out = (proc.stdout or '') + (proc.stderr or '')
+    if proc.returncode != 0:
+        raise RuntimeError('fork 失败: %s' % (out.strip()[:300] or proc.returncode))
+    m = re.search(r'session_[0-9a-f-]{36}', out)
+    if not m:
+        raise RuntimeError('fork 输出里没有新会话 id: %s' % out.strip()[:200])
+    return m.group(0)
+
+
+def listKimiSessions(kimi_bin, cwd=None, limit=100):
+    """kimi session list --all --json → 接手候选（cwd 前缀过滤 + 最近优先）。"""
+    proc = subprocess.run(
+        [kimi_bin, 'session', 'list', '--all', '--json'], capture_output=True,
+        text=True, encoding='utf-8', errors='replace', timeout=120,
+        creationflags=0x08000000 if os.name == 'nt' else 0)
+    if proc.returncode != 0:
+        raise RuntimeError('session list 失败: %s' % (proc.stderr or '').strip()[:300])
+    try:
+        raw = json.loads(proc.stdout or '[]')
+    except ValueError:
+        raise RuntimeError('session list 输出不是 JSON')
+    wanted = str(cwd or '').strip()
+    if wanted:
+        wanted = wanted.replace('/', '\\').rstrip('\\').lower()
+    items = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict) or not entry.get('id'):
+            continue
+        workDir = str(entry.get('workDir') or '')
+        if wanted:
+            norm = workDir.replace('/', '\\').rstrip('\\').lower()
+            if norm != wanted and not norm.startswith(wanted + '\\'):
+                continue
+        items.append({'id': str(entry['id']),
+                      'title': str(entry.get('title') or '')[:120],
+                      'lastPrompt': str(entry.get('lastPrompt') or '')[:160],
+                      'workDir': workDir,
+                      'updatedAt': entry.get('updatedAt') or 0})
+    items.sort(key=lambda x: -(x['updatedAt'] or 0))
+    return items[:max(1, min(int(limit), 100))]
 
 
 class Ring:
@@ -348,12 +400,11 @@ class AcpSession:
                              timeout=10)
 
     def stop(self):
+        """硬终止 kimi 进程。绝不 wait：Windows 上进程带未决管道 I/O 时
+        TerminateProcess/wait 可能长时间不完成（实测曾把 mgr 锁一起
+        wedge 住，全部请求挂死）——发起终止即返回，锁由进程死亡释放。"""
         self.dead = True
-        try:
-            self.cancelTurn()
-        except Exception:
-            pass
-        # 会话停止时释放所有挂起的权限等待线程（closed 语义 → denied）
+        # 释放所有挂起的权限等待线程（closed 语义 → denied）
         with self._lock:
             pending = list(self._decisions.values())
         for decision in pending:
@@ -362,10 +413,7 @@ class AcpSession:
         try:
             if self.proc and self.proc.poll() is None:
                 self.proc.terminate()
-                try:
-                    self.proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.proc.kill()
+                self.proc.kill()
         except Exception:
             pass
 

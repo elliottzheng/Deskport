@@ -41,6 +41,25 @@ ps -eo args | grep -c -- '--token '   # 期望 0
   Deskport 侧与本机 node 共享令牌就用这个（本机部署时 Deskport 读
   `~/.deskport-agent-node/token`，见 `config.getAgentNodeToken`）。
 
+### 升级远端 node（合并 token-file 切换，单次重启）
+
+```bash
+# 1) 同步代码（本机）：scp acp_session.py node_api.py agent_node.py 到部署目录
+# 2) 解释器：~/py3.13/bin/python3（≥3.11，tomllib 必需；新代码仅用 stdlib）
+# 3) token 保号：把当前 --token 明文写入 token 文件（Deskport 侧配置不变）
+echo "<当前token明文>" > ~/.deskport-agent-node/token
+# 4) 显式 PID 重启（勿用 pkill -f 模糊匹配，会误杀外层 shell）
+kill $(pgrep -f '^python3.*agent_node.py')
+cd <部署目录> && setsid nohup ~/py3.13/bin/python3 agent_node.py --port 8622   --token-file ~/.deskport-agent-node/token   --kimi ~/.kimi-code/bin/kimi >> node.log 2>&1 < /dev/null &
+# 5) 验证：/health 返回 models/defaultModel，/api/sessions 列表正常
+```
+
+升级会终止 node 托管的 kimi 进程（打断运行中回合）；任务在下一条
+message 时自动 session/load 接续（R4-5 余项 B），选对方任务 waiting
+的时机执行可完全无损。
+
+## Deskport 侧接入
+
 ## Deskport 侧接入
 
 `config.json`：

@@ -110,9 +110,6 @@ def createTask():
     kimiSessionFork = False
     loadedSessionId = ''                                           # 实际加载的会话
     if kimiSessionId:
-        if engine != 'acp':
-            return jsonify({'error': 'kimiSessionId 仅 engine=acp（本机 Kimi）'
-                                     '支持，远端会话请在节点侧直接派活'}), 400
         if not re.match(r'^session_[0-9a-f-]{36}$', kimiSessionId):
             return jsonify({'error': 'kimiSessionId 格式不合法（应为 session_<uuid>，'
                             'GET /api/tasks/kimi-sessions 可列出候选）'}), 400
@@ -120,23 +117,25 @@ def createTask():
         if isinstance(fork, str):
             fork = fork.strip().lower() != 'false'
         kimiSessionFork = bool(fork)
-        loadedSessionId = kimiSessionId
-        if fork:
-            try:
-                loadedSessionId = kimi_acp.forkSession(kimiSessionId)
-            except RuntimeError as e:
-                return jsonify({'error': str(e),
-                                'hint': '会话可能正被占用（先关掉那个终端）或不存在'}), 400
-        else:
-            store.repo.load()
-            with store.repo.lock:
-                live = [t for t in store.repo.list()
-                        if t.get('sessionId') == loadedSessionId
-                        and t.get('status') in ('queued', 'running', 'waiting')]
-            if live:
-                return jsonify({'error': '该会话已被任务 %s 接管，不能再次直接接管'
-                                % live[0]['id'],
-                                'hint': '去掉 fork:false 改用 fork 副本'}), 409
+        if engine == 'acp':
+            loadedSessionId = kimiSessionId
+            if fork:
+                try:
+                    loadedSessionId = kimi_acp.forkSession(kimiSessionId)
+                except RuntimeError as e:
+                    return jsonify({'error': str(e),
+                                    'hint': '会话可能正被占用（先关掉那个终端）或不存在'}), 400
+            else:
+                store.repo.load()
+                with store.repo.lock:
+                    live = [t for t in store.repo.list()
+                            if t.get('sessionId') == loadedSessionId
+                            and t.get('status') in ('queued', 'running', 'waiting')]
+                if live:
+                    return jsonify({'error': '该会话已被任务 %s 接管，不能再次直接接管'
+                                    % live[0]['id'],
+                                    'hint': '去掉 fork:false 改用 fork 副本'}), 409
+        # engine=remote：kimiSessionId/fork 原样透传到节点侧 fork+load（R4-7）
     # 模型白名单：执行点声明了可选列表时必须命中（§7.1 按活的性质挑模型）
     decl = agent_nodes.nodeModelDecl(node or ('local' if engine == 'acp' else ''))
     if model and decl['models'] and model not in decl['models']:
@@ -698,22 +697,41 @@ def uploadTaskFile():
 
 @blueprint.route('/api/tasks/kimi-sessions')
 def listKimiSessions():
-    """已存在的 Kimi CLI 会话（第二轮反馈 §2.3）：智能体挑接手候选。"""
+    """已存在的 Kimi CLI 会话（第二轮反馈 §2.3）：智能体挑接手候选。
+
+    ?node=<节点>：代理远端 node 的 /api/kimi-sessions（R4-7），
+    未指定或 local 时列本机 kimi 会话。"""
     cwd = (request.args.get('cwd') or '').strip()
     try:
         limit = int(request.args.get('limit') or 30)
     except ValueError:
         limit = 30
-    try:
-        items = kimi_acp.listSessions(limit=limit, cwd=cwd or None)
-    except RuntimeError as e:
-        return jsonify({'error': str(e)}), 502
+    node = (request.args.get('node') or '').strip()
+    if node and node != 'local':
+        target = agent_nodes.findNode(node)
+        if target is None:
+            return jsonify({'error': '节点不存在', 'nodes': agent_nodes.listNodeNames()}), 404
+        from urllib.parse import quote
+        status, data = agent_nodes.nodeRequest(
+            target, 'GET',
+            '/api/kimi-sessions?cwd=%s&limit=%d' % (quote(cwd), limit),
+            timeout=120)
+        if status != 200:
+            return jsonify({'error': (data or {}).get('error') or 'HTTP %s' % status,
+                            'node': node}), 502
+        items = data.get('sessions') or []
+    else:
+        try:
+            items = kimi_acp.listSessions(limit=limit, cwd=cwd or None)
+        except RuntimeError as e:
+            return jsonify({'error': str(e)}), 502
     tokenName = getattr(g, 'agentTokenName', '')
     if tokenName:
         events.log('agent.task.kimilist', tokenName, 'ok',
-                   'cwd=%s' % (cwd or '-'), request.remote_addr)
-    return jsonify({'sessions': items,
-                    'hint': 'POST /api/tasks {"kimiSessionId": "<id>"} '
+                   'node=%s cwd=%s' % (node or '-', cwd or '-'), request.remote_addr)
+    return jsonify({'sessions': items, 'node': node,
+                    'hint': 'POST /api/tasks {"kimiSessionId": "<id>", '
+                            '"engine": "remote", "node": "<节点>"} '
                             '接手（默认 fork 副本，不干扰原会话）'})
 
 

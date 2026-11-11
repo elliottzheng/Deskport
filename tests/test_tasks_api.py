@@ -617,10 +617,11 @@ def test_task_adopt_bad_session_id_rejected(env, monkeypatch):
     monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
     resp = create(env, {'prompt': 'x', 'kimiSessionId': 'rm -rf /'})
     assert resp.status_code == 400
+    assert '格式不合法' in resp.get_json()['error']
+    # R4-7 起 remote 也接受 kimiSessionId（节点侧 fork+load）
     resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local',
                         'cwd': '/tmp', 'kimiSessionId': _sid('a')})
-    assert resp.status_code == 400
-    assert 'acp' in resp.get_json()['error']
+    assert resp.status_code == 202
 
 
 def test_task_adopt_takeover_conflict_is_409(env):

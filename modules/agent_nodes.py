@@ -217,12 +217,15 @@ class RemoteAcpClient:
     """KimiAcp 的 HTTP 传输版本：接口一致，任务层零改动复用。"""
 
     def __init__(self, cwd, on_update=None, on_permission=None,
-                 mode='auto', prompt_timeout=1800, node='', model=''):
+                 mode='auto', prompt_timeout=1800, node='', model='',
+                 kimi_session_id='', fork=True):
         self.cwd = cwd
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or self._defaultPermission
         self.mode = mode
         self.model = str(model or '').strip()
+        self.kimi_session_id = str(kimi_session_id or '').strip()
+        self.fork = bool(fork)
         self.prompt_timeout = prompt_timeout
         self.node_name = node
         self.node_sid = ''
@@ -254,10 +257,14 @@ class RemoteAcpClient:
     # ---- lifecycle ----
     def start(self, session_id=None):
         node = self._node()
+        payload = {'cwd': self.cwd, 'mode': self.mode,
+                   'sessionId': session_id or '', 'model': self.model}
+        if self.kimi_session_id:
+            # R4-7 远端接手：fork/加载由节点侧执行（回放走 node 门禁）
+            payload['kimiSessionId'] = self.kimi_session_id
+            payload['fork'] = self.fork
         status, data = nodeRequest(node, 'POST', '/api/sessions',
-                                   {'cwd': self.cwd, 'mode': self.mode,
-                                    'sessionId': session_id or '',
-                                    'model': self.model}, timeout=90)
+                                   payload, timeout=300)
         if status != 200:
             raise RuntimeError('远端会话创建失败(%s): %s'
                                % (status, data.get('error') or data))
@@ -462,6 +469,8 @@ def remoteClientFactory(task):
     node = task.get('node') or ''
     remoteCwd = task.get('remoteCwd') or ''
     taskModel = task.get('model') or ''
+    kimiSessionId = task.get('kimiSessionId') or ''
+    kimiSessionFork = bool(task.get('kimiSessionFork', True))
 
     def factory(cwd, on_update=None, on_permission=None,
                 mode='auto', prompt_timeout=0):
@@ -469,7 +478,9 @@ def remoteClientFactory(task):
                                on_update=on_update,
                                on_permission=on_permission,
                                mode=mode, prompt_timeout=prompt_timeout,
-                               node=node, model=taskModel)
+                               node=node, model=taskModel,
+                               kimi_session_id=kimiSessionId,
+                               fork=kimiSessionFork)
     return factory
 
 
@@ -503,7 +514,9 @@ def clientFactoryFor(task):
                     mode=task.get('mode') or mode,
                     prompt_timeout=prompt_timeout,
                     member=nodeName, first_prompt=firstPrompt,
-                    model=taskModel, policy=task.get('policy') or {})
+                    model=taskModel, policy=task.get('policy') or {},
+                    kimi_session_id=task.get('kimiSessionId') or '',
+                    fork=bool(task.get('kimiSessionFork', True)))
             return fedFactory
         return remoteClientFactory(task)
     local = config.getLocalAgentNode()
