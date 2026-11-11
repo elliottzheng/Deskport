@@ -99,6 +99,12 @@ def _refreshHealthModels(rounds=8, interval=5):
         if len(result) >= len(targets) + len(members):
             break
         time.sleep(interval)
+    # R5-4：刷新完成后把 default+近 7 天推给各节点补测（默认探测的 web 侧半边）
+    try:
+        from modules.model_availability import nudgeDefaultProbes
+        nudgeDefaultProbes(result)
+    except Exception:
+        pass
 
 
 def _healthModelsCached(maxAgeSec=60):

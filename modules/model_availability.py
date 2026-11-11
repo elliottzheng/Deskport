@@ -21,7 +21,8 @@ def _nullEntry():
 
 
 def nodeModelStatus(name):
-    """执行点的探测状态；探测能力未上线（旧 node/成员）= 全部 usable=null。"""
+    """执行点的探测状态：只列已探测的（usable≠null），未探测的不占字节
+    （R5-4 瘦身）。探测能力未上线（旧 node/成员）= 空表。"""
     from modules.agent_nodes import _healthModelsCached, nodeModelsFor
     wanted = str(name or '').strip() or 'local'
     models, _default = nodeModelsFor(wanted)
@@ -29,8 +30,9 @@ def nodeModelStatus(name):
         status = _stdioProber().status(models)   # 本机 stdio 直跑：web 自己托管
     else:
         status = _healthModelsCached().get(wanted, {}).get('modelStatus') or {}
-    modelStatus = {m: dict(status.get(m) or _nullEntry()) for m in models}
-    usableModels = sorted(m for m, v in modelStatus.items() if v['usable'] is True)
+    usableModels = sorted(m for m, v in status.items() if v.get('usable') is True)
+    modelStatus = {m: dict(status[m]) for m in sorted(status)
+                   if status[m].get('usable') is not None}
     return {'modelStatus': modelStatus, 'usableModels': usableModels}
 
 
@@ -76,10 +78,61 @@ def probeNodeModels(name, models=None):
         declared = localKimiModels()['models']
         prober = _stdioProber()
         target = [str(m).strip() for m in (models or [])] or declared
-        queued = prober.probe(target, force=True)
-        return 200, {'queued': queued, 'modelStatus': prober.status(declared),
-                     'usableModels': prober.usableModels(declared)}
+        queuedModels = prober.probe(target, force=True)
+        # R5-4：与 node 端同口径——只回本次排队的清单
+        return 200, {'queued': len(queuedModels), 'models': queuedModels}
     return 404, {'error': '节点不存在'}
+
+
+def autoProbeEnabled():
+    """modelProbe 开关（R5-4 反转）：config.modelProbe 显式 true 才恢复
+    后台自动探测（启动/定时/近 7 天）；缺省 false = 零自动探测，只有
+    显式调用 POST /probe 才花 token。"""
+    return config.load().get('modelProbe') is True
+
+
+_lastNudge = 0.0
+
+
+def nudgeDefaultProbes(nodesResult):
+    """modelProbe=true 时：web 侧把「defaultModel + 近 7 天任务用过的」推给
+    各执行点补测（force=False，节点侧 24h 内测过的自动跳过）。
+
+    node 自己的近 7 天口径只看得到自己会话存档（存量条目没有 model 字段，
+    kimi session list 也不含 model），web 任务库才是完整的用量来源。
+    由 agent_nodes._refreshHealthModels 的后台刷新线程调用（非请求路径），
+    10 分钟至多一轮。缺省关闭（modelProbe=false 直接返回，零探测）。
+    """
+    global _lastNudge
+    if not autoProbeEnabled():
+        return
+    now = time.monotonic()
+    if now - _lastNudge < 600:
+        return
+    _lastNudge = now
+    from modules.agent_nodes import findNode, nodeRequest
+    from modules.tasks_federation import _memberCall, findFederationMember
+    for name, entry in (nodesResult or {}).items():
+        desired = [m for m in ([entry.get('default')] +
+                               recentTaskModels(name)) if m]
+        if not desired:
+            continue
+        node = findNode(name)
+        if node is None:
+            local = config.getLocalAgentNode()
+            if local is not None and local['name'] == name:
+                node = local
+        try:
+            if node is not None:
+                nodeRequest(node, 'POST', '/api/probe-models',
+                            {'models': desired, 'timeout': 120}, timeout=5)
+                continue
+            member = findFederationMember(name)
+            if member is not None:
+                _memberCall(member, 'POST', '/api/tasks/nodes/local/probe',
+                            {'models': desired, 'timeout': 120}, timeout=8)
+        except Exception:
+            continue   # 节点离线/隧道瞬断：下一轮刷新再试
 
 
 # ---- 本机 stdio 直跑（localAgentNodePort=0）时的 web 内探测托管 ----
@@ -103,6 +156,8 @@ def _stdioProber():
             data_dir = os.path.join(os.path.expanduser('~'), '.deskport',
                                     'model-probe')
             _stdioProberInstance = mod.ModelProber(kimi, data_dir)
+            if not autoProbeEnabled():   # R5-4：默认零自动探测
+                return _stdioProberInstance
             from modules.agent_nodes import localKimiModels
             declared = localKimiModels()
             default = [m for m in (declared['default'],) if m]

@@ -161,13 +161,15 @@ DELETE /api/agent/ssh/sessions/<sid>
   节点升级即自动点亮）→ 本机自动发现。声明白名单的执行点校验不命中 →
   400 附可选列表；选错别名会在任务 error 里看到 kimi 原始报错；
   联邦成员转发该字段（对端与本中枢保持同版，见下方版本策略）；
-- **模型可用性（R4-10）**：`GET /api/tasks/nodes` 每个执行点另带
-  `modelStatus`（`{<model>: {usable: true|false|null, checkedAt, error}}`，
-  null=还没探测）与 `usableModels`（只列 usable=true）。探测 = 一次最小
-  调用（`kimi -p ok --model`，30s 超时），node 侧后台异步跑（并发 ≤2），
-  结果缓存 24h；默认只测 defaultModel + 近 7 天用过的，全量走
-  `POST /api/tasks/nodes/<node>/probe` 手动触发。建任务时**指定的** model
-  已知 usable=false → 400 附 `usableModels`；没探测过的照常放行；
+- **模型可用性（R4-10，R5-4 反转）**：默认**零自动探测**（config
+  `modelProbe: true` 才恢复，由 web 把 defaultModel + 近 7 天任务用过的
+  推给各执行点）。手动探测 `POST /api/tasks/nodes/<node>/probe`
+  `{models?: [...]}` → 只回 `{node, queued, models}`（本次排队的清单）；
+  node 侧后台 ≤2 并发跑（`kimi -p ok --model`，30s 超时），结果缓存 24h。
+  `GET /api/tasks/nodes` 默认不带探测字段；`?modelStatus=1` 才带
+  `modelStatus`（只列已探测的，`{<model>: {usable, checkedAt, error}}`）
+  与 `usableModels`。建任务时**指定的** model 已知 usable=false →
+  400 附 `usableModels`；没探测过的照常放行；
 - **敏感值不进事件流（R5-2）**：`tool` / `tool_result` / `assistant` /
   `permission_request` 事件（含 /log 的 jsonl 流水与 full 全文）写入前，
   中枢已知的明文令牌（remotes[].token、agentNodes[].token、federationToken、

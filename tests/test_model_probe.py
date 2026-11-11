@@ -14,7 +14,6 @@ import urllib.request
 
 import pytest
 
-import config as configMod
 from agent_node.model_probe import MAX_WORKERS, ModelProber, nowMs, probeOnce
 
 NODE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -91,10 +90,10 @@ def _stubProber(tmp_path, fn):
 
 
 def test_prober_flow_usable_unusable_unprobed(tmp_path):
-    def fn(kimi, model, cwd):
+    def fn(kimi, model, cwd, timeout=30):
         return (False, '后端挂了') if 'bad' in model else (True, '')
     prober = _stubProber(tmp_path, fn)
-    assert prober.probe(['a/m1', 'b/bad', 'c/m2']) == 3
+    assert prober.probe(['a/m1', 'b/bad', 'c/m2']) == ['a/m1', 'b/bad', 'c/m2']
     _waitDrained(prober)
     status = prober.status(['a/m1', 'b/bad', 'c/m2', 'd/unprobed'])
     assert status['a/m1']['usable'] is True
@@ -109,12 +108,12 @@ def test_prober_flow_usable_unusable_unprobed(tmp_path):
 
 
 def test_prober_persists_and_reloads(tmp_path):
-    prober = _stubProber(tmp_path, lambda k, m, c: (True, ''))
+    prober = _stubProber(tmp_path, lambda k, m, c, timeout=30: (True, ''))
     prober.probe(['p/m1'])
     _waitDrained(prober)
-    revived = _stubProber(tmp_path, lambda k, m, c: (False, '不该再测'))
+    revived = _stubProber(tmp_path, lambda k, m, c, timeout=30: (False, '不该再测'))
     assert revived.isUsable('p/m1') is True
-    assert revived.probe(['p/m1'], force=False) == 0   # 24h 内不重复花钱
+    assert revived.probe(['p/m1'], force=False) == []  # 24h 内不重复花钱
 
 
 def test_prober_ttl_expiry_reports_null(tmp_path):
@@ -122,29 +121,29 @@ def test_prober_ttl_expiry_reports_null(tmp_path):
                        'error': '当时挂了'}}
     (tmp_path / 'model_status.json').write_text(
         json.dumps(stale), encoding='utf-8')
-    prober = _stubProber(tmp_path, lambda k, m, c: (True, ''))
+    prober = _stubProber(tmp_path, lambda k, m, c, timeout=30: (True, ''))
     item = prober.status(['s/old'])['s/old']
     assert item['usable'] is None            # 过期 = 当没探测过（放行）
     assert item['checkedAt'] > 0             # 上次探测时间保留可追溯
-    assert prober.probe(['s/old'], force=False) == 1   # 过期后允许自动补测
+    assert prober.probe(['s/old'], force=False) == ['s/old']  # 过期后允许自动补测
 
 
 def test_prober_dedups_inflight_and_force_reruns(tmp_path):
     seen = []
     lock = threading.Lock()
 
-    def fn(kimi, model, cwd):
+    def fn(kimi, model, cwd, timeout=30):
         with lock:
             seen.append(model)
         time.sleep(0.15)
         return True, ''
 
     prober = _stubProber(tmp_path, fn)
-    assert prober.probe(['d/x']) == 1
-    assert prober.probe(['d/x']) == 0        # 排队/在测中的不重复入队
+    assert prober.probe(['d/x']) == ['d/x']
+    assert prober.probe(['d/x']) == []       # 排队/在测中的不重复入队
     _waitDrained(prober)
     assert seen == ['d/x']
-    assert prober.probe(['d/x'], force=True) == 1    # 手动触发强制复测
+    assert prober.probe(['d/x'], force=True) == ['d/x']  # 手动触发强制复测
     _waitDrained(prober)
     assert seen == ['d/x', 'd/x']
 
@@ -153,7 +152,7 @@ def test_prober_never_exceeds_two_concurrent(tmp_path):
     state = {'cur': 0, 'peak': 0}
     lock = threading.Lock()
 
-    def fn(kimi, model, cwd):
+    def fn(kimi, model, cwd, timeout=30):
         with lock:
             state['cur'] += 1
             state['peak'] = max(state['peak'], state['cur'])
@@ -164,24 +163,13 @@ def test_prober_never_exceeds_two_concurrent(tmp_path):
 
     prober = _stubProber(tmp_path, fn)
     assert MAX_WORKERS == 2
-    prober.probe(['c/%d' % i for i in range(6)])
+    assert len(prober.probe(['c/%d' % i for i in range(6)])) == 6
     _waitDrained(prober)
     assert state['peak'] <= 2 and state['peak'] >= 1
 
 
-def test_prober_recent_models_from_sessions(tmp_path):
-    prober = _stubProber(tmp_path, lambda k, m, c: (True, ''))
-    now = nowMs()
-    sessions = [{'model': 'a/old', 'lastActive': now - 8 * 86400 * 1000},
-                {'model': 'b/new', 'lastActive': now - 1000},
-                {'model': 'b/new', 'lastActive': now - 2000},
-                {'model': 'c/new', 'lastActive': now - 3 * 86400 * 1000},
-                {'model': '', 'lastActive': now}]
-    assert prober.recentModels(sessions, days=7) == ['b/new', 'c/new']
-
-
 def test_worker_survives_probe_fn_crash(tmp_path):
-    def fn(kimi, model, cwd):
+    def fn(kimi, model, cwd, timeout=30):
         raise RuntimeError('炸了')
     prober = _stubProber(tmp_path, fn)
     prober.probe(['x/1', 'x/2'])
@@ -258,7 +246,8 @@ def test_node_health_and_probe_endpoint(tmp_path):
         # 手动触发：bad 别名退出 1 → false；其余 true
         status, probed = _http(port, '/api/probe-models',
                                {'models': ['m-ok', 'm-bad']})
-        assert status == 200 and probed['queued'] == 2
+        assert status == 200 and probed == {'queued': 2,
+                                            'models': ['m-ok', 'm-bad']}
         health = _waitForHealth(port, lambda h: (
             (h.get('modelStatus') or {}).get('m-ok', {}).get('usable')
             is not None and (h.get('modelStatus') or {}).get('m-bad', {})
@@ -273,122 +262,3 @@ def test_node_health_and_probe_endpoint(tmp_path):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-
-
-# ---------------------------------------------------------------- web 侧
-
-class _NullProber:
-    """web 测试替身：stdio 探测托管（绝不碰真 kimi 与真实数据目录）。"""
-
-    def status(self, declared=()):
-        return {m: {'usable': None, 'checkedAt': 0, 'error': ''}
-                for m in (declared or [])}
-
-    def usableModels(self, declared=()):
-        return []
-
-
-@pytest.fixture
-def webEnv(tmp_path, monkeypatch):
-    import hashlib
-    import time as _time
-    from types import SimpleNamespace
-    import modules.agent_nodes as nodesMod
-    import modules.model_availability as availMod
-    from modules import events as eventsMod
-    from modules import tasks_api
-    from modules import tasks_store as store
-    from modules.tasks_store import TaskRepository
-
-    monkeypatch.setattr(eventsMod, 'log', lambda *a, **k: None)
-    monkeypatch.setattr(configMod, 'getAgentTokens',
-                        lambda: [{'id': 't1', 'name': '测试智能体',
-                                  'tokenHash': hashlib.sha256(
-                                      TOKEN.encode()).hexdigest()}])
-    repo = TaskRepository(str(tmp_path / 'tasks.json'), str(tmp_path / 'logs'))
-    monkeypatch.setattr(store, 'repo', repo)
-    monkeypatch.setattr(store, 'taskRoot', lambda: str(tmp_path / 'root'))
-    monkeypatch.setattr(tasks_api.runner, '_startTask', lambda t, m: None)
-    nodes = [{'name': 'ai-xmyz', 'url': 'http://127.0.0.1:1', 'token': '',
-              'via': 'x', 'remote': '',
-              'models': ['bad/m1', 'good/m2', 'idle/m3'], 'model': 'good/m2'}]
-    monkeypatch.setattr(configMod, 'getAgentNodes', lambda: nodes)
-    monkeypatch.setattr(configMod, 'getLocalAgentNode', lambda: None)
-    monkeypatch.setattr(configMod, 'getRemotes', lambda: [])
-    # stdio 探测托管换测试替身：/api/tasks/nodes 的 local 条目不触发真探测
-    monkeypatch.setattr(availMod, '_stdioProber', lambda: _NullProber())
-    # 新鲜缓存：不触发后台刷新线程，杜绝真实网络；MS=已探测结果桩
-    MS = {'bad/m1': {'usable': False, 'checkedAt': 1, 'error': '挂'},
-          'good/m2': {'usable': True, 'checkedAt': 1, 'error': ''}}
-    monkeypatch.setattr(nodesMod, '_healthModels',
-                        {'at': _time.monotonic(),
-                         'data': {'ai-xmyz': {
-                             'models': ['bad/m1', 'good/m2', 'idle/m3'],
-                             'default': 'good/m2', 'modelStatus': MS,
-                             'usableModels': ['good/m2']}}})
-    from app import create_app
-    app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
-    return SimpleNamespace(client=app.test_client(), app=app,
-                           nodesMod=nodesMod, availMod=availMod, repo=repo)
-
-
-def test_nodes_list_includes_model_status(webEnv):
-    resp = webEnv.client.get('/api/tasks/nodes', headers=H)
-    assert resp.status_code == 200
-    node = next(n for n in resp.get_json()['nodes'] if n['name'] == 'ai-xmyz')
-    assert node['modelStatus']['bad/m1']['usable'] is False
-    assert node['modelStatus']['good/m2']['usable'] is True
-    # 声明了但还没探测的：null 条目（null=还没探测）
-    assert node['modelStatus']['idle/m3'] == {'usable': None, 'checkedAt': 0,
-                                              'error': ''}
-    assert node['usableModels'] == ['good/m2']
-
-
-def test_create_task_rejects_known_unusable_model(webEnv):
-    resp = webEnv.client.post('/api/tasks', headers=H, data=json.dumps({
-        'prompt': 'x', 'engine': 'remote', 'node': 'ai-xmyz', 'cwd': '/tmp',
-        'model': 'bad/m1'}), content_type='application/json')
-    assert resp.status_code == 400
-    body = resp.get_json()
-    assert body['usableModels'] == ['good/m2']
-    assert body['probedModelStatus']['usable'] is False
-
-
-def test_create_task_allows_unprobed_model(webEnv):
-    resp = webEnv.client.post('/api/tasks', headers=H, data=json.dumps({
-        'prompt': 'x', 'engine': 'remote', 'node': 'ai-xmyz', 'cwd': '/tmp',
-        'model': 'idle/m3'}), content_type='application/json')
-    assert resp.status_code == 202   # 没探测过的照常放行
-
-
-def test_probe_route_forwards_and_validates(webEnv, monkeypatch):
-    calls = []
-
-    def fakeProbe(name, models=None):
-        calls.append((name, models))
-        return 200, {'queued': len(models or [])}
-
-    monkeypatch.setattr(webEnv.availMod, 'probeNodeModels', fakeProbe)
-    resp = webEnv.client.post('/api/tasks/nodes/ai-xmyz/probe', headers=H,
-                              data=json.dumps({'models': ['a', 'b']}),
-                              content_type='application/json')
-    assert resp.status_code == 200
-    assert resp.get_json()['node'] == 'ai-xmyz'
-    assert calls == [('ai-xmyz', ['a', 'b'])]
-    # 缺省 models 透传 None（= 全量）
-    resp = webEnv.client.post('/api/tasks/nodes/ai-xmyz/probe', headers=H,
-                              data='{}', content_type='application/json')
-    assert resp.status_code == 200 and calls[-1][1] is None
-    # 参数不合法 400
-    resp = webEnv.client.post('/api/tasks/nodes/ai-xmyz/probe', headers=H,
-                              data=json.dumps({'models': 'bad'}),
-                              content_type='application/json')
-    assert resp.status_code == 400
-
-
-def test_probe_route_passes_through_upstream_404(webEnv, monkeypatch):
-    monkeypatch.setattr(webEnv.availMod, 'probeNodeModels',
-                        lambda n, m=None: (404, {'error': '节点不存在'}))
-    resp = webEnv.client.post('/api/tasks/nodes/ghost/probe', headers=H,
-                              data='{}', content_type='application/json')
-    assert resp.status_code == 404

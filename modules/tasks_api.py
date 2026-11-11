@@ -473,6 +473,18 @@ def cancelTask(task, taskId):
             pass
         store.repo.append_event(task, 'status', text='已请求停止当前这轮')
         return jsonify({'ok': True, 'status': task.get('status')})
+    if client is not None:
+        # R4-5/缺陷修复：cancel 只结束当前这一轮（node/联邦引擎与 stdio 同
+        # 语义）——轮结束后 runner 把任务置回 waiting，任务保持可续聊；
+        # 不再终态化成 cancelled（那会让后续 message 一律 409）
+        runner._denyPendingPermission(agent)
+        try:
+            client.cancel()
+        except Exception:
+            pass
+        store.repo.append_event(task, 'status', text='已请求停止当前这轮')
+        return jsonify({'ok': True, 'status': task.get('status')})
+    # 没有活客户端（web 重启后的残留 running 等）：无法只停这一轮，保留终态取消
     task_state.transition(task, task_state.TaskState.CANCELLED)
     task['endedAt'] = store._now()
     store.repo.append_event(task, 'status', text='任务已取消')

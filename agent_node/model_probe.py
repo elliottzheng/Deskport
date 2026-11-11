@@ -126,14 +126,16 @@ class ModelProber:
         return self._effective(str(model or '').strip())['usable']
 
     # ---- 触发 ----
-    def probe(self, models, force=True):
-        """把模型排进后台队列，返回实际入队数。
+    def probe(self, models, force=True, timeout=PROBE_TIMEOUT_SEC):
+        """把模型排进后台队列，返回本次排队的模型名列表。
 
         force=False 用于默认扫描：24h 内测过的直接跳过。已在队列/在测的
         模型不去重判断 force，一律跳过（避免同一模型并发双份调用）。
+        timeout 透传给每次最小调用（默认 30s；默认扫描可放宽——冷启动时
+        kimi 首跑可能远超 30s，误记 false 比晚几分钟完成更糟）。
         """
         now = nowMs()
-        queued = 0
+        queued = []
         with self._cond:
             for raw in models or []:
                 model = str(raw or '').strip()
@@ -144,8 +146,8 @@ class ModelProber:
                     if item and now - item['checkedAt'] <= CACHE_TTL_SEC * 1000:
                         continue
                 self._queued.add(model)
-                self._queue.append(model)
-                queued += 1
+                self._queue.append((model, max(1, int(timeout or 1))))
+                queued.append(model)
             if queued:
                 self._cond.notify_all()
         return queued
@@ -160,25 +162,20 @@ class ModelProber:
             with self._cond:
                 while not self._queue:
                     self._cond.wait()
-                model = self._queue.popleft()
+                model, timeout = self._queue.popleft()
+            started = time.monotonic()
             try:
-                usable, error = self.probe_fn(self.kimi_bin, model, self.probe_cwd)
+                usable, error = self.probe_fn(self.kimi_bin, model,
+                                              self.probe_cwd, timeout=timeout)
             except Exception as e:   # 探测函数本身不许弄死 worker
                 usable, error = False, '探测异常: %s' % e
+            took = time.monotonic() - started
             with self._cond:
                 self._status[model] = {'usable': bool(usable),
                                        'checkedAt': nowMs(),
                                        'error': str(error or '')[:300]}
                 self._queued.discard(model)
-                self._save()   # 写盘也算在 pending 里：pending==0 即已持久化
-
-    def recentModels(self, sessions, days=7, cap=8):
-        """最近 N 天用过的模型（来自 node 会话存档）：最新优先、去重、限量。"""
-        cutoff = nowMs() - days * 86400 * 1000
-        seen = []
-        for s in sorted((x for x in sessions if isinstance(x, dict)),
-                        key=lambda x: -(x.get('lastActive') or 0)):
-            model = str(s.get('model') or '').strip()
-            if model and model not in seen and (s.get('lastActive') or 0) >= cutoff:
-                seen.append(model)
-        return seen[:cap]
+                self._save()
+            print('[model-probe] %s -> %s (%.1fs)%s'
+                  % (model, 'usable' if usable else 'unusable', took,
+                     (' ' + str(error)[:120]) if error else ''), flush=True)

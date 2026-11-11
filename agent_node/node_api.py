@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs
 
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
     discoverModels, forkKimiSession, listKimiSessions
-from model_probe import MAX_QUEUE_MODELS
+from model_probe import MAX_QUEUE_MODELS, PROBE_TIMEOUT_SEC
 
 CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限；超时杀掉卡住的
                                # kimi 子进程并报错（防止无限等会话锁）
@@ -219,6 +219,10 @@ class Handler(BaseHTTPRequestHandler):
             alive = sum(1 for s in sessions if isinstance(s.get('dead'), bool) and not s['dead'])
             models = discoverModels()
             modelStatus = _PROBER.status(models['models']) if _PROBER else {}
+            # R5-4：只回传已探测的（usable≠null），全量清单由声明 models 与
+            # null 语义合成，省得 54/104 个 null 条目挤占带宽
+            modelStatus = {m: v for m, v in modelStatus.items()
+                           if v['usable'] is not None}
             return self._json(200, {'ok': True, 'service': 'deskport-agent-node',
                                     'protocolVersion': PROTOCOL_VERSION,
                                     'sessions': len(sessions), 'alive': alive,
@@ -328,21 +332,26 @@ class Handler(BaseHTTPRequestHandler):
                                     'attachSeq': session.ring.seq(),
                                     'replayCount': getattr(session, 'replayCount', 0)})
         if path == '/api/probe-models':
-            # R4-10 手动触发探测；models 缺省/空 = 该 node 声明的全部模型
+            # 手动/调用方触发的探测（R5-4：node 不自主探测）；models 缺省/
+            # 空 = 该 node 声明的全部模型。timeout 供 web 侧默认扫描放宽。
             models = data.get('models')
             if models is not None and (
                     not isinstance(models, list) or len(models) > MAX_QUEUE_MODELS
                     or any(not isinstance(m, str) for m in models)):
                 return self._json(400, {'error': 'models 必须是字符串数组'
                                                  '且不超过 %d 项' % MAX_QUEUE_MODELS})
-            declared = discoverModels()['models']
-            target = [m.strip() for m in models] if models else declared
+            try:
+                timeout = max(5, min(int(data.get('timeout')
+                                      or PROBE_TIMEOUT_SEC), 600))
+            except (TypeError, ValueError):
+                timeout = PROBE_TIMEOUT_SEC
+            target = [m.strip() for m in models or discoverModels()['models']]
             if _PROBER is None:
                 return self._json(503, {'error': '探测组件未初始化'})
-            queued = _PROBER.probe(target, force=True)
-            return self._json(200, {'queued': queued,
-                                    'modelStatus': _PROBER.status(declared),
-                                    'usableModels': _PROBER.usableModels(declared)})
+            queuedModels = _PROBER.probe(target, force=True, timeout=timeout)
+            # R5-4：响应只带本次排队的清单，全量状态走 /health 或 /api/tasks/nodes
+            return self._json(200, {'queued': len(queuedModels),
+                                    'models': queuedModels})
         sid = self._sid()
         session = _MANAGER.get(sid)
         if not session:

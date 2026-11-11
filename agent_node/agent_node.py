@@ -24,7 +24,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from node_api import Handler, SessionManager, discoverModels, init
+from node_api import Handler, SessionManager, init
 from model_probe import ModelProber
 
 MANAGER = None
@@ -93,24 +93,9 @@ def main():
     MANAGER = SessionManager(args.kimi, args.data)
     PROBER = ModelProber(args.kimi, args.data)
     init(MANAGER, token, PROBER)
-
-    # R4-10 默认探测集 = defaultModel + 近 7 天用过的（成本可控；全量走
-    # POST /api/probe-models 手动触发）。每 30 分钟复查一次，默认集里
-    # 超 24h 过期的自动补测，worker 并发 ≤2、绝不阻塞 /health。
-    def sweepModels():
-        models = [discoverModels()['default']]
-        models += PROBER.recentModels(MANAGER.list())
-        PROBER.probe([m for m in models if m], force=False)
-
-    def sweepLoop():
-        sweepModels()
-        while True:
-            time.sleep(1800)
-            try:
-                sweepModels()
-            except Exception:
-                pass
-    threading.Thread(target=sweepLoop, daemon=True).start()
+    # R5-4（方向反转）：node 不做任何自主探测——默认 modelProbe=false 时
+    # 全程零 kimi -p；modelProbe=true 时由 web 的健康刷新线程把
+    # 「defaultModel + 近 7 天用过的」经 POST /api/probe-models 推过来。
 
     def reap():
         while True:

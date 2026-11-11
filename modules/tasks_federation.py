@@ -32,17 +32,22 @@ blueprint = Blueprint('federation_tasks', __name__)
 @blueprint.route('/api/tasks/nodes')
 def nodesList():
     from modules.agent_nodes import nodeModelsFor
-    from modules.model_availability import nodeModelStatus
+    # R5-4：默认不带探测字段（恢复精简形态）；?modelStatus=1 才带，
+    # 且只含已探测的条目（usable≠null）
+    withStatus = request.args.get('modelStatus') == '1'
     nodes = []
 
     def entry(name, via):
         models, defaultModel = nodeModelsFor(name)
-        avail = nodeModelStatus(name)   # R4-10：usable=null=还没探测
-        nodes.append({'name': name, 'via': via,
-                      'models': models, 'defaultModel': defaultModel,
-                      'modelSelectable': bool(models or defaultModel),
-                      'modelStatus': avail['modelStatus'],
-                      'usableModels': avail['usableModels']})
+        item = {'name': name, 'via': via,
+                'models': models, 'defaultModel': defaultModel,
+                'modelSelectable': bool(models or defaultModel)}
+        if withStatus:
+            from modules.model_availability import nodeModelStatus
+            avail = nodeModelStatus(name)
+            item['modelStatus'] = avail['modelStatus']
+            item['usableModels'] = avail['usableModels']
+        nodes.append(item)
 
     for n in config.getAgentNodes():
         entry(n['name'], n['via'])
@@ -57,9 +62,9 @@ def nodesList():
 def nodeProbe(name):
     """R4-10 手动触发模型可用性探测（models 缺省 = 该执行点声明全部）。
 
-    node/本机立即入队后台探测（≤2 并发）；联邦成员转发到对端
-    /api/tasks/nodes/local/probe。响应立即返回，结果随后从
-    /api/tasks/nodes 或本路由再次调用读取。
+    R5-4：自动探测默认关闭（config.modelProbe=false），只有显式调用本
+    路由才花 token。响应只回本次排队的清单 {node, queued, models}，
+    全量状态随后从 /api/tasks/nodes?modelStatus=1 读取。
     """
     from modules.model_availability import probeNodeModels
     data = request.get_json(force=True, silent=True) or {}
@@ -69,9 +74,10 @@ def nodeProbe(name):
                                or any(not isinstance(m, str) for m in models)):
         return jsonify({'error': 'models 必须是字符串数组且不超过 200 项'}), 400
     status, payload = probeNodeModels(name, models)
-    payload = dict(payload or {})
-    payload['node'] = name
-    return jsonify(payload), status
+    payload = payload or {}
+    return jsonify({'node': name,
+                    'queued': int(payload.get('queued') or 0),
+                    'models': payload.get('models') or []}), status
 
 
 @blueprint.route('/api/tasks/nodes/<name>/health')
