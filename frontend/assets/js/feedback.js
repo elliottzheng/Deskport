@@ -195,6 +195,9 @@ window.WPFeedback = (function () {
         if (location.pathname === '/login') { return; }
         if (!window.WPFeedbackCapture || !window.WPFeedbackPanel) { return; }
         window.WPFeedbackCapture.init();
+        if (window.WPFeedbackCapture.isFrame && window.WPFeedbackCapture.isFrame()) {
+            return;                     // 壳里的 iframe：只把轨迹上报给顶层，不出按钮、不排队
+        }
         window.WPFeedbackCapture.setAppVersion(appVersion());
         window.WPFeedbackPanel.init(submit);
         document.addEventListener('keydown', function (ev) {

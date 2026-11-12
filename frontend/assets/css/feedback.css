@@ -1,11 +1,14 @@
-/* 反馈入口：右下角悬浮按钮 + 半屏浮层。样式只用 tokens.css 的变量。 */
+/* 反馈入口：右下角悬浮按钮 + 半屏浮层。样式只用 tokens.css 的变量。
+   底部偏移走 --fb-bottom：桌面贴底，手机让开底部 tab（60px + 安全区）；
+   页面上出现底部工具条时 body.fb-raise 再加 72px，不压别人的按钮。 */
+:root { --fb-bottom: 20px; }
 .fb-root { position: relative; z-index: 260; }
 
 /* 悬浮按钮：所有界面可见，浮在各层之上（规格 §3.1） */
 .fb-fab {
     position: fixed;
     right: 20px;
-    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    bottom: var(--fb-bottom);
     z-index: 260;
     display: inline-flex;
     align-items: center;
@@ -44,6 +47,7 @@
 .fb-panel {
     width: min(720px, 100%);
     max-height: min(86vh, 760px);
+    max-height: min(86dvh, 760px);   /* 手机地址栏/键盘变化时按可视高度算 */
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -88,6 +92,12 @@
 .fb-canvas[hidden] { display: none; }
 .fb-shot-tip { color: var(--text-3); font-size: 13px; padding: 18px 8px; text-align: center; }
 .fb-shot-tip[hidden] { display: none; }
+.fb-retry {
+    display: block; margin: 0 auto 8px; border: 1px solid var(--border-ctrl);
+    background: var(--surface); color: var(--brand); font-size: 12px;
+    padding: 5px 12px; border-radius: 999px; cursor: pointer;
+}
+.fb-retry[hidden] { display: none; }
 .fb-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .fb-tool {
     border: 1px solid var(--border-ctrl); background: var(--surface);
@@ -158,9 +168,24 @@
 
 /* 手机：浮层改成底部抽屉，按钮贴安全区 */
 @media (max-width: 640px) {
-    .fb-fab { right: 12px; bottom: calc(74px + env(safe-area-inset-bottom, 0px)); padding: 10px 13px; }
+    :root { --fb-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+    .fb-fab { right: 12px; padding: 10px; }
     .fb-fab-text { display: none; }
+    .fb-fab-dot { display: none; }
+    .fb-fab::after { content: "反馈"; font-size: 12px; }
     .fb-mask { align-items: flex-end; padding: 0; }
-    .fb-panel { width: 100%; max-height: 88vh; border-radius: var(--radius-l) var(--radius-l) 0 0; }
-    .fb-body { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+    .fb-panel {
+        width: 100%;
+        max-height: 88vh;
+        max-height: 88dvh;
+        border-radius: var(--radius-l) var(--radius-l) 0 0;
+    }
+    .fb-body { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+    .fb-submit { margin-bottom: 2px; }
+    .fb-message { min-height: 72px; font-size: 16px; }   /* 16px 以下 iOS 聚焦会放大页面 */
+    .fb-submit { flex: 1 1 100%; padding: 12px 20px; }
+    .fb-foot { gap: 10px; }
+    body.fb-open { overflow: hidden; }                   /* 浮层开着时背景不跟着滚 */
 }
+
+body.fb-raise .fb-fab { bottom: calc(var(--fb-bottom) + 72px); }

@@ -9,6 +9,7 @@ window.WPFeedbackPanel = (function () {
     var panel = null;
     var maskEl = null;
     var canvas = null;
+    var retryBtn = null;
     var messageEl = null;
     var contactEl = null;
     var hintEl = null;
@@ -28,6 +29,12 @@ window.WPFeedbackPanel = (function () {
         if (cls) { node.className = cls; }
         if (text) { node.textContent = text; }
         return node;
+    }
+
+    // 底部有工具条（文件多选、收件箱操作栏、终端虚拟键、控制台 FAB）时把按钮抬上去，别压住别人的按钮
+    function placeFab() {
+        var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), .term-vkeys:not([hidden]), .ctl-fab');
+        document.body.classList.toggle('fb-raise', !!raise);
     }
 
     function buildFab() {
@@ -90,6 +97,16 @@ window.WPFeedbackPanel = (function () {
         shotTip = el('div', 'fb-shot-tip', '正在截取当前画面…');
         shot.appendChild(canvas);
         shot.appendChild(shotTip);
+        retryBtn = el('button', 'fb-retry', '重新截图');
+        retryBtn.type = 'button';
+        retryBtn.hidden = true;
+        retryBtn.addEventListener('click', function () {
+            window.WPFeedbackCapture.forgetStream();
+            retryBtn.hidden = true;
+            captureShot();
+        });
+        shot.appendChild(retryBtn);
+
         var tools = el('div', 'fb-tools');
         tools.appendChild(toolButton('pen', '画笔', 'pen'));
         tools.appendChild(toolButton('rect', '框选', 'rect'));
@@ -107,6 +124,16 @@ window.WPFeedbackPanel = (function () {
         messageEl = el('textarea', 'fb-message');
         messageEl.maxLength = 500;
         messageEl.placeholder = '哪里不满意？你想要什么？';
+        messageEl.addEventListener('focus', function () {
+            // 手机键盘会把下半屏顶掉：等视口稳定后把输入框滚到中间
+            setTimeout(function () {
+                var vv = window.visualViewport;
+                var shrunk = vv && vv.height < window.innerHeight * 0.75;
+                if (shrunk || window.innerWidth <= 640) {
+                    messageEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }
+            }, 260);
+        });
 
         var contactWrap = document.createElement('details');
         contactWrap.className = 'fb-contact';
@@ -213,27 +240,46 @@ window.WPFeedbackPanel = (function () {
     }
 
     // ---- 截图：打开面板时抓一帧（§3.2）----
+    function captureFailed(capture) {
+        shotTip.hidden = false;
+        shotTip.textContent = capture.canGrabScreen()
+            ? '这次没拿到截图（可能拒绝了共享），可以重试，或只提交文字。'
+            : '这个浏览器不支持截屏，你仍可以只提交文字。';
+        if (retryBtn) { retryBtn.hidden = !capture.canGrabScreen(); }
+    }
+
     function captureShot() {
+        var capture = window.WPFeedbackCapture;
         shotTip.hidden = false;
         shotTip.textContent = '正在截取当前画面…';
-        var capture = window.WPFeedbackCapture;
         baseImage = null;
         ops = [];
         canvas.hidden = true;
+        if (retryBtn) { retryBtn.hidden = true; }
+        var settled = false;
+        // 兜底：共享授权/播放偶尔会一直 pending（尤其手机上），4 秒后按失败处理，别让面板卡在“正在截取”
+        var guard = setTimeout(function () {
+            if (settled) { return; }
+            settled = true;
+            captureFailed(capture);
+        }, 4000);
         capture.ensureStream().then(function (ok) {
+            if (settled) { return; }
+            settled = true;
+            clearTimeout(guard);
             var grabbed = ok ? capture.grabCanvas() : null;
-            if (!grabbed) {
-                shotTip.textContent = capture.canGrabScreen()
-                    ? '这次没拿到截图（可能拒绝了共享），你仍可以只提交文字。'
-                    : '这个浏览器不支持截屏，你仍可以只提交文字。';
-                return;
-            }
+            if (!grabbed) { return captureFailed(capture); }
             baseImage = grabbed;
             canvas.width = grabbed.width;
             canvas.height = grabbed.height;
             canvas.hidden = false;
             shotTip.hidden = true;
             paint();
+        }).catch(function () {
+            if (settled) { return; }
+            settled = true;
+            clearTimeout(guard);
+            captureFailed(capture);
         });
     }
 
@@ -292,6 +338,7 @@ window.WPFeedbackPanel = (function () {
 
     function open(tab) {
         if (!root) { return; }
+        placeFab();
         maskEl.hidden = false;
         document.body.classList.add('fb-open');
         switchTab(tab || 'write');
@@ -358,6 +405,11 @@ window.WPFeedbackPanel = (function () {
         root.appendChild(buildFab());
         buildPanel();
         document.body.appendChild(root);
+        // 点一下就可能切换出底部工具条（多选模式等）：跟着重排，不做轮询
+        document.addEventListener('pointerdown', function () { setTimeout(placeFab, 0); }, true);
+        window.addEventListener('resize', placeFab);
+        window.addEventListener('orientationchange', placeFab);
+        setTimeout(placeFab, 400);
         canvas.addEventListener('pointerdown', onCanvasDown);
         canvas.addEventListener('pointermove', onCanvasMove);
         canvas.addEventListener('pointerup', onCanvasUp);

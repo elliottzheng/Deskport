@@ -14,6 +14,7 @@ window.WPFeedbackCapture = (function () {
     var failedRequests = [];
     var clicks = {};          // callId 之类不需要；这里只留最后一个点击的组件
     var lastTarget = '';
+    var inFrame = window.self !== window.top;   // 壳（/app）里每页一个 iframe：只上报轨迹，别出按钮
     var stream = null;        // getDisplayMedia 的流：一次授权，本次会话复用
     var streamDenied = false;
     var appVersion = 'dev';
@@ -74,6 +75,7 @@ window.WPFeedbackCapture = (function () {
     }
 
     function push(action, target, extra) {
+        if (inFrame) { return postToTop(action, target, extra); }
         var step = { t: nowMs(), action: action, target: clip(target, 160) };
         if (extra) {
             for (var k in extra) {
@@ -82,6 +84,46 @@ window.WPFeedbackCapture = (function () {
         }
         trace.push(step);
         if (trace.length > MAX_TRACE) { trace.shift(); }
+    }
+
+    // ---- 壳里的 iframe → 顶层：轨迹汇总到同一个信封（跨文档只传结构，不传内容）----
+    function postToTop(action, target, extra) {
+        var parentWin = window.parent;
+        if (!parentWin || parentWin === window) { return; }
+        var step = { action: action, target: clip(target, 160) };
+        if (extra) { step.extra = extra; }
+        try { window.parent.postMessage({ __wpFeedbackTrace: 1, step: step }, location.origin); }
+        catch (e) { /* 跨源 iframe：放弃，不打断页面 */ }
+    }
+
+    function onFrameTrace(ev) {
+        if (ev.origin !== location.origin) { return; }
+        var data = ev.data;
+        if (!data || data.__wpFeedbackTrace !== 1 || !data.step) { return; }
+        var step = data.step;
+        var item = { t: nowMs(), action: step.action, target: clip(step.target, 160) };
+        if (step.extra) {
+            for (var k in step.extra) {
+                if (Object.prototype.hasOwnProperty.call(step.extra, k)) { item[k] = step.extra[k]; }
+            }
+        }
+        trace.push(item);
+        if (trace.length > MAX_TRACE) { trace.shift(); }
+        if (step.action === 'click') { lastTarget = item.target; }
+    }
+
+    // 壳里当前可见的那个 iframe（同源才读得到），用来报告真实页面
+    function visibleFrame() {
+        if (inFrame) { return null; }
+        var frames = document.querySelectorAll('iframe');
+        for (var i = 0; i < frames.length; i++) {
+            var frame = frames[i];
+            if (frame.hidden || frame.offsetParent === null || !frame.getAttribute('src')) { continue; }
+            try {
+                if (frame.contentWindow && frame.contentWindow.location.href) { return frame; }
+            } catch (e) { return null; }
+        }
+        return null;
     }
 
     // ---- 行为轨迹：点击与聚焦（不记录输入值，§4 规则 4）----
@@ -197,26 +239,63 @@ window.WPFeedbackCapture = (function () {
         return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     }
 
+    // 等第一帧真的到（videoWidth 有值）再算成功：固定 sleep 在慢机器/手机上会偶发拿不到
+    function waitFirstFrame(timeoutMs) {
+        return new Promise(function (resolve) {
+            var settled = false;
+            var started = Date.now();
+            function finish(ok) {
+                if (!settled) { settled = true; resolve(ok); }
+            }
+            if (videoEl.requestVideoFrameCallback) {
+                try { videoEl.requestVideoFrameCallback(function () { finish(true); }); } catch (e) { /* 老浏览器 */ }
+            }
+            (function poll() {
+                if (settled) { return; }
+                if (videoEl.videoWidth > 0) { return finish(true); }
+                if (Date.now() - started > (timeoutMs || 2000)) { return finish(false); }
+                setTimeout(poll, 60);
+            })();
+        });
+    }
+
+    function attachStream(got) {
+        videoEl = document.createElement('video');
+        videoEl.muted = true;
+        videoEl.playsInline = true;
+        videoEl.setAttribute('playsinline', '');
+        videoEl.srcObject = got;
+        var playing = videoEl.play ? videoEl.play() : Promise.resolve();
+        // play() 在部分浏览器里会一直 pending（等手势），别让它把捕获卡死
+        var playSettled = Promise.race([
+            Promise.resolve(playing).catch(function () { return null; }),
+            new Promise(function (resolve) { setTimeout(resolve, 800); })
+        ]);
+        return playSettled.then(function () { return waitFirstFrame(2000); });
+    }
+
     function ensureStream() {
-        if (stream) { return Promise.resolve(true); }
-        if (!canGrabScreen() || streamDenied) { return Promise.resolve(false); }
+        if (!canGrabScreen()) { return Promise.resolve(false); }
+        if (stream) { return Promise.resolve(videoEl && videoEl.videoWidth > 0); }
+        if (streamDenied) { return Promise.resolve(false); }
         return navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false })
             .then(function (got) {
                 stream = got;
-                videoEl = document.createElement('video');
-                videoEl.muted = true;
-                videoEl.playsInline = true;
-                videoEl.srcObject = got;
-                return videoEl.play().then(function () {
-                    return new Promise(function (resolve) {
-                        setTimeout(function () { resolve(true); }, 180);   // 等首帧
-                    });
-                });
+                return attachStream(got);
             })
             .catch(function () {
-                streamDenied = true;      // 用户拒绝过就这次会话不再骚扰
+                streamDenied = true;      // 用户拒绝/不支持：这次会话不再骚扰
                 return false;
             });
+    }
+
+    function forgetStream() {
+        streamDenied = false;
+        if (stream && stream.getTracks) {
+            stream.getTracks().forEach(function (track) { track.stop(); });
+        }
+        stream = null;
+        videoEl = null;
     }
 
     function grabCanvas() {
@@ -266,9 +345,21 @@ window.WPFeedbackCapture = (function () {
 
     // ---- 信封（§5）----
     function context() {
+        var route = routeOf();
+        var page = pageId();
+        var frame = visibleFrame();          // 壳里报告的是 iframe 的真实页面
+        if (frame) {
+            try {
+                var inner = frame.contentWindow.location;
+                if (inner.pathname && inner.pathname !== '/') {
+                    route = inner.pathname + inner.search;
+                    page = PAGE_NAMES[inner.pathname] || page;
+                }
+            } catch (e) { /* 跨源：退回壳自己的路由 */ }
+        }
         return {
-            route: routeOf(),
-            page_id: pageId(),
+            route: route,
+            page_id: page,
             component_ref: lastTarget || '',
             viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
             locale: navigator.language || ''
@@ -308,6 +399,8 @@ window.WPFeedbackCapture = (function () {
         hookFetch();
         hookXhr();
         hookErrors();
+        if (inFrame) { postToTop('route', routeOf()); return; }
+        window.addEventListener('message', onFrameTrace);
         push('route', routeOf());
     }
 
@@ -321,8 +414,10 @@ window.WPFeedbackCapture = (function () {
         refOf: refOf,
         ensureStream: ensureStream,
         canGrabScreen: canGrabScreen,
+        isFrame: function () { return inFrame; },
         grabCanvas: grabCanvas,
         compress: compress,
-        streamDenied: function () { return streamDenied; }
+        streamDenied: function () { return streamDenied; },
+        forgetStream: forgetStream,
     };
 })();
