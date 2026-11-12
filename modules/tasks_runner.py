@@ -15,6 +15,7 @@ from modules import sensitive_values
 from modules import tasks_store as store
 from modules import task_state
 from modules import task_engines
+from modules import worklines_store
 from modules.kimi_acp import KimiAcp, extractText
 
 log = logging.getLogger('tasks')
@@ -407,7 +408,44 @@ def _handleAcpPermission(task, agent, params, requestId):
     return value
 
 
-def _promptOnce(task, client, text):
+def _afterWorklineTurn(task):
+    """轮末收尾（R5-1a）：执行方改过 WORKLINE.md 才写回，超阈值提示轮换。"""
+    if not task.get('workline'):
+        return
+    result = worklines_store.syncFromWorkspace(task)
+    if result and result.get('rev'):
+        store.repo.append_event(task, 'status',
+                                text='接力棒已更新 rev %s' % result['rev'][:8])
+    elif result and result.get('skipped'):
+        store.repo.append_event(task, 'status',
+                                text='接力棒在轮中被主控改过，本轮写回已跳过（不覆盖）')
+    wl = worklines_store.repo.get((task.get('workline') or {}).get('id') or '')
+    info = worklines_store.contextInfo(task)
+    if not wl or not info:
+        return
+    high = info['ratio'] >= worklines_store.warnRatio(wl)
+    with store.repo.lock:
+        already = bool(task.get('contextHigh'))
+        if not high and already and info['ratio'] < 0.5:
+            task['contextHigh'] = False
+            store.repo.save()
+        elif high and not already:
+            task['contextHigh'] = True
+            store.repo.save()
+    if high and not already:
+        store.repo.append_event(
+            task, 'status',
+            text=('上下文已用 %d/%d（%d%%），超过工作线阈值；可轮换会话：'
+                  'POST /api/worklines/%s/rotate'
+                  % (info['used'], info['max'], round(info['ratio'] * 100),
+                     wl['id'])))
+
+
+def _promptOnce(task, client, text, first=False):
+    if not first and task.get('workline'):
+        tail = worklines_store.turnTail(task)
+        if tail:
+            text = text + '\n\n' + tail
     store.repo.append_event(task, 'status', text='开始执行')
     with store.repo.lock:
         task_state.transition(task, task_state.TaskState.RUNNING)
@@ -415,6 +453,7 @@ def _promptOnce(task, client, text):
         store.repo.save()
     result = client.prompt(text)
     _flushAssistant(task)   # 回合结束即落终版，订阅者（SSE/轮询）拿到完整文本
+    _afterWorklineTurn(task)
     results = store._scanResults(task['workspace'])
     with store.repo.lock:
         task['stopReason'] = (result or {}).get('stopReason') or ''
@@ -509,8 +548,14 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                 _promptOnce(task, client, firstMessage)
                 store.repo.append_event(task, 'status', text='这轮结束，等你继续')
         else:
-            store.repo.append_event(task, 'user', text=task.get('prompt') or '')
-            _promptOnce(task, client, store._promptFor(task, manifest))
+            firstText = store._promptFor(task, manifest,
+                                         task.get('worklineBlock') or '')
+            # 工作线任务把首条完整消息落卡：主控能核对接力棒真的进去了
+            store.repo.append_event(
+                task, 'user',
+                text=firstText if task.get('workline')
+                else (task.get('prompt') or ''))
+            _promptOnce(task, client, firstText, first=True)
             store.repo.append_event(task, 'status', text='这轮结束，等你继续')
         _drainQueuedMessages(task, client)   # 轮中排队的消息，轮一结束就投
         while True:
