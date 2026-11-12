@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""应用设置：收件箱扫描开关与目录、多机联邦。"""
+"""应用设置：收件箱扫描开关与目录、多机联邦、登录设备管理。"""
 import os
 import re
 
 from flask import Blueprint, jsonify, request
 
 import config
-from modules import federation
+from modules import device_auth, events, federation
 
 blueprint = Blueprint('settings', __name__)
 
@@ -138,3 +138,22 @@ def setRemotes():
     config.setRemotes(cleaned)
     return jsonify({'ok': True, 'remotes': cleaned,
                     'machines': federation.machineOptions()})
+
+
+# ---------------------------------------------------------------- 登录设备
+# 设备令牌(App 密码换发, 仅 upload)的签发/自吊销在 modules/device_auth.py;
+# 这里是设置页的管理面: 列表(无哈希, 令牌签发后永不回显)与按 id 吊销。
+
+@blueprint.route('/api/settings/devices', methods=['GET'])
+def listDevices():
+    return jsonify({'devices': device_auth.publicDevices()})
+
+
+@blueprint.route('/api/settings/devices/revoke', methods=['POST'])
+def revokeDevice():
+    data = request.get_json(force=True, silent=True) or {}
+    name = device_auth.revokeById(data.get('id'))
+    if name is None:
+        return jsonify({'error': '设备不存在'}), 404
+    events.log('device.revoke', name, 'ok', '', request.remote_addr)
+    return jsonify({'ok': True, 'devices': device_auth.publicDevices()})

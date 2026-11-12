@@ -17,6 +17,7 @@
     modules/agent_sessions.py      持久会话（bash 常驻通道）
     modules/agent_local.py         Deskport 本机作为内置主机（全等价）
     modules/agent_upload.py        手机分享上传（scope=upload）
+    modules/device_auth.py         设备登录（App 密码换 upload 设备令牌, 自吊销）
 
 审计: 每次调用写 events（agent.exec / agent.sftp.*）。
 安全: 插件安全模型同档——外部智能体 = 可信代码；危险命令审批是后续增强项。
@@ -94,7 +95,10 @@ def agentFromRequest():
         stored = str(item.get('tokenHash') or '')
         if stored and hmac.compare_digest(stored, digest):
             return dict(item)
-    return None
+    # 设备令牌（App 密码换发, kind='device', 固定 upload）独立存储在
+    # devices.json, 经同一入口鉴权: upload 放行, full 端点照常 403。
+    from modules import device_auth
+    return device_auth.agentFromDevices(digest)
 
 
 def _agentRequired(scope=SCOPE_FULL):

@@ -36,6 +36,7 @@ from modules import agent_sessions as agentSessionsModule  # noqa: E402
 from modules import agent_sftp as agentSftpModule  # noqa: E402
 from modules import agent_local as agentLocalModule  # noqa: E402
 from modules import agent_upload as agentUploadModule  # noqa: E402
+from modules import device_auth as deviceAuthModule  # noqa: E402  路由注册
 from modules import agent_nodes as agentNodesModule  # noqa: E402
 from modules import tasks_federation as tasksFederationModule  # noqa: E402  路由注册
 from modules import external_proxy as externalProxyModule  # noqa: E402

@@ -28,12 +28,17 @@ createApp({
             fedError: '',
             fedOk: '',
             fedBusy: false,
+            devices: [],
+            deviceError: '',
+            deviceOk: '',
+            deviceBusy: false,
         };
     },
     mounted() {
         this.loadInbox();
         this.loadBrand();
         this.loadFederation();
+        this.loadDevices();
     },
     methods: {
         async loadBrand() {
@@ -228,6 +233,38 @@ createApp({
                 this.fedError = err.message;
             } finally {
                 this.fedBusy = false;
+            }
+        },
+        async loadDevices() {
+            try {
+                const r = await fetch('/api/settings/devices');
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.devices = data.devices || [];
+            } catch (err) {
+                this.deviceError = '加载设备列表失败: ' + err.message;
+            }
+        },
+        async revokeDevice(d) {
+            if (this.deviceBusy) { return; }
+            this.deviceError = '';
+            this.deviceOk = '';
+            this.deviceBusy = true;
+            try {
+                const r = await fetch('/api/settings/devices/revoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: d.id }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.devices = data.devices || [];
+                this.deviceOk = '已吊销「' + d.name + '」的令牌，该设备需重新登录';
+                setTimeout(() => { this.deviceOk = ''; }, 2500);
+            } catch (err) {
+                this.deviceError = err.message;
+            } finally {
+                this.deviceBusy = false;
             }
         },
         async submit() {

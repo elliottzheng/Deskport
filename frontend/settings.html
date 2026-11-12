@@ -78,6 +78,23 @@
     </div>
 
     <div class="card settings-card">
+        <div class="card-title">登录设备</div>
+        <p class="settings-note">手机 App 用访问密码登录后，会在这里留下设备令牌——它只能往手机上传目录传文件，不能远程执行。丢了设备就在这里吊销；同一设备名重新登录会替换旧令牌。令牌只在登录时返回一次，这里不会显示。</p>
+
+        <div class="settings-dir" v-for="d in devices" :key="d.id">
+            <div class="device-row">
+                <span class="device-name">{{ d.name }}</span>
+                <span class="device-meta">签发 {{ d.createdAt || '-' }} · 最后使用 {{ d.lastUsedAt || '从未' }} · IP {{ d.lastIp || '-' }} · 仅上传</span>
+            </div>
+            <button type="button" class="btn btn-ghost settings-dir-remove" @click="revokeDevice(d)">吊销</button>
+        </div>
+        <p class="settings-hint" v-if="!devices.length">还没有设备登录过：手机 App 用访问密码登录后会出现在这里。</p>
+
+        <p v-if="deviceError" class="load-error" style="margin-top:12px">{{ deviceError }}</p>
+        <p v-if="deviceOk" class="settings-ok">{{ deviceOk }}</p>
+    </div>
+
+    <div class="card settings-card">
         <div class="card-title">多机联邦</div>
         <p class="settings-note">把其他电脑上的同款实例加进来：终端页新建会话时可选在那台机器上开，它的会话也会出现在侧栏；它挂载的外部应用（如远窗）也会自动出现在本机导航里——接不接受哪台机器的终端/应用，由下面的开关和白名单决定。本机令牌用于被别的机器添加。</p>
 

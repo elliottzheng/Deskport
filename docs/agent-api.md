@@ -86,7 +86,38 @@ Content-Type: multipart/form-data
   （全部失败时 HTTP 状态按原因返回 4xx/5xx，不一律 500）；
 - 审计 `agent.upload` 记令牌名、scope 与 saved/failed 明细。
 
-手机端配置：服务器地址 + 令牌（`scopes: ["upload"]` 的那种）。
+手机端配置：服务器地址 + 令牌（`scopes: ["upload"]` 的那种）；App 也可以
+用访问密码登录自动换取设备令牌（见下节），无需手动填。
+
+## 设备登录（App 用网页密码换设备令牌）
+
+App 不保存密码：用网页访问密码登录一次，服务端签发一个**只带 `upload`
+权限、绑定设备名**的设备令牌；网页端设置页「登录设备」可见每台设备
+（设备名/签发时间/最后使用时间/来源 IP），可单独吊销。
+
+```text
+POST /api/agent/device/login    （无需令牌, 免 Cookie）
+{"password": "<网页访问密码>", "device": "小米手机"}
+→ 200 {"token": "<43字符>", "name": "小米手机", "scopes": ["upload"],
+       "createdAt": "2026-11-12 12:00:00"}
+→ 401 {"error": "密码错误"}    → 429 {"error": "尝试次数过多, 请稍后再试"}
+
+POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
+→ 200 {"ok": true}   之后旧令牌一律 401
+```
+
+- 令牌 `secrets.token_urlsafe(32)`，只在登录响应出现一次，任何接口
+  不再回显；服务端只存 SHA-256（`%APPDATA%\<stateDir>\devices.json`，
+  不进 config.json）；
+- 同设备名重新登录 = 替换旧令牌（旧的即刻失效）；设备上限 20 台；
+- 设备令牌与智能体令牌走同一鉴权入口：`/api/agent/upload` 放行，
+  exec / SFTP / sessions / `/api/tasks*` 一律 `403 {"need": "full"}`；
+- 防暴力破解（内存计数，重启清零）：每 IP 60 秒内失败≥5 拒到窗口滚出；
+  全局 10 分钟内失败≥20 锁 10 分钟（触发写审计 `device.lockout`），
+  锁定期间统一 429，网页登录不受影响；审计 `device.login`
+  ok/fail/locked 与 `device.logout`；
+- 设置页管理面：`GET /api/settings/devices`（列表不含令牌）、
+  `POST /api/settings/devices/revoke {"id": "..."}`（会话 Cookie 态）。
 
 ## 认证与错误格式
 
