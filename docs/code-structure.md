@@ -67,8 +67,8 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 2026-11-05：`tools/check_structure.py` 的 `read_lines()` 先 `f.read()` 再迭代同一句柄，行数恒为 0，**预算检查自写成以来从未生效**。修复后一次性暴露 7 个超预算文件，已全部拆完（过程见 `docs/design-review.md`）。这一条值得记住：门禁本身失效时，它报的"干净"没有任何意义。
 
 2026-11-12：R4/R5 两轮把 `tasks_*`、`agent_*` 等重新写回超预算，且没登记，门禁因此红了数日——
-这段时间 `deploy.ps1` 的预检会 `exit 1`，实际发布改走人工/智能体侧的同步流程（发布戳带 `-rNN` 后缀，
-见 `_claude/r4-status.md` 的「第 N 批上线」记录）。
+这段时间 `deploy.ps1` 的预检会 `exit 1`，实际发布改走人工/智能体侧的同步流程（发布戳带
+`-rNN` 后缀，是那段时间手工分批上线的痕迹）。
 决策是**先认清现状再逐步收敛**：把现有 13 个超预算文件按当前行数登记回 `LEGACY`，门禁恢复绿，
 之后这些文件只允许变短。
 

@@ -20,7 +20,7 @@
 | 文档 | 内容 |
 |---|---|
 | [agent-api.md](agent-api.md) | 智能体 API 契约：令牌与 scope、设备登录、快命令/SFTP/持久会话、任务 API、工作线、技能分发、审计 |
-| [agent-network.md](agent-network.md) | 智能体网络架构：中枢与执行点、通信通道、任务生命周期、工作线、韧性、信任模型、扩展动作、设计原则与实测协作成本 |
+| [agent-network.md](agent-network.md) | 智能体网络架构：中枢与执行点、通信通道、任务生命周期、工作线、韧性、信任模型、扩展动作、设计原则与成本取舍、多智能体协作模式 |
 | [agent-kit.md](agent-kit.md) | 智能体技能包：手册 + 协作原则 + 客户端 + 驱动、自举命令、`driver.json` 边界、接入约定 |
 | [audit-agent-network.md](audit-agent-network.md) | 智能体网络质量审计：实测缺陷清单与结论 |
 | [lessons-agent-api-feedback.md](lessons-agent-api-feedback.md) | 外部智能体使用反馈沉淀的经验与决策 |
