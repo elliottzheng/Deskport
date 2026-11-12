@@ -85,6 +85,8 @@ def _under(path, roots):
 def _sourceOf(root):
     low = root.lower()
     base = os.path.basename(root).lower()
+    if base == '手机上传':
+        return '手机'
     if 'xwechat_files' in low or 'wechat' in low:
         return '微信'
     if 'qq' in low or 'tencent' in low or base == 'filerecv':

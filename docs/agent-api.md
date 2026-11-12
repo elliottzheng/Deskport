@@ -31,6 +31,63 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 "谁干了什么"查不清（反馈 §8.1）。任务、会话对所有令牌可见——这是单用户
 系统的设计（你的智能体都是自己的），不按令牌隔离（反馈 §8.2）。
 
+## 令牌 scope
+
+`agentTokens[]` 支持 `scopes` 白名单，把令牌能做的事收窄到声明的范围；
+**没写 `scopes` 视为全权**（向后兼容，现有令牌行为不变）：
+
+```json
+"agentTokens": [
+  { "id": "claude", "name": "Claude", "tokenHash": "<SHA-256>" },
+  { "id": "kimi",   "name": "Kimi Code", "tokenHash": "<SHA-256>",
+    "scopes": ["full"] },
+  { "id": "phone",  "name": "手机", "tokenHash": "<SHA-256>",
+    "scopes": ["upload"] }
+]
+```
+
+- 现有 `/api/agent/*`（exec / sftp / sessions / skills / hosts）与
+  `/api/tasks*` 全部要求 `full`；手机上传（见下节）要求 `upload`；
+- 写了 `scopes` 就按白名单精确匹配；显式 `"scopes": ["full"]` 等价全权
+  （也能上传）；
+- 越权返回 `403 {"error": "令牌无此权限", "need": "<所需 scope>"}`，
+  同时审计记一条 `agent.scope`（令牌名 + 所需 scope）；
+- 手机令牌是典型的受限令牌：丢了/泄露了，删掉 `agentTokens` 里的对应
+  条目即热生效（config 按 mtime 热读，无需重启），暴露面只有上传一种。
+
+## 手机上传（POST /api/agent/upload，scope=upload）
+
+手机「分享」直达电脑的落盘通道：multipart 直传，不需要会话 Cookie，
+文件自动进收件箱（`phoneUploadDir` 并入收件箱观察目录）。
+
+```text
+POST /api/agent/upload    (X-Agent-Token: <scope 含 upload 的令牌>)
+Content-Type: multipart/form-data
+
+字段:
+  file     必填, 可重复（一次多个文件）
+  subdir   可选, 相对子目录（如 "照片/2026-11"）
+→ 200 {"ok": true,
+       "saved": [{"path": "E:\\...\\手机上传\\a.pdf", "size": 123,
+                  "sha256": "<64hex>"}],
+       "failed": [{"name": "b.txt", "error": "..."}]}
+```
+
+- 落盘根目录 = config `phoneUploadDir`（缺省 `<fallbackDir>\手机上传`），
+  目录自动创建；收件箱开启时自动并入 `inboxDirs`，上传即出现在
+  `/api/inbox/recent`，可直接「交给 AI」；
+- `subdir` 只接受相对子路径：拒绝绝对路径、盘符（`C:`）、`..`、Windows
+  非法字符，逐级校验，坏值整个请求 400；
+- 文件名逐个校验（纯文件名，≤120 字符）；**重名自动 `(2)`**，不覆盖；
+- 流式写盘（不整读进内存）；单文件上限 config `phoneUploadMaxMB`
+  （缺省 2048），超限该文件记 `failed` 且半成品不落盘，全部超限 → 413；
+- 无令牌 401；令牌无 `upload` scope → 403 `{"need": "upload"}`；
+  缺 `file` 字段 400；部分成功即 200，`failed[]` 带逐个原因
+  （全部失败时 HTTP 状态按原因返回 4xx/5xx，不一律 500）；
+- 审计 `agent.upload` 记令牌名、scope 与 saved/failed 明细。
+
+手机端配置：服务器地址 + 令牌（`scopes: ["upload"]` 的那种）。
+
 ## 认证与错误格式
 
 - 每次请求带 `X-Agent-Token: <令牌>` 或 `Authorization: Bearer <令牌>`；
@@ -260,8 +317,9 @@ Deskport 升级后重新拉取即更新（mtime 检测变更）。
 ## 审计
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.*` / `agent.session.*` /
-`agent.task.create` / `agent.task.upload`），控制台审计可回看：哪个令牌、
-哪台主机、执行了什么。
+`agent.task.create` / `agent.task.upload` / `agent.upload`），控制台审计可
+回看：哪个令牌、哪台主机、执行了什么。令牌越权（scope 不满足）另记
+`agent.scope`（result=deny，含令牌名与所需 scope）。
 
 ## 已知边界
 

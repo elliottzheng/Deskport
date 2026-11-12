@@ -35,6 +35,7 @@ from modules import agent_api as agentApiModule  # noqa: E402
 from modules import agent_sessions as agentSessionsModule  # noqa: E402
 from modules import agent_sftp as agentSftpModule  # noqa: E402
 from modules import agent_local as agentLocalModule  # noqa: E402
+from modules import agent_upload as agentUploadModule  # noqa: E402
 from modules import agent_nodes as agentNodesModule  # noqa: E402
 from modules import tasks_federation as tasksFederationModule  # noqa: E402  路由注册
 from modules import external_proxy as externalProxyModule  # noqa: E402
@@ -207,7 +208,7 @@ BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      pluginsModule, agentApiModule, agentNodesModule,
                      tasksFederationModule)
-# agent_sessions / agent_sftp 与 agent_api 共用同一蓝图对象：
+# agent_sessions / agent_sftp / agent_upload 与 agent_api 共用同一蓝图对象：
 # 上面的 import 已把路由挂到该蓝图，随 agentApiModule 一次注册，无需重复登记。
 REGISTER_MODULES = (systemModule, metaModule, tasksModule)
 
