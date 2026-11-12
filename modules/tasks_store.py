@@ -11,11 +11,11 @@ import re
 import shutil
 import threading
 import time
-import uuid
 
 import config
 from modules import contracts, fsutil, task_state
 from modules import sensitive_values
+from modules.staging import _safeAttachmentName
 
 log = logging.getLogger('tasks')
 
@@ -27,17 +27,6 @@ MAX_TEXT = 8000
 MAX_TOOL_RESULT = 4000
 MAX_UPLOAD_MB = 32        # /api/tasks/files 单文件上限（§7b 过渡：智能体没有
                           # exec/sftp 之前的文件投递通道）
-STAGING_CHUNK = 1024 * 1024   # 暂存区写盘块大小（不整读进内存）
-
-
-def _safeAttachmentName(name):
-    """附件只允许纯文件名：无路径分隔符、无控制字符、≤120 字符。"""
-    text = str(name or '').strip()
-    if not text or len(text) > 120:
-        return ''
-    if re.search(r'[\\/:*?"<>|\x00-\x1f]', text):
-        return ''
-    return text
 
 
 def _saveAttachments(attachments, workspace):
@@ -321,69 +310,6 @@ repo = _LazyRepo(lambda: TaskRepository(storePath(), logDir()))
 
 def _ensureRoot():
     os.makedirs(taskRoot(), exist_ok=True)
-
-
-def saveStagedStream(name, stream, limitBytes, chunkSize=STAGING_CHUNK, folder=None):
-    """流式写入任务暂存区，返回绝对路径。
-
-    `/api/tasks/files`、`/api/agent/share` 共用的落盘逻辑（规格 §2.1：
-    抽成函数，不复制第二份）。不传 folder 时每批文件一个随机子目录
-    （与既有行为一致）；传 folder 时写进该目录（organize=folder）。
-    重名走 uniquePath 的 (2)，绝不覆盖。
-    文件名不合法 / 超过 limitBytes 抛 ValueError（调用方区分 400/413）；
-    写盘失败抛 OSError。任何失败都不留半成品。
-    """
-    safe = _safeAttachmentName(name)
-    if not safe:
-        raise ValueError('name 必须是纯文件名（无路径分隔符，≤120 字符）')
-    if folder:
-        root = folder
-        os.makedirs(root, exist_ok=True)
-    else:
-        root = os.path.join(taskRoot(), '_uploads', uuid.uuid4().hex[:8])
-        os.makedirs(root, exist_ok=True)
-    path = fsutil.uniquePath(root, safe, start=2, sep='')
-    size = 0
-    try:
-        with open(path, 'wb') as f:
-            while True:
-                chunk = stream.read(chunkSize)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > limitBytes:
-                    raise ValueError('文件超过 %dMB 上限'
-                                     % max(1, limitBytes // (1024 * 1024)))
-                f.write(chunk)
-    except BaseException:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        if not folder:
-            try:
-                if not os.listdir(root):
-                    os.rmdir(root)
-            except OSError:
-                pass
-        raise
-    return path
-
-
-def createStagedFolder(name):
-    """在任务暂存区建一个命名文件夹（organize=folder），重名 (2)。
-
-    直接建在 `_agent_tasks/_uploads/` 下（同名的第二份得到 `name(2)`），
-    返回绝对路径；名称不合法抛 ValueError。调用方负责在失败时清理。
-    """
-    safe = _safeAttachmentName(name)
-    if not safe or safe in ('.', '..'):
-        raise ValueError('文件夹名不合法（需纯名称，≤120 字符）')
-    root = os.path.join(taskRoot(), '_uploads')
-    os.makedirs(root, exist_ok=True)
-    path = fsutil.uniquePath(root, safe, isDir=True, start=2, sep='')
-    os.makedirs(path)
-    return path
 
 
 def _slug(text):

@@ -21,7 +21,7 @@ from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
 from modules import worklines_store
-from modules import fsutil
+from modules import fsutil, staging
 from modules import agent_nodes
 from modules import model_availability
 from modules import events
@@ -866,8 +866,8 @@ def uploadTaskFile():
     if len(raw) > store.MAX_UPLOAD_MB * 1024 * 1024:
         return jsonify({'error': '文件超过 %dMB 上限' % store.MAX_UPLOAD_MB}), 413
     try:
-        path = store.saveStagedStream(name, io.BytesIO(raw),
-                                      store.MAX_UPLOAD_MB * 1024 * 1024)
+        path = staging.saveStagedStream(name, io.BytesIO(raw),
+                                        store.MAX_UPLOAD_MB * 1024 * 1024, store.taskRoot())
     except ValueError as e:
         return jsonify({'error': str(e)}), 413
     except OSError as e:

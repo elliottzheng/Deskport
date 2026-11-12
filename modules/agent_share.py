@@ -20,7 +20,7 @@ exec / SFTP / 改配置的全权交给手机。本模块新增 share scope，只
       → 200 {taskId, mode:"created"|"appended", paths:[...], prompt}
 
 行为:
-    - 文件先落任务暂存区（tasks_store.saveStagedStream，与 /api/tasks/files
+    - 文件先落任务暂存区（modules/staging.saveStagedStream，与 /api/tasks/files
       同一份逻辑），响应/消息里给绝对路径；
     - organize=folder 时先在暂存区建文件夹（folderName 校验同文件名：
       不许 .. / 绝对路径 / 分隔符），paths 给文件夹路径，prompt 末尾补
@@ -43,7 +43,7 @@ import shutil
 
 from flask import jsonify, request
 
-from modules import events, tasks_api, tasks_store
+from modules import events, staging, tasks_api, tasks_store
 from modules.agent_api import SCOPE_SHARE, _agentRequired, blueprint
 
 MAX_FILES = 10
@@ -72,7 +72,7 @@ def _safeFolderName(raw):
         return ''
     if text in ('.', '..') or re.match(r'^[A-Za-z]:', text):
         return None
-    return tasks_store._safeAttachmentName(text)
+    return staging._safeAttachmentName(text)
 
 
 def _defaultFolderName():
@@ -239,7 +239,7 @@ def shareSubmit():
     stagedFolder = ''
     if organize == 'folder':
         try:
-            stagedFolder = tasks_store.createStagedFolder(folderName)
+            stagedFolder = staging.createStagedFolder(folderName, tasks_store.taskRoot())
         except ValueError as e:
             _audit('agent.share', taskId, 'fail', '文件夹名不合法')
             return jsonify({'error': str(e)}), 400
@@ -248,16 +248,16 @@ def shareSubmit():
             return jsonify({'error': '建文件夹失败: %s' % e}), 500
         folderName = os.path.basename(stagedFolder)   # 重名时以 (2) 后的实际名为准
     for item in uploads:
-        name = tasks_store._safeAttachmentName(item.filename)
+        name = staging._safeAttachmentName(item.filename)
         if not name:
             _discard(stagedFiles, stagedFolder)
             _audit('agent.share', taskId, 'fail', '文件名不合法')
             return jsonify({'error': '文件名不合法（需纯文件名，≤120 字符）: %s'
                                      % (item.filename or '')}), 400
         try:
-            stagedFiles.append(tasks_store.saveStagedStream(
+            stagedFiles.append(staging.saveStagedStream(
                 name, item.stream, MAX_FILE_MB * 1024 * 1024,
-                folder=stagedFolder or None))
+                tasks_store.taskRoot(), folder=stagedFolder or None))
         except ValueError:
             _discard(stagedFiles, stagedFolder)
             _audit('agent.share', taskId, 'fail', '文件超过 %dMB' % MAX_FILE_MB)
