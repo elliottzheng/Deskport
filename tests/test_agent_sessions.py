@@ -124,6 +124,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(events, 'log',
                         lambda *a, **k: audit.append(a[0] if a else ''))
     import modules.agent_sessions as sessionsMod
+    import modules.ssh_hosts as hostsMod
+    # R5-6：主机库指到 tmp（此前读到真实 %APPDATA% 的 ssh_hosts.json 才有 ai-xmyz）
+    hostsRepo = hostsMod.HostRepository(str(tmp_path / 'ssh_hosts.json'))
+    hostsRepo.store = {'hosts': [{'id': 'ai-xmyz', 'name': 'ai-xmyz',
+                                  'host': '127.0.0.1', 'port': 22}]}
+    monkeypatch.setattr(hostsMod, 'repo', hostsRepo)
     chanBox = []
 
     def fakeGetConnection(entry):
