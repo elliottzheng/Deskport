@@ -3,6 +3,7 @@
 import hmac
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -11,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
-    discoverModels, forkKimiSession, listKimiSessions
+    discoverModels, forkKimiSession, kimiSessionWorkDir, listKimiSessions
 from model_probe import MAX_QUEUE_MODELS, PROBE_TIMEOUT_SEC
 
 CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限；超时杀掉卡住的
@@ -87,9 +88,25 @@ class SessionManager:
                         session.last_active = nowMs()
                         return session
         if kimi_session_id:
-            # R4-7 远端接手：先 fork 副本（避免与原进程并发写同一会话），
-            # 再对副本做 session/load（回放走 _loading 门禁）
-            resume_session_id = forkKimiSession(self.kimi_bin, kimi_session_id)
+            # R4-7 远端接手：kimi 按工作目录归属会话（fork 与 session/load
+            # 都只认会话所属目录，node 进程目录下直接操作报 Session not
+            # found / Unknown sessionId）——一律以 kimi 存储里的 workDir 为
+            # 准，任务 cwd 只在查询不到时兜底
+            try:
+                work_dir = kimiSessionWorkDir(self.kimi_bin, kimi_session_id)
+            except (RuntimeError, subprocess.TimeoutExpired):
+                work_dir = ''
+            if work_dir:
+                cwd = work_dir
+            if fork:
+                # 先 fork 副本（避免与原进程并发写同一会话），
+                # 再对副本做 session/load（回放走 _loading 门禁）
+                resume_session_id = forkKimiSession(self.kimi_bin,
+                                                    kimi_session_id, cwd)
+            else:
+                # fork=False 直接接管：外部会话（手动 fork 的副本等，不在
+                # node registry 里）也按 workDir load
+                resume_session_id = kimi_session_id
         sid = uuid.uuid4().hex[:12]
         session = AcpSession(sid, cwd, mode, self.kimi_bin, title, model)
         # session/load 可能阻塞在被其他活进程持有的 kimi 会话锁上且无限等

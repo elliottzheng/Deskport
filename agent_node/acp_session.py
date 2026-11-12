@@ -43,15 +43,18 @@ def nowMs():
     return int(time.time() * 1000)
 
 
-def forkKimiSession(kimi_bin, sessionId, timeout=600):
+def forkKimiSession(kimi_bin, sessionId, cwd=None, timeout=600):
     """kimi fork：复制已有会话并返回新 id（R4-7；532M 会话实测秒级）。
 
-    失败（会话被占用/不存在/超时）抛 RuntimeError，原文透传给调用方。
+    kimi 按工作目录归属会话：cwd 缺省继承 node 进程目录，目录不属于
+    会话时报 Session not found（远端实测）——调用方传 kimiSessionWorkDir
+    查到的会话 workDir。失败（会话被占用/不存在/超时）抛 RuntimeError，
+    原文透传给调用方。
     """
     proc = subprocess.run(
         [kimi_bin, 'fork', '-y', sessionId], capture_output=True,
         text=True, encoding='utf-8', errors='replace', timeout=timeout,
-        creationflags=0x08000000 if os.name == 'nt' else 0)
+        cwd=cwd or None, creationflags=0x08000000 if os.name == 'nt' else 0)
     out = (proc.stdout or '') + (proc.stderr or '')
     if proc.returncode != 0:
         raise RuntimeError('fork 失败: %s' % (out.strip()[:300] or proc.returncode))
@@ -92,6 +95,31 @@ def listKimiSessions(kimi_bin, cwd=None, limit=100):
                       'updatedAt': entry.get('updatedAt') or 0})
     items.sort(key=lambda x: -(x['updatedAt'] or 0))
     return items[:max(1, min(int(limit), 100))]
+
+
+def kimiSessionWorkDir(kimi_bin, kimi_session_id):
+    """kimi 存储里指定会话的 workDir；查不到返回 ''。
+
+    kimi 按工作目录归属会话：fork 与 session/load 都只认会话所属目录
+    （node 进程目录下直接操作报 Session not found / Unknown sessionId，
+    远端实测），接手外部会话前必须先查归属目录。kimi 不可用抛
+    RuntimeError，由调用方决定兜底。
+    """
+    proc = subprocess.run(
+        [kimi_bin, 'session', 'list', '--all', '--json'], capture_output=True,
+        text=True, encoding='utf-8', errors='replace', timeout=120,
+        creationflags=0x08000000 if os.name == 'nt' else 0)
+    if proc.returncode != 0:
+        raise RuntimeError('session list 失败: %s' % (proc.stderr or '').strip()[:300])
+    try:
+        raw = json.loads(proc.stdout or '[]')
+    except ValueError:
+        raise RuntimeError('session list 输出不是 JSON')
+    for entry in raw if isinstance(raw, list) else []:
+        if isinstance(entry, dict) \
+                and str(entry.get('id') or '') == kimi_session_id:
+            return str(entry.get('workDir') or '')
+    return ''
 
 
 class Ring:
