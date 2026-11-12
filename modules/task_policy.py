@@ -5,6 +5,9 @@
 先走 evaluate()——allow/deny 自动落卡，ask 才推 permission_request。
 
 判定顺序（反馈 R4-1 规格 + 安全补充）:
+    0. policy.allowBackground 缺省 false：工具参数带 run_in_background: true
+       → deny（rule=background，R5-7 幽灵审批循环的源头；policy 缺省时
+       evaluate 不会被调用，行为不变）；
     1. 命令段命中 denyCommands → ask（deny 的语义是"强制人工"）；
     1b. 命令段或文件工具的路径参数命中敏感文件（config.json / 令牌文件）
         → ask（R5-2 内建 deny，policy 压不掉，read-only 白名单也压不掉）；
@@ -23,6 +26,7 @@
 属于命令维度，需命令段全匹配 allowCommands；路径判定前 normpath 归一
 （折叠 `..` 与混合斜杠），命令文本里的 `..` 不做处理（走 allowCommands）。
 """
+import json
 import os
 import re
 
@@ -76,7 +80,7 @@ def _stripHeredocs(cmd):
         out = out[:start + 1] + out[start + 1 + tm.end():]
 
 DEFAULT_POLICY = {'allowPaths': [], 'allowCommands': [], 'denyCommands': [],
-                  'default': 'ask', 'timeoutSec': None}
+                  'default': 'ask', 'timeoutSec': None, 'allowBackground': False}
 
 
 def _strList(value, cap, length, label):
@@ -129,7 +133,8 @@ def validatePolicy(policy):
         denyCommands.append(pattern)
     return {'allowPaths': allowPaths, 'allowCommands': allowCommands,
             'denyCommands': denyCommands, 'default': default,
-            'timeoutSec': timeoutSec}
+            'timeoutSec': timeoutSec,
+            'allowBackground': bool(policy.get('allowBackground'))}
 
 
 def _underAny(path, allowPaths):
@@ -250,6 +255,22 @@ def _redirectTargets(cmd):
     return targets
 
 
+def _wantsBackground(args):
+    """工具参数是否要求后台执行（R5-7）：run_in_background 为真值。
+    真实链路里参数可能是对象，也可能是 JSON 字符串（tool_call 原文）。"""
+    if isinstance(args, dict):
+        return bool(args.get('run_in_background'))
+    if isinstance(args, str):
+        text = args.strip()
+        if text[:1] in ('{', '['):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                return False
+            return isinstance(parsed, dict) and bool(parsed.get('run_in_background'))
+    return False
+
+
 def evaluate(policy, kind='', name='', args=None, cwd=None):
     """按 policy 判定一次工具调用。
 
@@ -257,6 +278,9 @@ def evaluate(policy, kind='', name='', args=None, cwd=None):
     auto_denied 事件与审计追溯。ask 永远是安全侧——拿不到参数、解析失败、
     命中 deny 都导向 ask。
     """
+    # 后台执行（R5-7）：allowBackground 缺省 false 时直接拒绝，不产生审批
+    if not policy.get('allowBackground') and _wantsBackground(args):
+        return 'deny', 'background'
     allowPaths = policy.get('allowPaths') or []
     allowRes = [re.compile(p) for p in policy.get('allowCommands') or []]
     denyRes = [re.compile(p) for p in policy.get('denyCommands') or []]

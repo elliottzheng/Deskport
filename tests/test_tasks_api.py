@@ -867,7 +867,7 @@ def test_create_and_update_policy_route(env):
     detail = env.client.get('/api/tasks/%s' % tid, headers=H).get_json()['task']
     assert detail['policy'] == {'allowPaths': [], 'allowCommands': [],
                                 'denyCommands': [], 'default': 'allow',
-                                'timeoutSec': None}
+                                'timeoutSec': None, 'allowBackground': False}
     resp = env.client.post('/api/tasks/%s/policy' % tid, headers=H,
                            data=json.dumps({'policy': {'default': 'bad'}}),
                            content_type='application/json')

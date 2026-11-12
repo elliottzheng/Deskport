@@ -142,12 +142,33 @@ def _handleAcpUpdate(task, update):
     # available_commands_update / current_mode_update 等：忽略
 
 
+BACKGROUND_DENY_TEXT = '后台任务被禁用，请在前台运行'
+ORPHAN_DENY_TEXT = ('该审批的 callId 在本任务的工具调用记录里找不到'
+                    '（后台幽灵审批），已自动拒绝')
+
+
+def _knownToolCall(task, callId):
+    """callId 是否在本任务的 tool 事件里出现过（R5-7 orphan 判定）。
+
+    查两处：_toolArgs（tool_call update 记下的最近 50 个）与任务事件流里
+    的 tool 事件（MAX_EVENTS 窗口内）。两处都没有 = 轮间幽灵审批。"""
+    if not callId:
+        return False
+    with store.repo.lock:
+        if callId in (task.get('_toolArgs') or {}):
+            return True
+        return any(e.get('type') == 'tool' and e.get('callId') == callId
+                   for e in task.get('events') or [])
+
+
 def _handleAcpPermission(task, agent, params, requestId):
     """把 ACP 的授权请求推到任务卡，等用户在前端点允许/拒绝。
 
-    挂起前先过审批边界（R4-1/R4-2）：policy 命中 allow/deny 的调用在
-    这里直接短路（auto_approved/auto_denied 落卡，不产生 permission_request）；
-    联邦代理任务跳过本端判定——对端中枢已用同一份 policy 判过。
+    挂起前先过两道服务端强制门（R5-7）：轮间 callId 查不到的幽灵审批直接
+    auto_denied(rule=orphan)；policy 命中 allow/deny 的调用也在这里直接
+    短路（auto_approved/auto_denied 落卡，不产生 permission_request，
+    run_in_background 见 task_policy）；联邦代理任务跳过本端 policy 判定
+    ——对端中枢已用同一份 policy 判过。
     """
     from modules import task_policy
     tool = params.get('toolCall') or {}
@@ -159,6 +180,16 @@ def _handleAcpPermission(task, agent, params, requestId):
         last = task.get('_lastToolCall') or {}
         byKind = (task.get('_toolKinds') or {}).get(callId) if callId else None
         byCall = (task.get('_toolArgs') or {}).get(callId) if callId else None
+        # 轮间幽灵审批（R5-7 #2）：status=waiting（本轮已结束、等续聊）时
+        # 收到的审批，callId 在本任务 tool 事件里查不到——后台任务结束后的
+        # 残响会反复重放审批。直接拒绝，不挂起、不挡 message；执行轮次中
+        # （running）与其他状态不适用，避免误杀正常链路
+        orphan = bool(callId) and task.get('status') == 'waiting' \
+            and not _knownToolCall(task, callId)
+    if orphan:
+        store.repo.append_event(task, 'auto_denied', callId=callId,
+                                rule='orphan', name=title, text=ORPHAN_DENY_TEXT)
+        return None
     # kind 链（R4-2b）：真实 Kimi 的 request_permission.toolCall 不带 kind，
     # 按 callId 回查 tool_call update 记下的 kind，再兜底最近一次调用
     if not kind:
@@ -171,8 +202,8 @@ def _handleAcpPermission(task, agent, params, requestId):
     if not rawInput and not callId:
         # 无 callId 才借用最近一次调用（R4-2b，连 callId 一起认领）；callId
         # 带着但查不到说明是另一次调用（后台/轮间请求，事件流里无对应 tool
-        # 事件）——保持空参数走 policy default（ask），不借用、不默认拒绝
-        # （R4-3c #1）
+        # 事件）——轮次之间已在上面按 orphan 自动拒绝（R5-7 #2）；执行轮次
+        # 中保持空参数走 policy default（ask），不借用（R4-3c #1）
         callId = last.get('callId') or callId
         rawInput = last.get('rawArgs')
     if not rawInput and not callId:
@@ -214,8 +245,11 @@ def _handleAcpPermission(task, agent, params, requestId):
                 return optionId
             decision, rule = 'ask', 'no-allow-option'
         elif decision == 'deny':
+            # 拒绝原因（R5-7）：ACP permission 响应只有 selected/cancelled
+            # 两种 outcome、带不了原因文字，原因落 auto_denied 事件给主控看
+            extra = {'text': BACKGROUND_DENY_TEXT} if rule == 'background' else {}
             store.repo.append_event(task, 'auto_denied', callId=callId,
-                                    rule=rule, name=title)
+                                    rule=rule, name=title, **extra)
             return None
 
     if not options:

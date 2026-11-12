@@ -235,6 +235,18 @@ DELETE /api/agent/ssh/sessions/<sid>
   **不脱敏**（主控显式取数据）。policy 内建 deny：命令或文件工具路径命中
   `config.json` / 令牌文件（`*.agent-token`、`agent_node_token`、
   `deskport-agent-node/token`）→ 一律 ask，`allowCommands` 压不掉；
+- **policy（审批边界，R4-1/R4-2/R5-7）**：建任务可带 `policy`
+  `{allowPaths, allowCommands, denyCommands, default: ask|allow|deny,
+  timeoutSec, allowBackground}`（正则各 ≤30 项；`timeoutSec` 0=不超时）。
+  命中 allow/deny 的调用自动落 `auto_approved` / `auto_denied` 事件，
+  只有 ask 才产生 permission_request 等人。两条服务端强制规则：
+  ① `allowBackground` 缺省 false——工具参数带 `run_in_background: true`
+  的调用直接拒绝、不产生审批（`auto_denied rule=background`，原因
+  「后台任务被禁用，请在前台运行」落事件给主控；ACP permission 响应只有
+  selected / cancelled 两种 outcome，带不了原因文字）；② 轮次之间收到的
+  审批若 callId 在本任务 tool 事件里查不到（后台幽灵审批），自动拒绝
+  （`auto_denied rule=orphan`），不挂起、不挡 message。没有 policy 的
+  任务两条都不生效，行为不变；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（仅
   engine=acp）。默认先 `kimi fork` 复制副本再加载——不干扰用户开着的
   终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
