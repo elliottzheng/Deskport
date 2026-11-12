@@ -165,6 +165,40 @@ def test_write_outside_paths_still_ask():
     assert decision == 'ask'
 
 
+# 2026-11-13 探针实测：request_permission.toolCall 没有 rawInput，Edit 的
+# 目标路径只在 content[] 的 diff 块里（{"type":"diff","path":...}）。
+
+def test_diff_paths_allow_without_rawinput():
+    paths = ['E:/事项/远程/web-platform-dev/modules/tasks_api.py']
+    decision, rule = tp.evaluate(POLICY, 'edit', 'Edit', {}, paths=paths)
+    assert decision == 'allow' and rule == 'allowPaths'
+
+
+def test_diff_paths_outside_still_ask():
+    decision, _ = tp.evaluate(POLICY, 'edit', 'Edit', {},
+                              paths=['E:/事项/other/a.py'])
+    assert decision == 'ask'
+
+
+def test_diff_paths_multiple_one_outside_ask():
+    inside = 'E:/事项/远程/web-platform-dev/a.py'
+    decision, _ = tp.evaluate(POLICY, '', 'Write', {},
+                              paths=[inside, 'E:/Windows/x.ini'])
+    assert decision == 'ask'
+
+
+def test_permission_paths_from_diff_and_locations():
+    params = {'paths': ['E:/a.py'],
+              'toolCall': {'content': [{'type': 'diff', 'path': 'E:/b.py'},
+                                       {'type': 'content',
+                                        'content': {'type': 'text',
+                                                    'text': 'E:/not-a-path'}}],
+                           'locations': [{'path': 'E:/c.py'},
+                                         {'path': 'E:/a.py'}]}}
+    assert tp.permissionPaths(params) == ['E:/a.py', 'E:/b.py', 'E:/c.py']
+    assert tp.permissionPaths({}) == []
+
+
 # 重定向目标在 allowPaths 内 → 允许；相对路径按 cd 解析；解析不出 → ask
 
 def test_redirect_append_inside_cwd_allows():

@@ -384,7 +384,11 @@ DELETE /api/agent/ssh/sessions/<sid>
   `POST /api/tasks/files {"name": "报告.md", "contentB64": "..."}` →
   `{"path": "E:\\...\\报告.md"}`，把该 path 放进 `paths`；或建任务时直接带
   `attachments: [{name, contentB64}]`（单附件 32MB / 总量 500MB / ≤20 项）；
-- `permission_request` 事件带 `callId` 与 `args`（工具调用的参数原文），
+- `permission_request` 事件带 `callId`、`args`（工具调用的参数原文）与
+  `paths`（Edit/Write 的目标路径）；`paths` 来源是 ACP toolCall 的
+  `content[].path`（实测 `type=diff` 的块带绝对路径）与 `locations[].path`——
+  Kimi 2.5.3 的 Edit 审批 **既没有 rawInput 也没有 locations**，路径只在 diff
+  块里，所以 `policy.allowPaths` 看 `paths` 才能自动放行写文件，不靠人肉批。
   能精确对回是哪个调用在等审批；ACP 不带 toolCallId 时回退最近一次
   tool_call。参数可能晚于 tool_call 才到（R5-9：流式形状下 tool_call 只是
   空壳，参数在 `tool_call_update` 里逐段补）：服务端按 callId 攒下流式

@@ -287,7 +287,8 @@ class FederationTaskClient:
             params = {'toolCall': {'title': event.get('title') or '',
                                    'toolCallId': event.get('callId') or '',
                                    'rawInput': event.get('args') or ''},
-                      'options': event.get('options') or []}
+                      'options': event.get('options') or [],
+                      'paths': event.get('paths') or []}
             requestId = event.get('requestId') or ''
             try:
                 optionId = self.on_permission(params, requestId)

@@ -22,7 +22,10 @@ UPDATES = [
     {'sessionUpdate': 'plan', 'entries': [{'status': 'done', 'content': '步骤一'}]},
 ]
 PERMISSION_PARAMS = {
-    'sessionId': 'sess_golden', 'toolCall': {'title': 'Bash'},
+    'sessionId': 'sess_golden',
+    'toolCall': {'title': 'Edit',
+                 'content': [{'type': 'diff', 'path': 'E:/proj/app/a.py',
+                              'oldText': 'a', 'newText': 'b'}]},
     'options': [{'optionId': OPTION_ID, 'name': 'Approve once',
                  'kind': 'allow_once'},
                 {'optionId': 'reject-1', 'name': 'Reject', 'kind': 'reject_once'}],
@@ -185,16 +188,20 @@ def test_permission_parity(patch_popen):
     session.start()
     session.enqueuePrompt('需要权限的事')
     option = None
+    permEvent = None
     deadline = time.time() + 15
     while time.time() < deadline and option is None:
         for event in session.ring.since(0):
             if event['type'] == 'permission_request':
+                permEvent = event
                 for opt in event['options']:
                     if opt['kind'] == 'allow_once':
                         option = opt['optionId']
         if option is None:
             time.sleep(0.2)
     assert option == OPTION_ID
+    # 目标路径从 content[].diff.path 带出（rawInput/locations 实测都没有）
+    assert permEvent['paths'] == ['E:/proj/app/a.py']
     assert session.submitDecision(PERM_REQ_ID, option)
     assert _waitTurnEnd(session)
     session.stop()

@@ -19,7 +19,9 @@
     3. 只读工具（kind=read 或名称白名单）→ allow；
     4. execute：剔除引号后按两侧带空白的 && || | ; 与换行拆段，每段都命中
        任一 allowCommands → allow；
-    5. 写文件工具（edit/delete）的路径全部落在 allowPaths 下 → allow；
+    5. 写文件工具（edit/delete）的路径（审批请求带出的 paths——Edit/Write 的
+       diff 块实测只有 path、args 里没有 + 参数里的路径）全部落在 allowPaths
+       下 → allow；
     6. 其余按 default（ask/allow/deny）。
 
 启发式边界（文档已声明）：引号剥离不做转义嵌套；命令重定向写（`echo x > f`）
@@ -160,6 +162,37 @@ def _pathsInArgs(args):
             yield m.group(0)
 
 
+def permissionPaths(params):
+    """审批请求里可判定的文件路径（Edit/Write 用）。
+
+    来源（2026-11-13 实测 kimi 2.5.3）：request_permission.toolCall 没有
+    rawInput / locations，Edit 的目标路径在 content[] 的 diff 块
+    `{"type":"diff","path":"E:/.../x.py",...}`；ACP 规范的 locations[].path
+    也收下。节点侧已抽好的 `paths` 优先合并。去重保序。
+    """
+    paths = []
+
+    def add(value):
+        if isinstance(value, str):
+            text = value.strip()
+            if text and text not in paths:
+                paths.append(text)
+
+    if not isinstance(params, dict):
+        return paths
+    for value in params.get('paths') or []:
+        add(value)
+    tool = params.get('toolCall') or {}
+    if isinstance(tool, dict):
+        for block in tool.get('content') or []:
+            if isinstance(block, dict):
+                add(block.get('path'))
+        for loc in tool.get('locations') or []:
+            if isinstance(loc, dict):
+                add(loc.get('path'))
+    return paths
+
+
 def _commandText(args):
     if isinstance(args, dict):
         return str(args.get('command') or '')
@@ -271,13 +304,18 @@ def _wantsBackground(args):
     return False
 
 
-def evaluate(policy, kind='', name='', args=None, cwd=None):
+def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
     """按 policy 判定一次工具调用。
+
+    paths：审批请求里显式给出的目标路径（Edit/Write 的 diff/locations，
+    见 permissionPaths）——真实 Kimi 的 args 里没有 path，只看 args 会让
+    allowPaths 永远匹配不上。
 
     返回 (decision, rule)：decision ∈ allow/ask/deny；rule 供 auto_approved/
     auto_denied 事件与审计追溯。ask 永远是安全侧——拿不到参数、解析失败、
     命中 deny 都导向 ask。
     """
+    explicitPaths = [str(p).strip() for p in (paths or []) if str(p).strip()]
     # 后台执行（R5-7）：allowBackground 缺省 false 时直接拒绝，不产生审批
     if not policy.get('allowBackground') and _wantsBackground(args):
         return 'deny', 'background'
@@ -334,7 +372,7 @@ def evaluate(policy, kind='', name='', args=None, cwd=None):
     else:
         # 非命令工具（Read/Edit/Grep 等）：路径参数命中敏感文件同样 ask
         argsText = args if isinstance(args, str) \
-            else ' '.join(_pathsInArgs(args))
+            else ' '.join(list(_pathsInArgs(args)) + explicitPaths)
         if argsText and any(r.search(argsText) for r in SENSITIVE_FILE_RE):
             return 'ask', 'deny:sensitive-file'
 
@@ -346,8 +384,8 @@ def evaluate(policy, kind='', name='', args=None, cwd=None):
             return 'allow', 'allowCommands'
 
     if kind in WRITE_KINDS or WRITE_NAMES.match(name or ''):
-        paths = list(_pathsInArgs(args))
-        if paths and all(_underAny(p, allowPaths) for p in paths):
+        writePaths = explicitPaths + list(_pathsInArgs(args))
+        if writePaths and all(_underAny(p, allowPaths) for p in writePaths):
             return 'allow', 'allowPaths'
 
     return default, 'default'

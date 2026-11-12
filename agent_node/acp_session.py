@@ -9,6 +9,10 @@ import re
 import subprocess
 import threading
 import time
+try:
+    from permission_paths import permissionPaths      # 脚本方式启动（node_api）
+except ModuleNotFoundError:
+    from agent_node.permission_paths import permissionPaths   # 作为包导入（测试）
 
 PROTOCOL_VERSION = 1
 MAX_EVENTS = 5000
@@ -19,7 +23,6 @@ IDLE_KILL_SECONDS = 45 * 60       # 空闲进程回收；会话可 resume，不�
 CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 KIMI_CONFIG_PATH = os.path.join(os.path.expanduser('~'), '.kimi-code',
                                 'config.toml')
-
 
 def discoverModels(configPath=None):
     """从 kimi CLI 的 config.toml 枚举可选模型（反馈 §7.2 自动发现）。
@@ -37,7 +40,6 @@ def discoverModels(configPath=None):
     raw = data.get('models')
     models = sorted(str(k) for k in raw.keys()) if isinstance(raw, dict) else []
     return {'models': models, 'default': str(data.get('default_model') or '')}
-
 
 def nowMs():
     return int(time.time() * 1000)
@@ -95,7 +97,6 @@ def listKimiSessions(kimi_bin, cwd=None, limit=100):
                       'updatedAt': entry.get('updatedAt') or 0})
     items.sort(key=lambda x: -(x['updatedAt'] or 0))
     return items[:max(1, min(int(limit), 100))]
-
 
 def kimiSessionWorkDir(kimi_bin, kimi_session_id):
     """kimi 存储里指定会话的 workDir；查不到返回 ''。
@@ -171,7 +172,6 @@ class AcpSession:
         self.kimi_session_id = None
         self.replayCount = 0      # session/load 回放的 update 条数（R4-5a）
         self.replayPerms = 0      # 回放中被直接取消的旧审批条数
-        self.kimi_session_id = None
         self.created_at = nowMs()
         self.last_active = nowMs()
         self.running = False
@@ -267,7 +267,7 @@ class AcpSession:
         self.ring.append({'type': 'permission_request', 'requestId': requestId,
                           'title': toolCall.get('title') or '工具调用',
                           'callId': toolCall.get('toolCallId') or '',
-                          'args': argsText[:2000],
+                          'args': argsText[:2000], 'paths': permissionPaths(toolCall),
                           'options': options})
         decision = {'value': None, 'closed': False, 'event': threading.Event()}
         with self._lock:

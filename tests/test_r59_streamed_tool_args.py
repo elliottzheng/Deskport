@@ -188,6 +188,73 @@ def test_permission_rawinput_not_shadowed_by_empty_call_record(env):
     assert 'permission_request' not in [e['type'] for e in task['events']]
 
 
+# 真实 Edit 审批形状（2026-11-13 kimi 2.5.3 探针实测）：toolCall 既没有
+# rawInput 也没有 locations，目标路径只在 content[] 的 diff 块里。
+EDIT_PATH = 'E:/事项/远程/web-platform-dev/modules/tasks_api.py'
+EDIT_TOOL_CALL = {'sessionUpdate': 'tool_call', 'toolCallId': 'call-edit',
+                  'title': 'Edit', 'kind': 'edit', 'status': 'pending',
+                  'content': _content('')}
+
+
+def editPermParams():
+    return {'sessionId': 'sess_x',
+            'toolCall': {'toolCallId': 'call-edit', 'title': 'Edit',
+                         'content': [{'type': 'diff', 'path': EDIT_PATH,
+                                      'oldText': 'a', 'newText': 'b'},
+                                     {'type': 'content',
+                                      'content': {'type': 'text',
+                                                  'text': 'Requesting approval'}}]},
+            'options': [{'optionId': 'opt-allow', 'name': '允许',
+                         'kind': 'allow_once'},
+                        {'optionId': 'opt-reject', 'name': '拒绝',
+                         'kind': 'reject_once'}]}
+
+
+def test_edit_diff_paths_allow_without_rawinput(env):
+    """Edit 审批只带 diff 路径（args 无 path）时 allowPaths 也能自动放行。"""
+    from modules.tasks_runner import _handleAcpPermission, _handleAcpUpdate
+    tid = create(env, {'allowPaths': ['E:/事项/远程/web-platform-dev'],
+                       'default': 'ask', 'timeoutSec': 1})
+    task, agent = adopt(env, tid)
+    _handleAcpUpdate(task, dict(EDIT_TOOL_CALL))
+    assert _handleAcpPermission(task, agent, editPermParams(), 'req-e1') == 'opt-allow'
+    types = [e['type'] for e in task['events']]
+    assert 'auto_approved' in types and 'permission_request' not in types
+
+
+def test_edit_paths_outside_pending_event_carries_paths(env):
+    """不命中 allowPaths 仍挂起；permission_request 带 paths，args 原样保留。"""
+    from modules.tasks_runner import _handleAcpPermission, _handleAcpUpdate
+    tid = create(env, {'allowPaths': ['E:/事项/other'], 'default': 'ask',
+                       'timeoutSec': 5})
+    task, agent = adopt(env, tid)
+    _handleAcpUpdate(task, dict(EDIT_TOOL_CALL))
+    approveSoon(agent, 'opt-allow')
+    assert _handleAcpPermission(task, agent, editPermParams(), 'req-e2') == 'opt-allow'
+    ev = [e for e in task['events'] if e['type'] == 'permission_request'][0]
+    assert ev['paths'] == [EDIT_PATH]
+    assert ev['args'] == ''      # 没有 rawInput：args 维持原样，不塞路径
+
+
+def test_remote_client_forwards_paths_to_permission_handler(monkeypatch):
+    """node 事件里的 paths 要原样进入 on_permission 的 params（web 侧判定用）。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'nodeRequest', lambda *a, **k: (200, {}))
+    captured = {}
+
+    def onPerm(params, requestId):
+        captured.update(params)
+        return None
+
+    client = nodesMod.RemoteAcpClient(cwd='.', on_permission=onPerm, node='x')
+    client._node = lambda: {}
+    client._handleEvent({'type': 'permission_request', 'requestId': 'r1',
+                         'title': 'Edit', 'callId': 'c1', 'args': '',
+                         'paths': ['E:/x/a.py'],
+                         'options': [{'optionId': 'o', 'kind': 'allow_once'}]})
+    assert captured['paths'] == ['E:/x/a.py']
+
+
 # ---------------------------------------------------------------- 脱敏
 
 def test_streamed_args_redacted_before_event_write(env):

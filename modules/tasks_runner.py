@@ -240,7 +240,6 @@ def _knownToolCall(task, callId):
         return any(e.get('type') == 'tool' and e.get('callId') == callId
                    for e in task.get('events') or [])
 
-
 def _handleAcpPermission(task, agent, params, requestId):
     """把 ACP 的授权请求推到任务卡，等用户在前端点允许/拒绝。
 
@@ -308,6 +307,7 @@ def _handleAcpPermission(task, agent, params, requestId):
     # 审批事件自带被审批调用的参数（对象优先），name=工具名（反馈 §1）
     argsForEvent = rawInput if isinstance(rawInput, (dict, list)) \
         else str(rawInput or '')
+    paths = task_policy.permissionPaths(params)
     options = []
     for opt in params.get('options') or []:
         options.append({'optionId': opt.get('optionId') or '',
@@ -323,7 +323,7 @@ def _handleAcpPermission(task, agent, params, requestId):
         kind = tool.get('kind') or ''
         try:
             decision, rule = task_policy.evaluate(policy, kind, title, rawInput,
-                                                  cwd=task.get('workspace') or '')
+                                                  cwd=task.get('workspace') or '', paths=paths)
         except Exception:
             decision, rule = 'ask', 'policy-error'
         if decision == 'allow':
@@ -350,7 +350,7 @@ def _handleAcpPermission(task, agent, params, requestId):
     with store.repo.lock:
         agent['perm'] = {'requestId': str(requestId), 'seq': 0,
                          'title': title, 'options': options,
-                         'callId': callId, 'args': argsForEvent}
+                         'callId': callId, 'args': argsForEvent, 'paths': paths}
         agent['permDecision'] = decision
         agent['permEvent'] = threading.Event()
         task['pendingPermission'] = str(requestId)
@@ -360,7 +360,7 @@ def _handleAcpPermission(task, agent, params, requestId):
         store.repo.evCond.notify_all()
     ev = store.repo.append_event(task, 'permission_request', requestId=str(requestId),
                       text='等待你授权：' + title, name=title, options=options,
-                      callId=callId, args=argsForEvent)
+                      callId=callId, args=argsForEvent, paths=paths)
     with store.repo.lock:
         if agent.get('perm'):
             agent['perm']['seq'] = ev.get('seq')
