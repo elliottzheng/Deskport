@@ -49,6 +49,7 @@ class TaskSummary(TypedDict):
     policy: dict
     node: str
     remoteCwd: str
+    workline: dict
     resume: bool
     canContinue: bool
     canResume: bool

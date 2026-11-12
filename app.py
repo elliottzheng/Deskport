@@ -39,6 +39,7 @@ from modules import agent_upload as agentUploadModule  # noqa: E402
 from modules import device_auth as deviceAuthModule  # noqa: E402  路由注册
 from modules import agent_nodes as agentNodesModule  # noqa: E402
 from modules import tasks_federation as tasksFederationModule  # noqa: E402  路由注册
+from modules import worklines_api as worklinesModule  # noqa: E402  路由注册
 from modules import external_proxy as externalProxyModule  # noqa: E402
 from modules import federation as federationModule  # noqa: E402
 from modules import files_federation as filesFederationModule  # noqa: E402
@@ -209,11 +210,11 @@ def gzipText(resp):
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      pluginsModule, agentApiModule, agentNodesModule,
-                     tasksFederationModule)
+                     tasksFederationModule, worklinesModule)
 # agent_sessions / agent_sftp / agent_upload 与 agent_api 共用同一蓝图对象：
 # 上面的 import 已把路由挂到该蓝图，随 agentApiModule 一次注册，无需重复登记。
 REGISTER_MODULES = (systemModule, metaModule, tasksModule,
-                    filesFederationModule)
+                    worklinesModule, filesFederationModule)
 
 
 def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):

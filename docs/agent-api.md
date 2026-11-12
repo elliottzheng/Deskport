@@ -349,6 +349,42 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 - 实现：服务端条件变量驱动（Flask threaded 模式，每个等待占一个工作线程，
   无忙等）；SSE 与轮询端点保留作备用。
 
+## 工作线（workline，R5-1a）
+
+工作线 ≠ 会话：会话可以换，接力棒不能丢。中枢保存一份 markdown 接力棒，
+新任务自动带上它；执行方每轮把更新写回工作目录的 `WORKLINE.md`。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/worklines | 建线 `{id?, title, doc?, policy?, engine?, node?, cwd?, repo?, branch?, defaults?, autoRotate?, contextWarn?}` |
+| GET | /api/worklines | 列表（含 `currentTask`/`currentStatus`/`context`/`nextAction`） |
+| GET | /api/worklines/<id> | 详情：`doc`（接力棒全文）、`rev`、`taskList`、`policy`、`nextAction` |
+| PUT | /api/worklines/<id> | 改 `doc`/`title`/`policy`/`defaults`；带 `baseRev` 做乐观锁，过期 409 |
+| POST | /api/worklines/<id>/tasks | 在工作线上派活：`{prompt, mode?, wait?}`，服务端自动路由 |
+| POST | /api/worklines/<id>/rotate | 换新会话接棒（新任务带接力棒，旧任务 close） |
+| DELETE | /api/worklines/<id> | 删线（当前任务在跑时 409） |
+
+- **注入**：建任务（直接 `POST /api/tasks` 带 `"workline": "<id>"` 也行）时
+  服务端把接力棒拼进首条消息，位置在平台约束之后、任务描述之前，并附
+  "不要使用后台任务"与 policy 摘要；总长守 4000 字符预算，正文放不下时
+  降级为摘要 + "先读 WORKLINE.md"。完整正文同时写到任务工作区的
+  `WORKLINE.md`（不计入 resultFiles）。
+- **写回**：每轮 prompt 尾部追加约定——本轮结束前把接力棒整篇覆盖写到
+  `WORKLINE.md`，无进展则保持原样。轮末中枢比对 hash 后落库（引擎 acp；
+  远端写回是 R5-1b）；事件流落 `status`「接力棒已更新 rev …」。
+  若主控在轮中改过（`rev` 变了），本轮写回跳过、不覆盖。
+- **上下文**：任务详情 `context.used/max` 超过线阈值（默认 75%，可
+  `contextWarn` 覆盖）时落 `status` 事件，工作线详情 `nextAction=rotate`。
+  **默认不自动轮换**：轮中切会丢半截工作，自动开新任务也耗配额；由主控
+  一条 `rotate` 决断。
+- **路由**：`POST /api/worklines/<id>/tasks`——当前任务 waiting/paused/failed
+  且可续 → `routed=message`；running/queued → 入持久化队列 `routed=queued`；
+  已结束或无会话 → 新建带接力棒任务 `routed=new`。返回 `taskId`。
+- **边界**：联邦执行点暂不支持工作线（对端 4000 上限会吃掉接力棒，400）；
+  engine=remote 任务能注入（内联在首条消息里），但不做轮末写回。
+- 上线验收：`python tools/accept_worklines.py --base <url> --token <令牌>`
+  （真实跑两轮对话 + 一次轮换；写回是否发生默认只 WARN，`--strict` 升级）。
+
 ### 压缩执行方上下文
 
 给任务发一条 `/compact` 消息（POST /api/tasks/<id>/message {"text": "/compact"}）

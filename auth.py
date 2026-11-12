@@ -140,14 +140,15 @@ def register(app):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
-        if path.startswith('/api/agent/') or path.startswith('/api/tasks'):
+        if path.startswith('/api/agent/') or path.startswith('/api/tasks') \
+                or path.startswith('/api/worklines'):
             # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行。
-            # /api/tasks 放行后外部智能体可建任务/收事件/回权限（操控本机 Kimi）
+            # /api/tasks、/api/worklines 放行后外部智能体可建任务/收事件/回权限
             from modules import agent_api as agentModule
             agent = agentModule.agentFromRequest()
             if agent is not None:
-                if path.startswith('/api/tasks'):
-                    # /api/tasks* 没有逐端点守卫, 在入口统一要求全权 scope
+                if path.startswith('/api/tasks') or path.startswith('/api/worklines'):
+                    # 这两组前缀没有逐端点守卫, 在入口统一要求全权 scope
                     # （受限令牌如手机上传 scope 在这里 403, 不进任务端点）
                     denied = agentModule.scopeDenied(agent, agentModule.SCOPE_FULL)
                     if denied is not None:

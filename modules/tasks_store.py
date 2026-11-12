@@ -254,6 +254,7 @@ class TaskRepository:
             'modelEffective': task.get('modelEffective') or '',
             'kimiSessionId': task.get('kimiSessionId') or '',
             'kimiSessionFork': bool(task.get('kimiSessionFork')),
+            'workline': (task.get('workline') or {}).get('id') or '',
             'createdAt': task.get('createdAt', 0), 'endedAt': task.get('endedAt', 0),
             'error': task.get('error', ''),
             'lastText': lastText[:200], 'lastTextTruncated': len(lastText) > 200,
@@ -282,6 +283,7 @@ class TaskRepository:
             'kimiSessionFork': bool(task.get('kimiSessionFork')),
             'node': task.get('node') or '',
             'remoteCwd': remoteCwd,
+            'workline': task.get('workline') or {},
             'resume': bool(task.get('resume')),
             'canContinue': task_state.canContinue(task),
             'canResume': task_state.canResume(task),
@@ -389,8 +391,11 @@ def _collectSources(paths, workspace):
     return manifest
 
 
-def _promptFor(task, manifest):
-    """只补充 Kimi 不可能自己知道的信息：输入副本清单与写入边界。"""
+def _promptFor(task, manifest, block=''):
+    """只补充 Kimi 不可能自己知道的信息：输入副本清单与写入边界。
+
+    block（R5-1）：工作线接力棒段落，插在平台约束之后、任务描述之前。
+    """
     lines = []
     if manifest:
         lines.append('输入文件副本（只读）：')
@@ -400,6 +405,9 @@ def _promptFor(task, manifest):
     lines.append('产出放当前工作目录；工作目录外只读不写。')
     lines.append('关键信息不足、需要用户拍板时，先停下来用一句话问，不要猜。')
     lines.append('')
+    if block:
+        lines.append(block)
+        lines.append('')
     lines.append(task['prompt'])
     return '\n'.join(lines)
 
@@ -410,6 +418,9 @@ def _scanResults(workspace):
         dirs[:] = [d for d in dirs if not d.startswith('.') and d != 'inputs']
         for name in files:
             if name.startswith('.'):
+                continue
+            if name == 'WORKLINE.md':
+                # 工作线接力棒副本（R5-1）：是执行方的读写目标，不是产出
                 continue
             full = os.path.join(root, name)
             try:
