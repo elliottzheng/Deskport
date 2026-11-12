@@ -601,5 +601,5 @@ if __name__ == "__main__":
                 print(f"{'d' if e.dir else '-'} {e.size:>10} {e.name}")
         elif a.cmd == "cat":
             sys.stdout.flush(); sys.stdout.buffer.write(h.read(a.path))
-    except (DeskportError, ValueError) as e:
+    except (DeskportError, ValueError, OSError, http.client.HTTPException) as e:
         print(f"deskport: {e}", file=sys.stderr); sys.exit(2)

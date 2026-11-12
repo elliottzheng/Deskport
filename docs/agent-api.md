@@ -421,23 +421,37 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 协作原则）。外部智能体一次自举拿到整包：
 
 ```text
-GET /api/agent/skills                     → {skills: [{name, size, mtime, files: [...]}]}
+GET /api/agent/skills                     → {skills: [{name, size, mtime, files, pack}]}
 GET /api/agent/skills/<name>              → {name, content}                  SKILL.md 原文
 GET /api/agent/skills/<name>/<file>       → {name, file, content, sha256}
 GET /api/agent/skills/<name>/<file>?raw=1 → text/plain（给 curl -o 直接落盘）
+GET /api/agent/skills/<name>/pack.zip     → application/zip：整包（手册 + 附件 + 现成配置）
 ```
 
+- **整包是主推**：zip 里是 `<name>/SKILL.md`、各附件，外加一份按本次请求地址生成的
+  `<name>/.deskport.json`（`url` = 下载用的地址，`host` 缺省 `local`）——**令牌不进包**，
+  由人单独交给智能体，所以「一条链接 + 一个令牌」就能起跑；
 - 附件白名单 `.md` / `.py` / `.json` / `.txt`，单个 ≤ 2 MiB；名称正则挡 `..`、子目录、
   隐藏文件（400）；不存在 404 带 `available`；
 - `SKILL.md` 只走 `/api/agent/skills/<name>`（当附件取会 404）；
-- 响应头 `X-Skill-File` / `X-Skill-Sha256`，sha256 按字节算，与下载文件一致。
+- 响应头 `X-Skill-File` / `X-Skill-Sha256`（按字节算，与下载文件一致）；整包另有
+  `Content-Disposition: attachment; filename="<name>-skill.zip"` 与 `X-Skill-Files`（文件数）。
 
-新智能体入网（有 token 即可自举）：
+新智能体入网（有 token 即可自举，整包最省事）：
 
 ```bash
-D=<中枢地址>; T=<令牌>; S=~/.kimi-code/skills/deskport; mkdir -p "$S"
-URL="$D/api/agent/skills/deskport"
-curl -s -H "X-Agent-Token: $T" "$URL" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
+D=<中枢地址>; T=<令牌>
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip
+unzip -oq pack.zip -d ~/.kimi-code/skills/        # → ~/.kimi-code/skills/deskport/
+export DESKPORT_TOKEN=$T
+python ~/.kimi-code/skills/deskport/deskport.py hosts
+```
+
+按文件更新（只换一个文件时）：
+
+```bash
+S=~/.kimi-code/skills/deskport; mkdir -p "$S"
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
 for f in deskport.py driver.py COLLABORATION.md; do
   curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done

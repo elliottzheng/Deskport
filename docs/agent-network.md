@@ -123,12 +123,12 @@
      Windows 用 `start-agentnode.vbs` + watchdog；
   4. 中枢 `config.json` 的 `agentNodes[]` 登记一条（防火墙过滤时填
      `via` 走 SSH 隧道）。
-- **加一个指挥者（智能体）**：分发 token，技能文档由中枢 URL 自举
-  （`GET /api/agent/skills/deskport` → 写入智能体技能目录）。它立刻获得
-  三级能力：快命令（exec）、持久终端（bash 会话）、任务派活（指挥其他
-  智能体）；Deskport 升级后重拉即同步最新版。要让它写代码少绕路，再把
-  `.agents/skills/deskport/deskport.py` 放进它的工作目录（单文件零依赖，
-  配 `.agent-token` 与 `.deskport.json` 即可，见 [agent-kit.md](agent-kit.md)）。
+- **加一个指挥者（智能体）**：分发 token，再把技能包整包链接给它——
+  `GET /api/agent/skills/deskport/pack.zip`（带令牌）解开就是一个技能目录，
+  里面的 `.deskport.json` 已填好地址；也可以单个文件自举（`GET /api/agent/skills`）。
+  它立刻获得三级能力：快命令（exec）、持久终端（bash 会话）、任务派活（指挥其他
+  智能体），外加现成的客户端与驱动（[agent-kit.md](agent-kit.md)）；Deskport 升级后
+  重拉即同步最新版。
 
 ## 八、协议实现位置索引
 
@@ -193,7 +193,8 @@
   `connect()` 一步拿到 `Host`，`Task` / `Workline` 把任务与接力棒包成对象。
 - **手册 + 规矩**：`SKILL.md`（接口速查）与
   [`COLLABORATION.md`](../.agents/skills/deskport/COLLABORATION.md)（主控与执行方怎么
-  分工、派活、验收），都走 `GET /api/agent/skills/deskport` 自举（§七）。
+  分工、派活、验收），连同下面两样一起用整包自举：
+  `GET /api/agent/skills/deskport/pack.zip`（带令牌，解开即用，配置按下载地址生成）。
 - **边界文件**：项目自带一份 `driver.json`（可写根目录、危险命令正则、预授权档位），
   [`driver.py`](../.agents/skills/deskport/driver.py) 加载后在客户端复判命令；落在边界内
   自动放行，越界才停下来问人（原则 4 的客户端一半）。

@@ -26,16 +26,26 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 | `driver.py` | 驱动模板：别名目录、边界判定、审批自动放行、409 排队；边界写在 `driver.json` |
 | `COLLABORATION.md` | 协作原则：主控与执行方怎么分工、派活、验收（真去指挥别的智能体前读一遍） |
 
-自举（`?raw=1` 直接落盘，响应头 `X-Skill-Sha256` 可校验）：
+自举：**一条链接 + 一个令牌就够了**——整包是个 zip，解开就是技能目录，
+里面的 `.deskport.json` 已经填好本次下载用的地址（令牌单独给，不在包里）：
 
 ```bash
-D=<中枢地址>; T=<令牌>; S=~/.kimi-code/skills/deskport; mkdir -p "$S"
-URL="$D/api/agent/skills/deskport"
-curl -s -H "X-Agent-Token: $T" "$URL" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
+D=<中枢地址>; T=<令牌>
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip
+unzip -oq pack.zip -d ~/.kimi-code/skills/        # → ~/.kimi-code/skills/deskport/
+export DESKPORT_TOKEN=$T                          # 或写进 deskport/.agent-token
+python ~/.kimi-code/skills/deskport/deskport.py hosts   # 验一下
+```
+
+不想解压整包时，也可以单个文件拉（`?raw=1` 直接落盘，响应头 `X-Skill-Sha256` 校验）：
+
+```bash
+S=~/.kimi-code/skills/deskport; mkdir -p "$S"
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
 for f in deskport.py driver.py COLLABORATION.md; do
   curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
-# 清单（含 files / sha256）：GET /api/agent/skills
+# 清单（含 files / pack / sha256）：GET /api/agent/skills
 ```
 
 客户端与驱动只用标准库（Python ≥ 3.9）。驱动默认读自己目录的 `driver.json`，

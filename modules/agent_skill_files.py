@@ -6,13 +6,20 @@
 
     GET /api/agent/skills/<技能>/<文件>          {name, file, content, sha256}
     GET /api/agent/skills/<技能>/<文件>?raw=1    纯文本，给 `curl -o` 直接落盘
+    GET /api/agent/skills/<技能>/pack.zip        整包 zip（含现成的 .deskport.json）
 
 只发 `.agents/skills/<技能>/` 下、扩展名在白名单内的普通文件；名称与文件名都走
 白名单正则，`..`、子目录、隐藏文件一律拒绝（400），不存在 404 并列出可选项。
+
+整包是给「一条链接 + 一个令牌」准备的：解开就是一个技能目录，`.deskport.json`
+按本次请求的地址生成（url/host），令牌单独给（绝不进包）。
 """
 import hashlib
+import io
+import json
 import os
 import re
+import zipfile
 
 from flask import Response, jsonify, request
 
@@ -69,4 +76,48 @@ def agentSkillFileGet(skill, name):
                         'sha256': hashlib.sha256(blob).hexdigest()})
     resp.headers['X-Skill-File'] = name
     resp.headers['X-Skill-Sha256'] = hashlib.sha256(blob).hexdigest()
+    return resp
+
+
+def _packConfig():
+    """整包里附带的 .deskport.json：地址取本次请求，默认执行点 local；**不含令牌**。"""
+    return {
+        '_说明': 'url = 下载这个包用的地址；host = 默认执行点（local 是本机，也可填 SSH '
+                '主机名，见 GET /api/agent/hosts）。令牌放同目录 .agent-token 文件或'
+                '环境变量 DESKPORT_TOKEN，不要写进这个文件。',
+        'url': request.host_url.rstrip('/'),
+        'host': 'local',
+    }
+
+
+@blueprint.route('/api/agent/skills/<skill>/pack.zip')
+def agentSkillPack(skill):
+    """整包下载：解开就是一个技能目录——手册 + 全部附件 + 现成的 .deskport.json。
+
+    给「一条链接 + 一个令牌」用：
+        curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o p.zip
+        unzip -oq p.zip -d ~/.kimi-code/skills/ && export DESKPORT_TOKEN=$T
+    """
+    agent, err = _agentRequired()
+    if agent is None:
+        return err
+    if not _SKILL_RE.match(skill):
+        return jsonify({'error': '名称不合法'}), 400
+    root = os.path.join(_skillsDir(), skill)
+    manual = os.path.join(root, 'SKILL.md')
+    if not os.path.isfile(manual):
+        names = [s for s in (os.listdir(_skillsDir()) if os.path.isdir(_skillsDir()) else [])
+                 if os.path.isfile(os.path.join(_skillsDir(), s, 'SKILL.md'))]
+        return jsonify({'error': '技能不存在', 'available': names}), 404
+    entries = _skillFileEntries(skill)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.write(manual, '%s/SKILL.md' % skill)
+        for entry in entries:
+            z.write(os.path.join(root, entry['name']), '%s/%s' % (skill, entry['name']))
+        z.writestr('%s/.deskport.json' % skill,
+                   json.dumps(_packConfig(), ensure_ascii=False, indent=2) + '\n')
+    resp = Response(buf.getvalue(), mimetype='application/zip')
+    resp.headers['Content-Disposition'] = 'attachment; filename="%s-skill.zip"' % skill
+    resp.headers['X-Skill-Files'] = str(len(entries) + 2)   # 手册 + 附件 + 配置
     return resp

@@ -358,7 +358,8 @@ def agentSkillsList():
                 extras = sorted(f for f in os.listdir(folder)
                                 if f != 'SKILL.md' and os.path.isfile(os.path.join(folder, f)))
                 skills.append({'name': name, 'size': stat.st_size,
-                               'mtime': int(stat.st_mtime), 'files': extras})
+                               'mtime': int(stat.st_mtime), 'files': extras,
+                               'pack': '/api/agent/skills/%s/pack.zip' % name})
     return jsonify({'skills': skills})
 
 

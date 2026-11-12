@@ -58,7 +58,7 @@ Deskport 自带一套「智能体网络」，入口还是同一个网页：
 - **任务卡**：选执行点、模型、审批模式，派一句话；回答、工具调用、权限请求实时落在这一张卡上。`mode=default` 时每个工具调用都停下等人（或指挥智能体）点头，`auto` / `plan` / `yolo` 是不同放行策略；也可以带 `policy` 声明「这些命令/路径默认放行、那些一律拒绝」。
 - **续聊与接手**：一轮结束是 `waiting`，一条消息接着聊，上下文不丢；电脑上已有的 Kimi 会话也能接管（默认先 fork 副本，不打扰你开着的终端）。
 - **工作线**：一条跨越多个会话的接力棒（`WORKLINE.md`），新任务自动带上、轮末写回、按版本号防覆盖；上下文将满时会提示换新会话接棒。
-- **外部智能体**：`GET /api/agent/skills` 一步自举整个技能包——手册（快命令、SFTP、持久终端、派活四件套）、单文件 Python 客户端、驱动模板、协作原则（[docs/agent-kit.md](docs/agent-kit.md)）。客户端只用标准库，`deskport.connect()` 一行就能在本机或远端执行、派活、管工作线。令牌可限定 scope（例如只有上传权限的设备令牌）。
+- **外部智能体**：**一条链接 + 一个令牌**就能起跑——`GET /api/agent/skills/deskport/pack.zip` 下载整包（手册、协作原则、单文件 Python 客户端、驱动模板，配置已按下载地址生成，令牌不在包里），解开即用。客户端只用标准库，`deskport.connect()` 一行就能在本机或远端执行、派活、管工作线。令牌可限定 scope（例如只有上传权限的设备令牌），见 [docs/agent-kit.md](docs/agent-kit.md)。
 
 接口契约见 [docs/agent-api.md](docs/agent-api.md)，角色、通信通道、韧性设计与设计原则见 [docs/agent-network.md](docs/agent-network.md)，技能包与客户端用法见 [docs/agent-kit.md](docs/agent-kit.md)。
 

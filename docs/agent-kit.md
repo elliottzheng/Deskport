@@ -11,21 +11,36 @@
 | `driver.py` | 主控 | 驱动模板：别名目录、边界判定、自动放行、409 排队 |
 
 客户端与驱动只用标准库（Python ≥ 3.9），拷一个文件到任何机器就能跑，不需要 pip。
+整包下载时还会多一份生成的 `.deskport.json`（`url` + `host`，不含令牌）。
 
-## 自举（装到本地技能目录）
+## 自举（一条链接 + 一个令牌）
+
+整包下载：`GET /api/agent/skills/deskport/pack.zip`（带 `X-Agent-Token`）。解开就是技能
+目录，包里的 `.deskport.json` 已按本次下载的地址填好 `url`，`host` 缺省 `local`；
+**令牌不进包**，由人单独交给智能体。
 
 ```bash
-D=<中枢地址>; T=<令牌>; S=~/.kimi-code/skills/deskport; mkdir -p "$S"
+D=<中枢地址>; T=<令牌>
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip
+unzip -oq pack.zip -d ~/.kimi-code/skills/        # → ~/.kimi-code/skills/deskport/
+export DESKPORT_TOKEN=$T                          # 或写进 deskport/.agent-token
+python ~/.kimi-code/skills/deskport/deskport.py hosts
+```
+
+按文件拉（可选，便于只更新一个文件；`?raw=1` 直接落盘，`X-Skill-Sha256` 校验）：
+
+```bash
+S=~/.kimi-code/skills/deskport; mkdir -p "$S"
 curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
 for f in deskport.py driver.py COLLABORATION.md; do
   curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
-# 清单与版本：GET /api/agent/skills（含 files / sha256），响应头 X-Skill-Sha256
+# 清单与版本：GET /api/agent/skills（含 files / pack / sha256）
 ```
 
-客户端还需要两个文件（不随包分发，由部署者给）：`.agent-token`（令牌明文）和
-`.deskport.json`（`{"url": "...", "host": "...", "insecure": false, "cafile": "...", "pin": true}`）。
+换执行点或地址：改包里的 `.deskport.json`（`host` 可填 SSH 主机名，见
+`GET /api/agent/hosts`；远程用 `insecure`/`cafile`/`pin` 处理自签证书）。
 配置从低到高：脚本同目录 `.deskport.json` → `DESKPORT_URL` / `DESKPORT_HOST` /
 `DESKPORT_INSECURE` → 函数参数；令牌：参数 `token` → `DESKPORT_TOKEN` → 同目录 `.agent-token`。
 
