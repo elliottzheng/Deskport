@@ -5,6 +5,8 @@
     请求头 X-Agent-Token 或 Authorization: Bearer <token>，
     与 config.json agentTokens[].tokenHash（SHA-256）比对；未命中一律 401。
     浏览器 Cookie 登录态同样放行（供面板 UI 未来复用）。
+    令牌 scope: agentTokens[].scopes 白名单；没写 = 全权（向后兼容）。
+    现有端点要求 full，手机上传要求 upload；越权 403 {"error","need"}。
 
 端点:
     GET  /api/agent/hosts          主机列表（只含 id/name/host/port，无凭据）
@@ -14,6 +16,7 @@
     modules/agent_sftp.py          SFTP list/get/put（错误码、分块、原子写）
     modules/agent_sessions.py      持久会话（bash 常驻通道）
     modules/agent_local.py         Deskport 本机作为内置主机（全等价）
+    modules/agent_upload.py        手机分享上传（scope=upload）
 
 审计: 每次调用写 events（agent.exec / agent.sftp.*）。
 安全: 插件安全模型同档——外部智能体 = 可信代码；危险命令审批是后续增强项。
@@ -42,8 +45,34 @@ blueprint = Blueprint('agent', __name__)
 
 # ---------------------------------------------------------------- 令牌
 
+SCOPE_FULL = 'full'
+SCOPE_UPLOAD = 'upload'
+
+
 def tokenHash(token):
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def agentHasScope(agent, scope):
+    """令牌是否持有 scope。没写 scopes（或为空列表）= 全权，向后兼容；
+    显式 'full' 同样视为全权；写了 scopes 则按白名单精确匹配。"""
+    scopes = agent.get('scopes')
+    if not isinstance(scopes, list) or not scopes:
+        return True
+    names = [str(s).strip() for s in scopes if str(s).strip()]
+    return scope in names or SCOPE_FULL in names
+
+
+def scopeDenied(agent, scope):
+    """scope 不满足时返回 403 应答；满足返回 None。
+
+    供无逐端点守卫的入口（authGuard 的 /api/tasks*）复用；越权尝试写审计，
+    记令牌名与所需 scope。"""
+    if agentHasScope(agent, scope):
+        return None
+    events.log('agent.scope', agent.get('name') or '', 'deny',
+               'need=%s' % scope, request.remote_addr)
+    return jsonify({'error': '令牌无此权限', 'need': scope}), 403
 
 
 def _tokenFromRequest():
@@ -68,11 +97,18 @@ def agentFromRequest():
     return None
 
 
-def _agentRequired():
-    """守卫: 无有效令牌返回 401；有则返回令牌条目。"""
+def _agentRequired(scope=SCOPE_FULL):
+    """守卫: 无有效令牌 401；令牌缺所需 scope 403；通过返回令牌条目。
+
+    缺省要求 full——现有 /api/agent/* 端点（exec/sftp/sessions/skills）
+    不改调用即收紧到全权令牌；新端点显式传自己的 scope（如上传=upload）。
+    """
     agent = agentFromRequest()
     if agent is None:
         return None, (jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401)
+    denied = scopeDenied(agent, scope)
+    if denied is not None:
+        return None, denied
     return agent, None
 
 

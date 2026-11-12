@@ -145,6 +145,12 @@ def register(app):
             from modules import agent_api as agentModule
             agent = agentModule.agentFromRequest()
             if agent is not None:
+                if path.startswith('/api/tasks'):
+                    # /api/tasks* 没有逐端点守卫, 在入口统一要求全权 scope
+                    # （受限令牌如手机上传 scope 在这里 403, 不进任务端点）
+                    denied = agentModule.scopeDenied(agent, agentModule.SCOPE_FULL)
+                    if denied is not None:
+                        return denied
                 g.agentTokenName = agent.get('name') or ''
                 return None
             if path.startswith('/api/agent/'):

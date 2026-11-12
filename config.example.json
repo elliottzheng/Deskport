@@ -15,5 +15,7 @@
   "sshSessiondUrl": "",
   "brandName": "Deskport",
   "externalApps": {},
-  "agentTokens": []
+  "agentTokens": [],
+  "phoneUploadDir": "",
+  "phoneUploadMaxMB": 2048
 }

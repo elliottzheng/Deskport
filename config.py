@@ -328,6 +328,27 @@ def getTaskMaxRunning():
     return value
 
 
+def getPhoneUploadDir():
+    r"""手机分享上传的落盘根目录; 缺失 = <fallbackDir>\手机上传。"""
+    path = load().get('phoneUploadDir')
+    if isinstance(path, str) and path.strip():
+        return path
+    fallback = getFallbackDir()
+    return os.path.join(fallback, '手机上传') if fallback else ''
+
+
+def getPhoneUploadMaxMB():
+    r"""手机上传单文件上限(MB); 缺省 2048, 非法/非正值回退缺省。"""
+    value = load().get('phoneUploadMaxMB')
+    if value is None:
+        return 2048
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 2048
+    return value if value > 0 else 2048
+
+
 def isInboxEnabled():
     r"""收件箱扫描开关；缺省关闭，需在设置页显式开启。"""
     return bool(load().get('inboxEnabled'))
@@ -352,13 +373,17 @@ def defaultInboxDirs():
 
 
 def getInboxDirs():
-    r"""收件箱观察目录。关闭时返回空列表；开启且未配置时用软件默认目录。"""
+    r"""收件箱观察目录。关闭时返回空列表；开启且未配置时用软件默认目录。
+    手机上传目录自动并入——手机分享的文件直接进收件箱（评估 §5）。"""
     if not isInboxEnabled():
         return []
     dirs = _dirList(load().get('inboxDirs'))
-    if dirs:
-        return [p for p in dirs if os.path.isdir(p)]
-    return defaultInboxDirs()
+    if not dirs:
+        dirs = defaultInboxDirs()
+    phone = getPhoneUploadDir()
+    if phone and os.path.isdir(phone) and phone not in dirs:
+        dirs.append(phone)
+    return [p for p in dirs if os.path.isdir(p)]
 
 
 def setInboxSettings(enabled, dirs):
