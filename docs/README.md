@@ -21,7 +21,7 @@
 |---|---|
 | [agent-api.md](agent-api.md) | 智能体 API 契约：令牌与 scope、设备登录、快命令/SFTP/持久会话、任务 API、工作线、技能分发、审计 |
 | [agent-network.md](agent-network.md) | 智能体网络架构：中枢与执行点、通信通道、任务生命周期、工作线、韧性、信任模型、扩展动作、设计原则与实测协作成本 |
-| [../sdk/README.md](../sdk/README.md) | 外部智能体用的 Python 客户端：配置与令牌解析、对象一览、命令行、接入一个项目的四条约定 |
+| [agent-kit.md](agent-kit.md) | 智能体技能包：手册 + 协作原则 + 客户端 + 驱动、自举命令、`driver.json` 边界、接入约定 |
 | [audit-agent-network.md](audit-agent-network.md) | 智能体网络质量审计：实测缺陷清单与结论 |
 | [lessons-agent-api-feedback.md](lessons-agent-api-feedback.md) | 外部智能体使用反馈沉淀的经验与决策 |
 
@@ -55,6 +55,6 @@
 2. **architecture.md** — 建立整体认识（模块注册表、路由、前端组织）。
 3. **api.md** / **api-files.md** / **api-ssh.md** — 调用接口时查阅。
 4. **terminal-protocol.md** — 修改终端前后端前必读。
-5. **agent-network.md → agent-api.md** — 要给别的智能体发令牌、派活，或改动任务卡/节点/工作线时读这两篇。
+5. **agent-network.md → agent-api.md → agent-kit.md** — 要给别的智能体发令牌、派活、改动任务卡/节点/工作线，或给外部智能体装技能包时读这三篇。
 6. **code-structure.md** — 新增模块或拆分文件前读，注意文件预算与例外登记。
 7. **design-system.md** / **ui-rules.md** — 新增或修改页面前查阅。

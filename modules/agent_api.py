@@ -17,6 +17,7 @@
     modules/agent_sessions.py      持久会话（bash 常驻通道）
     modules/agent_local.py         Deskport 本机作为内置主机（全等价）
     modules/agent_upload.py        手机分享上传（scope=upload）
+    modules/agent_skill_files.py   技能包附件（客户端/驱动/协作原则，同一套自举）
     modules/device_auth.py         设备登录（App 密码换 upload 设备令牌, 自吊销）
 
 审计: 每次调用写 events（agent.exec / agent.sftp.*）。
@@ -353,8 +354,11 @@ def agentSkillsList():
                     stat = os.stat(skillFile)
                 except OSError:
                     continue
+                folder = os.path.dirname(skillFile)
+                extras = sorted(f for f in os.listdir(folder)
+                                if f != 'SKILL.md' and os.path.isfile(os.path.join(folder, f)))
                 skills.append({'name': name, 'size': stat.st_size,
-                               'mtime': int(stat.st_mtime)})
+                               'mtime': int(stat.st_mtime), 'files': extras})
     return jsonify({'skills': skills})
 
 

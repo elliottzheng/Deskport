@@ -61,7 +61,7 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 
 **例外表当前登记 14 个文件**（清单见第七节），上限 = 登记当天行数，此后只能变短。
 未在表内的文件必须直接符合预算；**新文件不允许再登记例外**——唯一例外是「对外分发
-的单文件产物」（`sdk/deskport.py`、`agent_node/acp_session.py` 这类：拷一个文件就要能
+的单文件产物」（`.agents/skills/deskport/deskport.py`、`agent_node/acp_session.py` 这类：拷一个文件就要能
 跑，拆开等于废掉它），登记时必须在第七节写清单文件理由。
 
 2026-11-05：`tools/check_structure.py` 的 `read_lines()` 先 `f.read()` 再迭代同一句柄，行数恒为 0，**预算检查自写成以来从未生效**。修复后一次性暴露 7 个超预算文件，已全部拆完（过程见 `docs/design-review.md`）。这一条值得记住：门禁本身失效时，它报的"干净"没有任何意义。
@@ -148,7 +148,7 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 | 2026-11-12 | `modules/agent_sessions.py`（443） | 文件预算 | 持久 shell 的哨兵/超时/回收协议与端点同处 | 协议部分独立 |
 | 2026-11-12 | `config.py`（516） | 文件预算 | 配置 getter 平铺，每字段一个函数 | 按域拆分 |
 | 2026-11-12 | `agent_node/acp_session.py`（454） | 文件预算 | 远端 node「拷目录即跑」的零依赖单文件约束 | 与部署形态绑定，暂留 |
-| 2026-11-12 | `sdk/deskport.py`（605） | 文件预算 | 发给外部智能体的客户端：单文件、零依赖、可直接当 CLI 跑，拆开就没法「拷一个文件就能用」 | 与分发形态绑定，暂留 |
+| 2026-11-12 | `.agents/skills/deskport/deskport.py`（605） | 文件预算 | 技能包里的客户端：单文件、零依赖、可直接当 CLI 跑，拆开就没法「拷一个文件就能用」 | 与分发形态绑定，暂留 |
 | 2026-11-12 | `agent_node/node_api.py`（417） | 文件预算 | node HTTP 层（路由 + 会话存档 + 探测） | 同上 |
 | 2026-11-12 | `frontend/assets/css/files.css`（522） | CSS 预算 | 文件页样式内聚，按页计 | 拆出移动端部分 |
 | 2026-11-12 | `tests/test_tasks_api.py`（1539）、`tests/test_agent_api.py`（611）、`tests/test_r47_remote_adopt.py`（481） | 文件预算 | 测试按端点聚合，尚未按域拆分 | 随对应模块拆分时同步拆 |
@@ -156,6 +156,6 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 （2026-11-05 因 `read_lines` 空转而暴露的 7 个超预算文件，已全部拆完并移出本表。
 2026-11-12：R4/R5 期间 `tasks_*`、`agent_*` 重新变长且未登记，门禁红了数日、发布因此绕过了
 `deploy.ps1`。按「先认清现状再收敛」重新登记上面 12 行（14 个文件），上限 = 登记当天行数，
-此后只能变短。其中 `sdk/deskport.py` 是新增的对外分发单文件，理由见上一行与第六节。）
+此后只能变短。其中 `.agents/skills/deskport/deskport.py` 是新增的对外分发单文件，理由见上一行与第六节。）
 
 新增例外必须写进本表，否则视为违规。新文件不得登记例外。

@@ -417,21 +417,34 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 
 ## 技能分发（URL 自举）
 
+一个技能就是一个目录：`SKILL.md` 是手册，同目录的其它文件是附件（客户端、驱动、
+协作原则）。外部智能体一次自举拿到整包：
+
 ```text
-GET /api/agent/skills            → {skills: [{name, size, mtime}]}
-GET /api/agent/skills/<name>     → {name, content}
+GET /api/agent/skills                     → {skills: [{name, size, mtime, files: [...]}]}
+GET /api/agent/skills/<name>              → {name, content}                  SKILL.md 原文
+GET /api/agent/skills/<name>/<file>       → {name, file, content, sha256}
+GET /api/agent/skills/<name>/<file>?raw=1 → text/plain（给 curl -o 直接落盘）
 ```
+
+- 附件白名单 `.md` / `.py` / `.json` / `.txt`，单个 ≤ 2 MiB；名称正则挡 `..`、子目录、
+  隐藏文件（400）；不存在 404 带 `available`；
+- `SKILL.md` 只走 `/api/agent/skills/<name>`（当附件取会 404）；
+- 响应头 `X-Skill-File` / `X-Skill-Sha256`，sha256 按字节算，与下载文件一致。
 
 新智能体入网（有 token 即可自举）：
 
 ```bash
-mkdir -p ~/.kimi-code/skills/deskport
-curl -s -H "X-Agent-Token: $TOKEN" http://<中枢>/api/agent/skills/deskport \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" \
-  > ~/.kimi-code/skills/deskport/SKILL.md
+D=<中枢地址>; T=<令牌>; S=~/.kimi-code/skills/deskport; mkdir -p "$S"
+URL="$D/api/agent/skills/deskport"
+curl -s -H "X-Agent-Token: $T" "$URL" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
+for f in deskport.py driver.py COLLABORATION.md; do
+  curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
+done
 ```
 
-Deskport 升级后重新拉取即更新（mtime 检测变更）。
+Deskport 升级后重新拉取即更新（`files` / `sha256` 判断要不要换本地副本）。
+仓库内 `.agents/skills/deskport/` 是源，包内容说明见 `agent-kit.md`。
 
 ## 审计
 
@@ -448,11 +461,15 @@ Deskport 升级后重新拉取即更新（mtime 检测变更）。
   （升级时一并升），新字段直接可用，不为旧版保留别名或降级路径；
 - agent node 需要 Python ≥ 3.11（模型自动发现依赖 tomllib），入口有
   fail-fast 守卫；建议用 uv 跑 3.13；
-- 外部调用方的 Python 客户端就在仓库里：[`sdk/deskport.py`](../sdk/README.md)
-  （仅标准库，单文件），按本 API 契约处理了 NUL 拒发、`after` 增量去重、
-  大文件分块读取等；服务端修复后这些规避仍兼容。`curl` 之外需要写代码时优先用它。
+- 外部调用方的 Python 客户端就在技能包里：
+  [`.agents/skills/deskport/deskport.py`](../.agents/skills/deskport/deskport.py)
+  （仅标准库，单文件；用法见 `agent-kit.md`），按本 API 契约处理了 NUL 拒发、
+  `after` 增量去重、大文件分块读取等；服务端修复后这些规避仍兼容。
+  `curl` 之外需要写代码时优先用它。
 
 ## 技能封装（给智能体用）
 
-仓库内 `.agents/skills/deskport/SKILL.md` 是本 API + 任务 API 的智能体技能
-封装，链入你的 agents 技能目录即可获得全部能力。
+仓库内 `.agents/skills/deskport/` 是本 API + 任务 API 的智能体技能包：
+`SKILL.md`（接口速查）、`COLLABORATION.md`（主控与执行方的协作规矩）、
+`deskport.py`（单文件客户端）、`driver.py`（驱动模板）。整包自举见上一节，
+用法见 `agent-kit.md`。

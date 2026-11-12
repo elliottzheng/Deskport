@@ -16,6 +16,31 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`（远端节点升级后自动上报）
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 
+## 这个包里还有什么（一起拉）
+
+技能包不只有这份手册——同一个目录里还有能直接用的东西：
+
+| 文件 | 用途 |
+|---|---|
+| `deskport.py` | Python 客户端（单文件、零依赖），也能当 CLI：`python deskport.py run "uptime"` |
+| `driver.py` | 驱动模板：别名目录、边界判定、审批自动放行、409 排队；边界写在 `driver.json` |
+| `COLLABORATION.md` | 协作原则：主控与执行方怎么分工、派活、验收（真去指挥别的智能体前读一遍） |
+
+自举（`?raw=1` 直接落盘，响应头 `X-Skill-Sha256` 可校验）：
+
+```bash
+D=<中枢地址>; T=<令牌>; S=~/.kimi-code/skills/deskport; mkdir -p "$S"
+URL="$D/api/agent/skills/deskport"
+curl -s -H "X-Agent-Token: $T" "$URL" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
+for f in deskport.py driver.py COLLABORATION.md; do
+  curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
+done
+# 清单（含 files / sha256）：GET /api/agent/skills
+```
+
+客户端与驱动只用标准库（Python ≥ 3.9）。驱动默认读自己目录的 `driver.json`，
+`DRIVER_CONFIG` 可指到别处，别名目录在脚本目录的 `run/<别名>/` 下。
+
 ## 快命令（无状态，单发）
 
 ```text
@@ -115,5 +140,5 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
 - 名字写错时响应带提示（`availableHosts` / `nodes` / `models`），直接改用，不用再列。
 - 401 = 令牌失效：检查令牌与 `config.json` 的 `agentTokens` 指纹是否匹配。
 - 审计全留痕（agent.exec / agent.sftp.* / agent.session.* / agent.task.*），部署者可在控制台回看。
-- 本技能由中枢分发，可自举更新：`GET /api/agent/skills/deskport` 取最新版覆盖本地 SKILL.md。
+- 本技能由中枢分发，可自举更新：手册与三个附件走同一套 URL（见上节），升级后重拉即同步；`X-Skill-Sha256` 用来判断要不要更新本地副本。
 - 完整接口参考：仓库内 `docs/agent-api.md`；agent node 侧接口见 `agent_node/README.md`。

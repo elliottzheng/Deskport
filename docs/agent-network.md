@@ -2,7 +2,7 @@
 
 > 状态：现行架构。本文描述 Deskport 智能体网络的节点角色、通信通道、
 > 任务生命周期、信任模型与扩展方式。配套文档：`agent-api.md`（接口参考）、
-> `../sdk/README.md`（外部智能体用的 Python 客户端）、
+> `agent-kit.md`（技能包：手册 + 客户端 + 驱动）、
 > `audit-agent-network.md`（质量审计）、`agent_node/README.md`（node 部署）。
 
 一句话概括：**一个中枢（Deskport）、两种执行点（本机/远端 node）、N 个持
@@ -127,8 +127,8 @@
   （`GET /api/agent/skills/deskport` → 写入智能体技能目录）。它立刻获得
   三级能力：快命令（exec）、持久终端（bash 会话）、任务派活（指挥其他
   智能体）；Deskport 升级后重拉即同步最新版。要让它写代码少绕路，再把
-  [`sdk/deskport.py`](../sdk/README.md) 放进它的工作目录（单文件零依赖，
-  配 `.agent-token` 与 `.deskport.json` 即可，见 §十一）。
+  `.agents/skills/deskport/deskport.py` 放进它的工作目录（单文件零依赖，
+  配 `.agent-token` 与 `.deskport.json` 即可，见 [agent-kit.md](agent-kit.md)）。
 
 ## 八、协议实现位置索引
 
@@ -186,16 +186,20 @@
 
 ## 十一、接入套件（让外部智能体真的能干活）
 
-中枢只提供能力，能不能好用取决于客户端侧这四件东西：
+中枢只提供能力，能不能好用取决于客户端侧这四件东西——它们都在技能包
+`.agents/skills/deskport/` 里，一次自举全拿到（说明见 [agent-kit.md](agent-kit.md)）：
 
-- **客户端**：[`sdk/deskport.py`](../sdk/README.md)——单文件、零依赖，`connect()`
-  一步拿到 `Host`，`Task` / `Workline` 把任务与接力棒包成对象。
-- **技能文档自举**：`GET /api/agent/skills/deskport` → 写进智能体的技能目录（§七）。
-- **边界文件**：项目自带一份 `project.json`（可写目录、危险命令正则、预授权档位），
-  薄封装加载后注入命令；落在边界内自动放行，越界才停下来问人（原则 4 的客户端一半）。
+- **客户端**：[`deskport.py`](../.agents/skills/deskport/deskport.py)——单文件、零依赖，
+  `connect()` 一步拿到 `Host`，`Task` / `Workline` 把任务与接力棒包成对象。
+- **手册 + 规矩**：`SKILL.md`（接口速查）与
+  [`COLLABORATION.md`](../.agents/skills/deskport/COLLABORATION.md)（主控与执行方怎么
+  分工、派活、验收），都走 `GET /api/agent/skills/deskport` 自举（§七）。
+- **边界文件**：项目自带一份 `driver.json`（可写根目录、危险命令正则、预授权档位），
+  [`driver.py`](../.agents/skills/deskport/driver.py) 加载后在客户端复判命令；落在边界内
+  自动放行，越界才停下来问人（原则 4 的客户端一半）。
 - **别名目录**：一个任务一个 `run/<别名>/`——`msg.txt` 写规格、`last.txt` 只读一行
-  结论、`state.json` 记住上次 seq；回合中插话（服务端 409）在客户端排队，本轮结束
-  自动补发。这是原则 5 在客户端侧的实现。
+  结论、`state.json` 记住任务号与未送达的消息；回合中插话（服务端 409）在客户端排队，
+  本轮结束自动补发。这是原则 5 在客户端侧的实现。
 
 实测教训：worktree 只隔离**入库的文件**，未入库的 `config.json`、venv、端口都要单独
 考虑（曾把 6 个测试失败误判成并行抢端口）；并行工作线各带自己的
