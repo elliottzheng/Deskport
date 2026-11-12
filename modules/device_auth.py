@@ -236,9 +236,12 @@ def deviceLogin():
     if expect and hmac.compare_digest(expect.encode(), password.encode()):
         token = secrets.token_urlsafe(32)
         createdAt = _issueDevice(devices, name, token, ip)
+        targets = [{'id': t['id'], 'name': t['name']}
+                   for t in config.getUploadTargets()]
         events.log('device.login', name, 'ok', '', ip)
         return jsonify({'token': token, 'name': name,
-                        'scopes': [SCOPE_UPLOAD], 'createdAt': createdAt})
+                        'scopes': [SCOPE_UPLOAD], 'createdAt': createdAt,
+                        'targets': targets})
     if _recordFailure(ip):
         events.log('device.lockout', 'global', 'on',
                    '10 分钟内全局失败≥%d' % GLOBAL_MAX_FAILURES, ip)

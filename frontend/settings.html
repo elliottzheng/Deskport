@@ -95,6 +95,34 @@
     </div>
 
     <div class="card settings-card">
+        <div class="card-title">上传目标</div>
+        <p class="settings-note">手机 App 上传时可选的落盘位置。内置「手机上传」指向手机上传目录，不能删除；自定义目标只会把名称下发给 App，目录本身不出这台电脑。</p>
+
+        <div class="settings-dir">
+            <div class="device-row">
+                <span class="device-name">手机上传（内置）</span>
+                <span class="device-meta" v-if="phonePath">{{ prettyPath(phonePath) }}</span>
+            </div>
+        </div>
+
+        <div class="fed-remote" v-for="(t, i) in uploadTargets" :key="t.id || i">
+            <div class="fed-remote-head">
+                <span class="fed-remote-idx">{{ i + 1 }}</span>
+                <button type="button" class="btn btn-ghost" @click="uploadTargets.splice(i, 1)">删除</button>
+            </div>
+            <input class="input" v-model.trim="t.name" placeholder="名称（App 里显示），如 教研资料" maxlength="24" spellcheck="false">
+            <input class="input" v-model.trim="t.path" placeholder="本机绝对目录，如 D:\资料" spellcheck="false">
+        </div>
+        <button type="button" class="btn btn-secondary settings-submit" @click="addUploadTarget">添加一个目标</button>
+
+        <p v-if="utError" class="load-error" style="margin-top:12px">{{ utError }}</p>
+        <p v-if="utOk" class="settings-ok">{{ utOk }}</p>
+        <button class="btn btn-primary settings-submit" @click="saveUploadTargets" :disabled="utBusy">
+            {{ utBusy ? '保存中…' : '保存上传目标' }}
+        </button>
+    </div>
+
+    <div class="card settings-card">
         <div class="card-title">多机联邦</div>
         <p class="settings-note">把其他电脑上的同款实例加进来：终端页新建会话时可选在那台机器上开，它的会话也会出现在侧栏；它挂载的外部应用（如远窗）也会自动出现在本机导航里——接不接受哪台机器的终端/应用，由下面的开关和白名单决定。本机令牌用于被别的机器添加。</p>
 

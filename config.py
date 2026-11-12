@@ -351,6 +351,48 @@ def getPhoneUploadMaxMB():
     return value if value > 0 else 2048
 
 
+UPLOAD_TARGET_BUILTIN_ID = 'phone'
+
+
+def getUploadTargets():
+    r"""上传目标白名单: 内置 phone（=phoneUploadDir, 不可删）+ config
+    uploadTargets 扩展 [{id, name, path}]。非法/重复条目跳过。path 仅
+    服务端落盘用, 下发给 App 的只有 id 和 name（契约: 路径不出网）。"""
+    out = [{'id': UPLOAD_TARGET_BUILTIN_ID, 'name': '手机上传',
+            'path': getPhoneUploadDir() or ''}]
+    seen = {UPLOAD_TARGET_BUILTIN_ID}
+    raw = load().get('uploadTargets')
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            tid = str(item.get('id') or '').strip()
+            name = str(item.get('name') or '').strip()
+            path = str(item.get('path') or '').strip()
+            if not re.match(r'^[a-z0-9_-]{1,20}$', tid) or tid in seen:
+                continue
+            if not name or len(name) > 24 or \
+                    any(c in name for c in '<>"\'\r\n\t'):
+                continue
+            if not os.path.isabs(path) or len(path) > 500:
+                continue
+            seen.add(tid)
+            out.append({'id': tid, 'name': name, 'path': path})
+    return out
+
+
+def setUploadTargets(targets):
+    """写回自定义上传目标（保留其他配置键）。phone 是内置目标, 不入配置。"""
+    from modules import state
+    cfg = load()
+    cfg['uploadTargets'] = [t for t in targets
+                            if str(t.get('id') or '') != UPLOAD_TARGET_BUILTIN_ID]
+    state.atomicWriteJson(CONFIG_PATH, cfg)
+    with _cacheLock:
+        _cache['mtime'] = None
+        _cache['data'] = None
+
+
 def isInboxEnabled():
     r"""收件箱扫描开关；缺省关闭，需在设置页显式开启。"""
     return bool(load().get('inboxEnabled'))

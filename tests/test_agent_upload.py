@@ -171,12 +171,13 @@ def test_upload_success_multi_files_with_subdir(env):
     root = env.tmp / '手机上传' / '照片' / '2026-11'
     assert (root / '报告.pdf').read_bytes() == b'%PDF-body'
     saved = {e['path']: e for e in body['saved']}
-    entry = saved[str(root / '报告.pdf')]
+    entry = saved['手机上传/照片/2026-11/报告.pdf']   # 目标名/相对路径, 不暴露绝对路径
     assert entry['size'] == len(b'%PDF-body')
     assert entry['sha256'] == _digest(b'%PDF-body')
+    assert str(env.tmp) not in json.dumps(body)
     up = [a for a in env.audit if a['action'] == 'agent.upload']
     assert up and up[-1]['target'] == '手机' and up[-1]['result'] == 'ok'
-    assert 'scope=upload' in up[-1]['detail']
+    assert 'scope=upload' in up[-1]['detail'] and 'target=phone' in up[-1]['detail']
 
 
 def test_upload_duplicate_name_gets_2(env):

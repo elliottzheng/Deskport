@@ -2,6 +2,7 @@
 """应用设置：收件箱扫描开关与目录、多机联邦、登录设备管理。"""
 import os
 import re
+import secrets
 
 from flask import Blueprint, jsonify, request
 
@@ -157,3 +158,62 @@ def revokeDevice():
         return jsonify({'error': '设备不存在'}), 404
     events.log('device.revoke', name, 'ok', '', request.remote_addr)
     return jsonify({'ok': True, 'devices': device_auth.publicDevices()})
+
+
+# ---------------------------------------------------------------- 上传目标
+# 上传目标白名单: 内置 phone(phoneUploadDir) + config uploadTargets。
+# 管理面全量替换自定义目标; id 由服务端生成/保留(编辑不改 id, App 已保存
+# 的 targets 不失效); path 只留在服务端, 下发 App 的接口只给 id+name。
+
+UPLOAD_TARGET_ID_RE = re.compile(r'^[a-z0-9_-]{1,20}$')
+BAD_NAME_CHARS = '<>"\'\r\n\t'
+MAX_UPLOAD_TARGETS = 20   # 含内置 phone
+
+
+@blueprint.route('/api/settings/uploadTargets', methods=['GET'])
+def uploadTargetsSettings():
+    return jsonify({'targets': config.getUploadTargets(),
+                    'builtinId': config.UPLOAD_TARGET_BUILTIN_ID})
+
+
+@blueprint.route('/api/settings/uploadTargets', methods=['POST'])
+def setUploadTargetsSettings():
+    data = request.get_json(force=True, silent=True) or {}
+    raw = data.get('targets')
+    if not isinstance(raw, list):
+        return jsonify({'error': 'targets 必须是数组'}), 400
+    if len(raw) > MAX_UPLOAD_TARGETS - 1:
+        return jsonify({'error': '最多 %d 个自定义目标'
+                                 % (MAX_UPLOAD_TARGETS - 1)}), 400
+    cleaned, seen, names = [], {'phone'}, set()
+    for item in raw:
+        if not isinstance(item, dict):
+            return jsonify({'error': 'targets 条目必须是对象'}), 400
+        tid = str(item.get('id') or '').strip()
+        name = str(item.get('name') or '').strip()
+        path = os.path.abspath(
+            os.path.expanduser(str(item.get('path') or '').strip()))
+        if tid == config.UPLOAD_TARGET_BUILTIN_ID:
+            continue   # 内置目标由服务端提供, 载荷里忽略
+        if tid and (not UPLOAD_TARGET_ID_RE.match(tid) or tid in seen):
+            return jsonify({'error': 'id 需为 1-20 位小写字母/数字/-/_ '
+                                     '且不重复: %r' % tid}), 400
+        if not name or len(name) > 24 or any(c in name for c in BAD_NAME_CHARS):
+            return jsonify({'error': '名称需为 1-24 个字符, 不能含 < > " \' '
+                                     '或换行'}), 400
+        if name in names:
+            return jsonify({'error': '目标名称重复: %s' % name}), 400
+        if not path or len(path) > 500:
+            return jsonify({'error': '目录需为 1-500 个字符的绝对路径'}), 400
+        if not os.path.isdir(path):
+            return jsonify({'error': '目录不存在: %s' % path}), 400
+        if not tid:
+            tid = secrets.token_hex(4)
+        seen.add(tid)
+        names.add(name)
+        cleaned.append({'id': tid, 'name': name, 'path': path})
+    config.setUploadTargets(cleaned)
+    events.log('settings.uploadTargets', '', 'ok',
+               'targets=%d' % len(cleaned), request.remote_addr)
+    return jsonify({'ok': True, 'targets': config.getUploadTargets(),
+                    'builtinId': config.UPLOAD_TARGET_BUILTIN_ID})
