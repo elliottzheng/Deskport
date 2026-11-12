@@ -128,12 +128,16 @@ def setRemotes():
         files = item.get('files', False)
         if not isinstance(files, bool):
             return jsonify({'error': 'files 需为布尔'}), 400
+        filesWrite = item.get('filesWrite', False)
+        if not isinstance(filesWrite, bool):
+            return jsonify({'error': 'filesWrite 需为布尔'}), 400
         apps = item.get('apps', [])
         if not isinstance(apps, list) or len(apps) > 20 or \
                 any(not isinstance(a, str) or not a.strip() or len(a) > 40 for a in apps):
             return jsonify({'error': 'apps 需为 ≤20 个非空短字符串的白名单'}), 400
         cleaned.append({'id': rid, 'name': name, 'base': base, 'token': token,
                         'terminal': terminal, 'files': files,
+                        'filesWrite': filesWrite,
                         'apps': [a.strip() for a in apps]})
         seen.add(rid)
     config.setRemotes(cleaned)

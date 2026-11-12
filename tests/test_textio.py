@@ -49,9 +49,12 @@ def test_read_write_preserves_gbk(client, tmp_path):
     data = resp.get_json()
     assert data['encoding'] == 'gbk'
     assert data['content'] == '第一行\n'
+    assert isinstance(data['mtime'], int)
+    assert len(data['sha256']) == 64
 
     resp = client.post('/api/files/write', json={
-        'path': str(path), 'content': '第二行\n', 'encoding': 'gbk'})
+        'path': str(path), 'content': '第二行\n', 'encoding': 'gbk',
+        'baseMtime': data['mtime'], 'baseSha256': data['sha256']})
     assert resp.status_code == 200
     assert path.read_bytes().decode('gbk') == '第二行\n'
 

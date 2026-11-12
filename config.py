@@ -32,6 +32,7 @@ def getRemotes():
     - apps (缺省 [] = 一律不接): 接受该机哪些外部应用, ["*"] 全收;
       接受/拒绝某个 app 就是有没有它的 id
     - files (缺省 false): 是否允许在文件页浏览该机的文件 (只读转发)
+    - filesWrite (缺省 false): 是否允许把写操作转发给该机; files=true 仍只读
     """
     raw = load().get('remotes')
     if not isinstance(raw, list):
@@ -55,6 +56,7 @@ def getRemotes():
                     'terminal': item.get('terminal', True) is not False,
                     'apps': apps,
                     'files': item.get('files', False) is True,
+                    'filesWrite': item.get('filesWrite', False) is True,
                     'models': models,
                     'model': str(item.get('model') or '').strip()})
     return out
@@ -153,7 +155,6 @@ def _dirList(value):
         return []
     return [p for p in value if isinstance(p, str) and p.strip()]
 
-
 def getWorkDirs():
     r"""AI 落点判断的常用工作目录; 缺省用用户主目录与 Documents（存在才纳入）。"""
     dirs = _dirList(load().get('workDirs'))
@@ -239,7 +240,6 @@ def getSessiondPort(kind='local'):
         return urlparse(getSessiondUrl(kind) or '').port or default
     except ValueError:
         return default
-
 
 def _sharedToken(path):
     """令牌文件原子创建 + 重试读取；web 与对应服务各自独立持有。"""

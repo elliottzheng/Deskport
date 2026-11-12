@@ -34,6 +34,7 @@ from modules import plugins as pluginsModule  # noqa: E402
 from modules import agent_api as agentApiModule  # noqa: E402
 from modules import agent_sessions as agentSessionsModule  # noqa: E402
 from modules import agent_sftp as agentSftpModule  # noqa: E402
+from modules import agent_sftp_write as agentSftpWriteModule  # noqa: E402  路由注册
 from modules import agent_local as agentLocalModule  # noqa: E402
 from modules import agent_upload as agentUploadModule  # noqa: E402
 from modules import agent_share as agentShareModule  # noqa: E402  路由注册

@@ -78,6 +78,8 @@ createApp({
             previewError: '',
             previewLossy: false,
             previewEncoding: 'utf-8',
+            previewMtime: 0,
+            previewSha256: '',
             clipboard: null,   // {mode: 'copy'|'move', paths: []}
             marquee: { show: false },
             compressTargets: null,

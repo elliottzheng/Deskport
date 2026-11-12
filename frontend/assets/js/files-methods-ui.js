@@ -140,6 +140,8 @@ window.FilesMethodsUi = {
                 this.previewTruncated = !!data.truncated;
                 this.previewLossy = !!data.lossy;
                 this.previewEncoding = data.encoding || 'utf-8';
+                this.previewMtime = data.mtime || 0;
+                this.previewSha256 = data.sha256 || '';
                 if (this.previewMode === 'markdown') { this.renderPreviewMd(); }
             } catch (err) {
                 this.previewContent = '';
@@ -180,10 +182,21 @@ window.FilesMethodsUi = {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: this.previewTarget.path, content: this.previewContent,
-                                           encoding: this.previewEncoding }),
+                                           encoding: this.previewEncoding,
+                                           baseMtime: this.previewMtime,
+                                           baseSha256: this.previewSha256 }),
                 });
                 const data = await r.json();
+                if (r.status === 409) {
+                    if (confirm('这个文件在别处被改过（当前 mtime=' + (data.currentMtime || '?')
+                                + '）。重新加载后再保存？')) {
+                        await this.openPreview(this.previewTarget);
+                    }
+                    return;
+                }
                 if (!r.ok) { throw new Error(data.error || 'HTTP ' + r.status); }
+                this.previewMtime = data.mtime || this.previewMtime;
+                this.previewSha256 = data.sha256 || this.previewSha256;
                 this.previewSaved = true;
                 setTimeout(() => { this.previewSaved = false; }, 2000);
             } catch (err) {

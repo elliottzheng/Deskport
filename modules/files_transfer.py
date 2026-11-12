@@ -2,6 +2,8 @@
 """文件操作：回收站/删除/粘贴/启动/上传/远程下载。"""
 import ctypes
 import os
+import re
+import secrets
 import shutil
 from ctypes import wintypes
 
@@ -9,7 +11,7 @@ import requests
 import urllib3
 from flask import jsonify, request
 
-from modules import fsutil
+from modules import federation_write, fsutil
 from modules.files_base import blueprint
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -56,6 +58,57 @@ def recyclePaths(paths):
 
 def _uniqueDest(destDir, name):
     return fsutil.uniquePath(destDir, name)
+
+
+MAX_UPLOAD_NAME = 120
+_BAD_UPLOAD_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _safeUploadName(name):
+    """上传只接受纯文件名：去掉客户端带来的目录部分，其余非法字符拒绝。"""
+    text = str(name or '').replace('\\', '/').rsplit('/', 1)[-1].strip()
+    if not text or len(text) > MAX_UPLOAD_NAME or _BAD_UPLOAD_CHARS.search(text) \
+            or text in ('.', '..'):
+        return ''
+    return text
+
+
+def _saveUpload(file, saveDir, limitBytes=None):
+    """流式落盘: <name>.part-<rand> → 原子 rename；失败清理，同名 (2) 不覆盖。"""
+    name = _safeUploadName(file.filename)
+    if not name:
+        return None, ('文件名不合法（需纯文件名，≤120 字符）', 400)
+    part = os.path.join(saveDir, '%s.part-%s' % (name, secrets.token_hex(4)))
+    try:
+        size = 0
+        with open(part, 'wb') as out:
+            while True:
+                chunk = file.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if limitBytes is not None and size > limitBytes:
+                    return None, ('超过单文件上限 %dMB'
+                                  % (limitBytes // (1024 * 1024)), 413)
+                out.write(chunk)
+            out.flush()
+            os.fsync(out.fileno())
+        for _ in range(20):
+            target = fsutil.uniquePath(saveDir, name, start=2, sep='')
+            try:
+                os.rename(part, target)   # Windows: 目标存在时失败，不会覆盖
+                return target, None
+            except FileExistsError:
+                continue
+        return None, ('同名条目过多: %s' % name, 409)
+    except OSError as e:
+        return None, ('写盘失败: %s' % e, 500)
+    finally:
+        if os.path.isfile(part):
+            try:
+                os.remove(part)
+            except OSError:
+                pass
 
 
 @blueprint.route('/api/files/paste', methods=['POST'])
@@ -145,9 +198,11 @@ def start():
 def upload():
     file = request.files.get('file')
     saveDir = request.form.get('path') or ''
-    if request.form.get('tempdir') == 'true':
+    tempdir = request.form.get('tempdir') == 'true'
+    if tempdir:
         import tempfile
         saveDir = tempfile.gettempdir()
+    federated = bool(request.headers.get('X-Deskport-From'))
     if not file or file.filename == '':
         return jsonify({'error': '未选择文件'}), 400
     # 「此电脑」根视图 (path='/') 没有可保存的目录; 相对路径会落到守护进程的
@@ -158,18 +213,31 @@ def upload():
         return jsonify({'error': '保存目录必须是绝对路径: %s' % saveDir}), 400
     if not os.path.isdir(saveDir):
         return jsonify({'error': '保存目录不存在: %s' % saveDir}), 400
-    savePath = os.path.join(saveDir, file.filename)
-    try:
-        file.save(savePath)
-    except OSError as e:
-        return jsonify({'error': str(e)}), 500
+    if federated:
+        # 入口钩子已做过路径校验；这里再用最终文件名复核一次（文件名可含 ..
+        if tempdir:
+            return jsonify({'error': '联邦上传不允许 tempdir'}), 403
+        if request.form.get('execute') == 'true':
+            return jsonify({'error': '联邦上传不允许 execute（成员端不启动文件）'}), 403
+        name = _safeUploadName(file.filename)
+        if not name:
+            return jsonify({'error': '文件名不合法（需纯文件名，≤120 字符）'}), 400
+        ok, why = federation_write.checkPaths([os.path.join(saveDir, name)])
+        if not ok:
+            return jsonify({'error': '联邦写操作被拒绝: ' + why}), 403
+    limitBytes = None
+    if federated:
+        limitBytes = federation_write.uploadLimitMB() * 1024 * 1024
+    target, failure = _saveUpload(file, saveDir, limitBytes)
+    if failure:
+        return jsonify({'error': failure[0]}), failure[1]
     if request.form.get('execute') == 'true':
         try:
-            os.startfile(savePath)  # noqa: S606
+            os.startfile(target)  # noqa: S606
         except OSError as e:
-            return jsonify({'ok': True, 'filename': file.filename,
+            return jsonify({'ok': True, 'filename': os.path.basename(target),
                             'warn': '已保存但启动失败: ' + str(e)})
-    return jsonify({'ok': True, 'filename': file.filename, 'path': savePath})
+    return jsonify({'ok': True, 'filename': os.path.basename(target), 'path': target})
 
 
 @blueprint.route('/api/files/remote-download', methods=['POST'])
