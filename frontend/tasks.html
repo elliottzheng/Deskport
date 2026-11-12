@@ -178,6 +178,7 @@
                     {{ sending ? '发送中…' : '发送' }}
                 </button>
                 <p class="task-continue-hint" v-if="statusHint">{{ statusHint }}</p>
+                <p class="task-continue-hint" v-if="notice">{{ notice }}</p>
                 <p class="load-error" v-if="error">{{ error }}</p>
             </div>
             <div class="task-results" v-if="detail.resultFiles && detail.resultFiles.length">

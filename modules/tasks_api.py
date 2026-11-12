@@ -231,6 +231,7 @@ def getTask(task, taskId):
     out['commands'] = task.get('commands') or []
     out['lastSeq'] = task.get('seq', 0)
     out['currentTool'] = task.get('_currentTool') or None
+    out['queuedMessages'] = len(task.get('messageQueue') or [])
     if request.args.get('events') == '1':
         # 默认不带 events（调用方字节预算）；增量订阅走 /events 端点，
         # ?events=1 保留旧行为供一次性全量对账
@@ -404,6 +405,7 @@ def taskEvents(task, taskId):
                     'lastText': task.get('lastText', ''),
                     'resultFiles': task.get('resultFiles', []),
                     'error': task.get('error', ''),
+                    'queuedMessages': len(task.get('messageQueue') or []),
                     'pendingPermission': task.get('pendingPermission') or '',
                     'canContinue': (task.get('status') in ('waiting', 'paused')
                                     and bool(task.get('sessionId'))),
@@ -500,21 +502,62 @@ def taskMessage(task, taskId):
         return jsonify({'error': '消息不能为空'}), 400
     if len(text) > 8000:
         return jsonify({'error': '消息过长'}), 400
+    # R5-5 轮中插话：queue（默认）= 本轮结束后自动投递（服务端持久化，web
+    # 重启不丢）；steer = 插队首并打断当前轮（stopReason=cancelled 落卡后
+    # 立即投递）；reject = 保留旧行为（轮中 409）。mode 只在会 409 的场景
+    # 生效：waiting 直接投、paused 走续聊唤醒，均不受影响
+    mode = (data.get('mode') or 'queue').lower()
+    if mode not in ('queue', 'steer', 'reject'):
+        return jsonify({'error': 'mode 只能是 queue / steer / reject'}), 400
     status = task.get('status')
     with store.repo.lock:
         agent = store.repo.agentOf(taskId)
-    # live 挂起审批未处理时拒绝续聊（R4-3c #3）：否则旧审批 5 分钟超时
-    # 拒绝会把刚开的新一轮带死
+    # live 挂起审批：reject 保持 409 带 pending（R4-3c #3 原行为）；
+    # queue/steer 照常入队——投递时机由 runner 的审批闸门兜住（审批不落定
+    # 不投，否则旧审批 5 分钟超时拒绝会把刚开的新一轮带死，R4-3c #3）
     pending = _waitSnapshot(task, task.get('seq', 0) or 0).get('pending')
-    if pending:
+    if pending and mode == 'reject':
         return jsonify({'error': '有等待处理的审批（可能是上一轮的后台调用），'
                                  '先通过 /permission 批准或拒绝，再续聊',
                         'pending': pending}), 409
     if agent:
         if status == 'running':
-            return jsonify({'error': '这一轮还在执行，等结束或先点停止'}), 409
+            if mode == 'reject':
+                return jsonify({'error': '这一轮还在执行，等结束或先点停止'}), 409
+            steer = mode == 'steer'
+            item, pos = _enqueueMessage(task, text, steer)
+            if steer:
+                # 插话语义：打断当前轮，队首消息在轮停止后立即投递。
+                # 与 /cancel 同链路：先拒掉挂起审批再 cancel，防止旧审批
+                # 超时拒绝殃及下一轮
+                runner._denyPendingPermission(agent)
+                client = agent.get('client')
+                if client is not None:
+                    try:
+                        client.cancel()
+                    except Exception:
+                        pass
+                store.repo.append_event(task, 'status',
+                             text='主控插话，正在打断当前轮（队首投递）')
+            else:
+                store.repo.append_event(task, 'status',
+                             text='消息已排队（第 %d 位，本轮结束后投递）' % pos)
+            # 唤醒信号：轮中时轮结束被消费，与轮结束竞态（恰好已 waiting）
+            # 时立即唤醒清队——多余信号无害
+            agent['queue'].put({'type': 'drain'})
+            return jsonify({'queued': True, 'position': pos, 'steered': steer,
+                            'messageId': item.get('id') or ''}), 202
         if status not in ('waiting',):
             return jsonify({'error': '会话当前状态不能继续: %s' % status}), 409
+        if pending:
+            # waiting 但有轮间挂起审批（后台调用残响，R4-3c）：入持久化队列，
+            # 审批落定后由 runner 的唤醒信号投递（闸门见 _popQueuedMessage）
+            item, pos = _enqueueMessage(task, text)
+            store.repo.append_event(task, 'status',
+                         text='消息已排队（等审批落定后投递，第 %d 位）' % pos)
+            agent['queue'].put({'type': 'drain'})
+            return jsonify({'queued': True, 'position': pos, 'steered': False,
+                            'messageId': item.get('id') or ''}), 202
         agent['queue'].put({'type': 'message', 'text': text})
         with store.repo.lock:
             task_state.transition(task, task_state.TaskState.RUNNING)
@@ -543,6 +586,50 @@ def taskMessage(task, taskId):
     if waitSec:
         return jsonify(_blockWait(task, afterSeq, waitSec)), 200
     return jsonify({'ok': True, 'status': 'queued'}), 202
+
+
+def _enqueueMessage(task, text, steer=False):
+    """消息入持久化队列（R5-5）：steer 插队首，其余追加队尾。
+
+    队列挂在 task dict 上，随 repo.save() 落盘——web 重启后 resume 时由
+    runner 清队投递，主控客户端不再需要自己排队。返回 (item, position)。"""
+    item = {'id': uuid.uuid4().hex[:12], 'text': text, 'at': store._now(),
+            'by': getattr(g, 'agentTokenName', '') or '面板',
+            'steer': bool(steer)}
+    with store.repo.lock:
+        mq = task.setdefault('messageQueue', [])
+        if steer:
+            mq.insert(0, item)
+        else:
+            mq.append(item)
+        store.repo.save()
+        return item, mq.index(item) + 1
+
+
+@blueprint.route('/api/tasks/<taskId>/messages', methods=['GET'])
+@taskRoute
+def taskQueuedMessages(task, taskId):
+    """排队中的消息（只列未投递的；已投递的看事件流的 user 事件）。"""
+    with store.repo.lock:
+        items = [dict(m) for m in (task.get('messageQueue') or [])]
+    return jsonify({'items': items, 'count': len(items)})
+
+
+@blueprint.route('/api/tasks/<taskId>/messages/<mid>', methods=['DELETE'])
+@taskRoute
+def taskQueuedMessageDelete(task, taskId, mid):
+    with store.repo.lock:
+        mq = task.get('messageQueue') or []
+        idx = next((i for i, m in enumerate(mq)
+                    if m.get('id') == mid), None)
+        if idx is None:
+            return jsonify({'error': '排队消息不存在或已投递'}), 404
+        mq.pop(idx)
+        remaining = len(mq)
+        store.repo.save()
+    store.repo.append_event(task, 'status',
+                 text='排队消息已撤回（原第 %d 位）' % (idx + 1))
+    return jsonify({'ok': True, 'count': remaining})
 
 
 @blueprint.route('/api/tasks/<taskId>/event/<int:seq>')

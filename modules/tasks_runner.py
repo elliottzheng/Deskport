@@ -295,7 +295,16 @@ def _handleAcpPermission(task, agent, params, requestId):
         value = decision['value']
         agent['perm'] = None
         task['pendingPermission'] = ''
+        backlog = bool(task.get('messageQueue'))
         store.repo.save()
+    if backlog:
+        # 审批落定即唤醒队列消费（R5-5）：轮中排队的消息会在本轮结束后投递；
+        # 轮间挂起（后台调用审批）时 runner 阻塞在 queue.get()，靠这条信号醒来。
+        # 多余的信号无害——空队清一遍即回到等待
+        try:
+            agent['queue'].put({'type': 'drain'})
+        except Exception:
+            pass
     if value is None:
         store.repo.append_event(task, 'permission_result', requestId=str(requestId),
                      status='timeout', text='授权超时，已拒绝：' + title)
@@ -328,6 +337,37 @@ def _promptOnce(task, client, text):
         store.repo.save()
 
 
+def _popQueuedMessage(task):
+    """弹出下一条排队消息（队首=steer 插话优先）；无可投递的返回 None。
+
+    两个投递闸门：有 live 挂起审批时不投（R4-3c——旧审批 5 分钟超时拒绝
+    会把刚开的新一轮带死，等审批落定后的唤醒信号再投）；用户已关闭任务
+    不投。"""
+    with store.repo.lock:
+        if task.get('pendingPermission') or task.get('closedByUser'):
+            return None
+        mq = task.get('messageQueue') or []
+        if not mq:
+            return None
+        return mq.pop(0)
+
+
+def _drainQueuedMessages(task, client):
+    """把持久化队列 task['messageQueue'] 逐条投递，每条一轮 prompt
+    （与手动续聊同链路）。轮中排队（R5-5）在每轮结束和每次唤醒后清队；
+    steer 插话因在队首而优先投递。"""
+    n = 0
+    while True:
+        msg = _popQueuedMessage(task)
+        if msg is None:
+            return n
+        store.repo.append_event(task, 'user', text=msg.get('text') or '',
+                                **({'steer': True} if msg.get('steer') else {}))
+        _promptOnce(task, client, msg.get('text') or '')
+        store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+        n += 1
+
+
 def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactory=KimiAcp):
     """一个任务 = 一个常驻 ACP 会话；每轮 prompt 结束后继续等用户消息。"""
     taskId = task['id']
@@ -352,6 +392,9 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             task['sessionId'] = sid
             task['resume'] = True
             task['startedAt'] = task.get('startedAt') or store._now()
+            # 旧进程的审批挂起随重启/唤醒失效（回放窗口里的旧审批已被
+            # R4-5a 门禁取消）：不清会卡死队列投递闸门（R5-5）
+            task['pendingPermission'] = ''
             store.repo.save()
         replayed = int(getattr(client, 'replayCount', 0) or 0)
         if replayed:
@@ -371,6 +414,8 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
             if firstMessage:
                 agent['ready'] = True
+                # 重启前排队未投的消息先投（入队时间比本次续聊更早）
+                _drainQueuedMessages(task, client)
                 store.repo.append_event(task, 'user', text=firstMessage)
                 _promptOnce(task, client, firstMessage)
                 store.repo.append_event(task, 'status', text='这轮结束，等你继续')
@@ -378,17 +423,19 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             store.repo.append_event(task, 'user', text=task.get('prompt') or '')
             _promptOnce(task, client, store._promptFor(task, manifest))
             store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+        _drainQueuedMessages(task, client)   # 轮中排队的消息，轮一结束就投
         while True:
             item = agent['queue'].get()
             if item is None or item.get('type') == 'close':
                 break
             if item.get('type') == 'message':
                 text = (item.get('text') or '').strip()
-                if not text:
-                    continue
-                store.repo.append_event(task, 'user', text=text)
-                _promptOnce(task, client, text)
-                store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+                if text:
+                    store.repo.append_event(task, 'user', text=text)
+                    _promptOnce(task, client, text)
+                    store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+            # 任何唤醒（message/drain 信号）后先清持久化队列（R5-5）
+            _drainQueuedMessages(task, client)
     except Exception as e:
         _flushAssistant(task)   # 异常中断也保留已收到的部分回答
         with store.repo.lock:
