@@ -105,7 +105,13 @@ POST /api/tasks
 - 接手已有 Kimi 会话：`GET /api/tasks/kimi-sessions?cwd=<目录>` 挑候选，
   `{"kimiSessionId": "<id>"}` 建任务（默认 fork 副本不干扰原会话，占用时 400 透传原因）。
 - 任务 close = 明确结束（node 侧进程立即回收）；不 close 的会话保留 45 分钟可随时续聊。
-- `engine: "remote"` 加 `"node": "...", "cwd": "<远端目录>"`；acp 不接受 cwd。
+- `engine: "remote"` 加 `"node": "...", "cwd": "<远端目录>"`。
+- `engine: "acp"` 也可加 `"cwd": "<本机绝对目录>"`：ACP 进程在该目录里跑，
+  可以直接改项目；**任务目录（workspace）仍由 Deskport 建**——日志、`inputs/`、
+  close 都只动 workspace，cwd 里的文件不会被清。cwd 必须存在、是目录，且在
+  `config.workDirs` / `fallbackDir` 之下（越界 400）；不传 = 跑在 workspace（旧行为）。
+  附件仍复制到 `<workspace>/inputs/`；cwd 与 workspace 不同时，prompt 会自动
+  写明「工作目录是 cwd、附件在哪个绝对路径」。
 - `prompt` 上限 4000 字符；本机文件用 `paths: [绝对路径]`；没有现成文件时先上传：
   `POST /api/tasks/files {"name": "a.md", "contentB64": "..."}` → 返回 path 塞进 paths，
   或建任务时直接带 `attachments: [{name, contentB64}]`。

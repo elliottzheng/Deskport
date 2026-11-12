@@ -36,6 +36,7 @@ class TaskSummary(TypedDict):
     startedAt: float
     endedAt: float
     workspace: str
+    cwd: str
     engine: str
     lastText: str
     resultFiles: list[dict]

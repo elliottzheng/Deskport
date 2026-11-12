@@ -76,13 +76,6 @@ def test_remote_missing_cwd_is_400_not_accepted(env, monkeypatch):
     assert 'cwd' in resp.get_json()['error']
 
 
-def test_acp_rejects_cwd(env):
-    """反馈 §3.7：acp 不再静默忽略 cwd，直接说明拒绝原因。"""
-    resp = create(env, {'prompt': 'x', 'engine': 'acp', 'cwd': r'E:\事项'})
-    assert resp.status_code == 400
-    assert 'acp' in resp.get_json()['error']
-
-
 def test_default_mode_is_default_not_auto(env):
     """反馈 §3.6：不传 mode = 逐项审批（安全默认），auto 必须显式。"""
     resp = create(env, {'prompt': 'x'})

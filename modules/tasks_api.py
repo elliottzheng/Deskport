@@ -21,7 +21,7 @@ from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
 from modules import worklines_store
-from modules import fsutil, staging
+from modules import fsutil, staging, task_cwd
 from modules import agent_nodes
 from modules import model_availability
 from modules import events
@@ -122,6 +122,7 @@ def createTaskResponse(data):
     policy = {}
     try:
         policy = task_policy.validatePolicy(data.get('policy'))
+        taskCwd = task_cwd.resolve(data.get('cwd'), engine)
     except ValueError as e:
         return ({'error': str(e)}), 400
     if engine == 'remote':
@@ -145,9 +146,7 @@ def createTaskResponse(data):
             return ({'error': '工作线暂不支持联邦执行点（R5-1b 再做），'
                               '请改用 agent node'}), 400
         paths = []   # 远端任务不接受本机文件，跨机传输不在本引擎范围
-    elif data.get('cwd'):
-        return ({'error': 'engine=acp 不接受 cwd（本机任务固定运行在'
-                                 '独立工作区，输入文件用 paths 传入）'}), 400
+    # acp 的 cwd 已在上方 task_cwd.resolve 校验（缺省 = workspace）
     # 接手已有 Kimi CLI 会话（第二轮反馈 §2）：默认先 fork 复制，
     # 避免与用户开着的终端并发写同一会话；fork:false 且会话未被占用才直接接管
     kimiSessionId = str(data.get('kimiSessionId') or '').strip()   # 用户传的原会话
@@ -239,6 +238,7 @@ def createTaskResponse(data):
         'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
         'node': node, 'remoteCwd': remoteCwd,
+        'cwd': taskCwd or (workspace if engine == 'acp' else ''),
         'sources': manifest,
     }
     injected = ''

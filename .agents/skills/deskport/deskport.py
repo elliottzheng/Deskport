@@ -191,7 +191,7 @@ class Deskport:
                     kimi_session: str | None = None, fork: bool = True,
                     policy: dict | None = None) -> "Task":
         """派活给 Deskport 托管的智能体。默认 mode=default（危险操作逐项等审批），
-        需要全自动时显式传 mode="auto"。engine="remote" 时必须给 node 和 cwd。
+        需要全自动时显式传 mode="auto"。acp/remote 都可给 cwd（acp=进程工作目录，任务目录仍是 workspace；remote=远端目录）。
         model 可选（列表见 nodes() 的 models）；attachments={文件名: 内容} 随任务上传。
         prompt 服务端上限 4000 字符，长材料放 attachments。
         kimi_session=已有 Kimi 会话 id（见 kimi_sessions()）：默认 fork 副本再接手，
@@ -212,12 +212,12 @@ class Deskport:
                 {"name": n, "contentB64": base64.b64encode(
                     d.encode("utf-8") if isinstance(d, str) else d).decode()}
                 for n, d in attachments.items()]
-        if engine == "acp" and cwd:
-            raise ValueError("acp 引擎不支持 cwd（服务端会静默忽略）；需要指定目录请用 engine='remote'")
         if engine == "remote":
             if not (node and cwd):
                 raise ValueError("engine=remote 需要 node 和 cwd")
             body.update(node=node, cwd=cwd)
+        elif cwd:
+            body["cwd"] = cwd
         if paths:
             body["paths"] = paths
         if policy:

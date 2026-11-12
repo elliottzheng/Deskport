@@ -93,7 +93,8 @@ python deskport.py cat /etc/hosts           # 远程取文件到 stdout（二进
 
 已知的服务端边界（客户端已吸收）：exec 无状态、单条 1–600s、输出上限 2 MiB、含 NUL
 提前拒绝；`read` 整读上限 8 MB，超出自动分块；`create_task` 的 prompt 上限 4000 字符；
-`acp` 引擎不接受 `cwd`；隧道偶尔截断大响应（幂等 GET 自动重试一次）。
+`acp` 与 `remote` 都可传 `cwd`（acp 是本机工作目录，任务目录/输入副本仍由 Deskport
+的 workspace 管）；隧道偶尔截断大响应（幂等 GET 自动重试一次）。
 
 ## 驱动模板：一条命令盯一个执行方
 

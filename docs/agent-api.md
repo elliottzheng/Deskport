@@ -293,7 +293,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 |---|---|---|
 | GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
 | POST | /api/tasks | 建任务 → 202 `{prompt, engine, node, cwd, mode, model, paths, attachments}` |
-| GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`remoteCwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
+| GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`cwd`/`remoteCwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
 | GET | /api/tasks/<id>/events/stream?since=N | SSE 推送 |
 | POST | /api/tasks/<id>/message | 续聊 `{text, mode?, wait?}`，mode=queue（默认）/steer/reject |
@@ -317,8 +317,8 @@ DELETE /api/agent/ssh/sessions/<sid>
 路径越界一律 403。
 
 - `engine: "acp"`（缺省）= 本机 Kimi（agent node 托管，web 重启可接手）；
-  `paths` 引用本机输入文件；**不接受 `cwd`**（400，任务固定运行在独立
-  工作区）；`prompt` 上限 **4000 字符**，超限报错会写明数字；
+  `paths` 引用本机输入文件；`prompt` 上限 **4000 字符**，超限报错会写明数字；
+  `cwd` 可选（见下节「工作目录 vs 任务目录」），缺省跑在任务目录（旧行为）；
 - `engine: "remote"` 必须给 `node`（执行点）与 `cwd`（远端已存在目录），
   缺任一 → 400 并附 `nodes` 提示；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
@@ -395,6 +395,28 @@ DELETE /api/agent/ssh/sessions/<sid>
   参数与后到的 rawInput，审批判定用完整参数，已落卡的 `tool` 事件会补全
   `args`；
 - `close` 返回的就是终态（已 cancel 的任务保持 `cancelled`，close 幂等）。
+
+### 工作目录 vs 任务目录（`cwd` ≠ `workspace`）
+
+两个概念，别混：
+
+- `workspace`：Deskport 造的任务目录（`<fallbackDir>/_agent_tasks/<时间-摘要-id>`）。
+  日志、`inputs/` 副本、`resultFiles`、close 清理**只认它**；
+- `cwd`：ACP 进程的工作目录。`engine=acp` 可传本机绝对目录，让执行方直接
+  在项目里干活；不传 = `workspace`（旧行为完全不变）。`engine=remote` 的
+  `cwd` 是远端目录（语义照旧，`workspace` 仍是本机任务卡目录）。
+
+`engine=acp` 的 `cwd` 校验：绝对值、存在、是目录、且在 `config.workDirs`
+或 `config.fallbackDir` 之下；任一条不满足 → 400，**不建任务**（不让它变成
+任意目录入口）。`paths` / `attachments` 仍然复制进 `<workspace>/inputs/`；
+`cwd != workspace` 时首条 prompt 会自动追加一行，写明工作目录与附件的绝对
+路径。close 只回收会话，不删 `cwd` 里的任何文件。
+
+两种派本机活的方式：
+
+- `acp + cwd`：在本机现有目录里改代码（项目就在这台机器上）——推荐；
+- `remote + node=<本机节点> + cwd`：走 agent node/联邦，多一层 HTTP；
+  本机活没有跨机需求时不必绕这一层。
 
 **任务事件类型**：`status` / `user` / `assistant`（回答终版，逐 chunk 流水在
 `/log`）/ `tool` / `tool_result` / `plan` / `permission_request` /

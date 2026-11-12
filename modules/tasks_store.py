@@ -13,7 +13,7 @@ import threading
 import time
 
 import config
-from modules import contracts, fsutil, task_state
+from modules import contracts, fsutil, task_state, task_cwd
 from modules import sensitive_values
 from modules.staging import _safeAttachmentName
 
@@ -262,6 +262,8 @@ class TaskRepository:
             'startedAt': task.get('startedAt', 0), 'endedAt': task.get('endedAt', 0),
             # remote 任务展示远端 cwd（本机 workspace 目录对调用方毫无意义）
             'workspace': remoteCwd or task.get('workspace', ''),
+            # cwd = 执行进程的工作目录（acp 可指定；remote 即远端目录）
+            'cwd': task.get('cwd') or remoteCwd or task.get('workspace', ''),
             'engine': task.get('engine', ''),
             'lastText': task.get('lastText', ''),
             'resultFiles': task.get('resultFiles', []),
@@ -391,9 +393,13 @@ def _promptFor(task, manifest, block=''):
     if manifest:
         lines.append('输入文件副本（只读）：')
         for item in manifest:
-            lines.append('- %s ← %s' % (item['input'], item['source']))
+            lines.append('- %s ← %s' % (task_cwd.inputLabel(task, item['input']),
+                                        item['source']))
         lines.append('')
     lines.append('产出放当前工作目录；工作目录外只读不写。')
+    note = task_cwd.notice(task)
+    if note:
+        lines.append(note)
     lines.append('关键信息不足、需要用户拍板时，先停下来用一句话问，不要猜。')
     lines.append('')
     if block:

@@ -505,7 +505,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
     client = None
     try:
         client = clientFactory(
-            cwd=task['workspace'],
+            cwd=task.get('cwd') or task['workspace'],
             on_update=lambda update: (_handleAcpUpdate(task, update)
                                       if agent.get('ready') else None),
             on_permission=lambda params, rid: _handleAcpPermission(task, agent, params, rid),
