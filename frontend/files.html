@@ -20,6 +20,22 @@
                 <h1 class="page-title">文件管理</h1>
                 <p class="page-sub" style="margin-bottom:0;">桌面端资源管理器体验 · 移动端文件管理器体验</p>
             </div>
+            <div class="fm-machine-box" v-if="machines.length">
+                <label class="fm-machine-label" for="fm-machine">浏览机器</label>
+                <select id="fm-machine" class="select fm-machine-select" v-model="machine"
+                        @change="onMachineChange" title="切换浏览哪台机器的文件">
+                    <option value="">本机</option>
+                    <option v-for="m in machines" :key="m.id" :value="m.id">{{ m.name }}</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- 联邦成员模式常驻横幅: 只读, 醒目, 防止误以为在看本机 -->
+        <div class="fm-remote-banner" v-if="machine">
+            <span class="fm-remote-dot"></span>
+            <span>正在浏览：<strong>{{ machineName }}</strong> 的文件 · 只读</span>
+            <span v-if="machineOffline" class="fm-remote-offline">成员离线，操作稍后重试</span>
+            <button type="button" class="fm-remote-exit" @click="machine = ''; onMachineChange()">回到本机</button>
         </div>
 
         <p v-if="error" class="load-error">{{ error }} <a href="#" @click.prevent="refresh">重试</a></p>
@@ -28,18 +44,20 @@
             <!-- 左侧导航窗格 (桌面) -->
             <div class="fm-nav-backdrop" v-if="mobileNav" @click="mobileNav = false"></div>
             <aside class="fm-nav" :class="{ 'm-open': mobileNav }">
-                <div class="nav-section">位置</div>
-                <button class="nav-entry" :class="{ 'is-active': loc === 'inbox' }" @click="openInbox">
+                <div class="nav-section" v-if="!machine">位置</div>
+                <button class="nav-entry" v-if="!machine" :class="{ 'is-active': loc === 'inbox' }" @click="openInbox">
                     <i data-icon="inbox"></i>
                     <span>收件箱</span>
                     <span class="nav-count" v-if="inboxTotal">{{ inboxTotal }}</span>
                 </button>
-                <div class="nav-section">快速访问</div>
-                <button class="nav-entry" v-for="q in quickList" :key="q.path" @click="navigate(q.path)">
-                    <i data-icon="home"></i>
-                    <span>{{ q.label }}</span>
-                </button>
-                <div class="nav-section">此电脑</div>
+                <template v-if="!machine">
+                    <div class="nav-section">快速访问</div>
+                    <button class="nav-entry" v-for="q in quickList" :key="q.path" @click="navigate(q.path)">
+                        <i data-icon="home"></i>
+                        <span>{{ q.label }}</span>
+                    </button>
+                </template>
+                <div class="nav-section">{{ machine ? machineName : '此电脑' }}</div>
                 <button class="nav-entry" v-for="d in drives" :key="d.path" @click="navigate(d.path)">
                     <i data-icon="drives"></i>
                     <span>{{ d.name }}</span>
@@ -53,18 +71,18 @@
                     <button class="icon-btn fm-nav-toggle" title="快速访问" @click="toggleMobileNav">
                         <i data-icon="home"></i>
                     </button>
-                    <button class="btn btn-secondary" v-if="loc !== 'inbox'" @click="startNewFolder">
+                    <button class="btn btn-secondary" v-if="loc !== 'inbox' && !machine" @click="startNewFolder">
                         <i data-icon="folderNew"></i>
                         新建文件夹
                     </button>
-                    <button class="btn btn-secondary" v-if="selCount" @click="openAskAI">
+                    <button class="btn btn-secondary" v-if="selCount && !machine" @click="openAskAI">
                         <i data-icon="star"></i>
                         问 AI ({{ selCount }})
                     </button>
-                    <button class="btn btn-secondary" v-if="clipboard && loc !== 'inbox'" @click="pasteClipboard">
+                    <button class="btn btn-secondary" v-if="clipboard && loc !== 'inbox' && !machine" @click="pasteClipboard">
                         粘贴到此处 ({{ clipboard.paths.length }})
                     </button>
-                    <button class="btn btn-primary" v-if="loc !== 'inbox'" @click="pickLocalFile"
+                    <button class="btn btn-primary" v-if="loc !== 'inbox' && !machine" @click="pickLocalFile"
                             :disabled="loading || !canUpload"
                             :title="canUpload ? '上传文件到当前目录' : '请先进入某个磁盘或文件夹再上传 (此电脑视图没有可保存的目录)'">
                         <i data-icon="upload"></i>
@@ -224,39 +242,38 @@
         <div v-if="ctxMenu" class="ctx-menu" ref="ctxMenu" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
             <template v-if="ctxMenu.entry.type === 'folder' || ctxMenu.entry.type === 'drive'">
                 <button class="ctx-item" @click="ctxAction('open')">打开</button>
-                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('download')">下载 (ZIP)</button>
-                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('compress')">压缩</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder' && !machine" @click="ctxAction('download')">下载 (ZIP)</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder' && !machine" @click="ctxAction('compress')">压缩</button>
                 <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('term', 'pwsh7')">在终端中打开 (pwsh7)</button>
                 <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('term', 'cmd')">在终端中打开 (cmd)</button>
                 <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('term', 'powershell')">在终端中打开 (powershell)</button>
-                <button class="ctx-item" @click="ctxAction('ai')">问 AI</button>
-                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('upload-host')">上传到服务器…</button>
-                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('pin')">{{ isPinned(ctxMenu.entry.path) ? '取消固定' : '固定到快速访问' }}</button>
-                <button class="ctx-item" @click="ctxAction('copy')">复制</button>
-                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder'" @click="ctxAction('cut')">移动</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('ai')">问 AI</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder' && !machine" @click="ctxAction('upload-host')">上传到服务器…</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder' && !machine" @click="ctxAction('pin')">{{ isPinned(ctxMenu.entry.path) ? '取消固定' : '固定到快速访问' }}</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('copy')">复制</button>
+                <button class="ctx-item" v-if="ctxMenu.entry.type === 'folder' && !machine" @click="ctxAction('cut')">移动</button>
                 <button class="ctx-item" @click="ctxAction('copypath')">复制路径</button>
-                <button class="ctx-item" @click="ctxAction('rename')">重命名</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('rename')">重命名</button>
                 <button class="ctx-item" @click="ctxAction('props')">属性</button>
-                <button class="ctx-item" @click="ctxAction('delete')">删除</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('delete')">删除</button>
             </template>
             <template v-else>
                 <button class="ctx-item" v-if="isPreviewable(ctxMenu.entry)" @click="ctxAction('preview')">预览</button>
                 <button class="ctx-item" @click="ctxAction('text')">用记事本打开</button>
-                <button class="ctx-item" @click="ctxAction('ai')">问 AI</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('ai')">问 AI</button>
                 <button class="ctx-item" @click="ctxAction('term', 'pwsh7')">在终端中打开</button>
-                <button class="ctx-item" @click="ctxAction('upload-host')">上传到服务器…</button>
-                <div class="ctx-sep"></div>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('upload-host')">上传到服务器…</button>
+                <div class="ctx-sep" v-if="!machine"></div>
                 <button class="ctx-item" @click="ctxAction('download')">下载</button>
-                <button class="ctx-item" v-if="isArchiveEntry(ctxMenu.entry)" @click="ctxAction('extract')">解压到此处</button>
-                <button class="ctx-item" @click="ctxAction('compress')">压缩</button>
-                <button class="ctx-item" v-if="isExeFile(ctxMenu.entry)" @click="ctxAction('start')">运行</button>
-                <div class="ctx-sep"></div>
-                <button class="ctx-item" @click="ctxAction('copy')">复制</button>
-                <button class="ctx-item" @click="ctxAction('cut')">移动</button>
+                <button class="ctx-item" v-if="isArchiveEntry(ctxMenu.entry) && !machine" @click="ctxAction('extract')">解压到此处</button>
+                <button class="ctx-item" v-if="isExeFile(ctxMenu.entry) && !machine" @click="ctxAction('start')">运行</button>
+                <div class="ctx-sep" v-if="!machine"></div>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('copy')">复制</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('cut')">移动</button>
                 <button class="ctx-item" @click="ctxAction('copypath')">复制路径</button>
-                <button class="ctx-item" @click="ctxAction('rename')">重命名</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('rename')">重命名</button>
                 <button class="ctx-item" @click="ctxAction('props')">属性</button>
-                <button class="ctx-item" @click="ctxAction('delete')">删除</button>
+                <button class="ctx-item" v-if="!machine" @click="ctxAction('delete')">删除</button>
             </template>
         </div>
 
@@ -276,15 +293,16 @@
                 <img v-if="previewMode === 'image'" class="preview-img" :src="previewShownSrc" alt="预览"
                      title="点击进入/退出全屏" @click="togglePreviewFullscreen">
                 <div v-else-if="previewMode === 'markdown'" class="preview-md" v-html="previewMdHtml"></div>
-                <textarea v-else class="preview-text" v-model="previewContent" spellcheck="false"></textarea>
+                <textarea v-else class="preview-text" v-model="previewContent" :readonly="!!machine"
+                          spellcheck="false"></textarea>
                 <p class="load-error" v-if="previewError" style="margin-top:10px">{{ previewError }}</p>
                 <div class="modal-actions" style="margin-top:14px">
                     <button class="btn btn-ghost" @click="togglePreviewFullscreen">
                         {{ previewFullscreen ? '退出全屏' : '全屏' }}
                     </button>
-                    <button class="btn btn-ghost" v-if="previewMode === 'markdown'" @click="showMdSource">编辑源码</button>
-                    <button class="btn btn-ghost" v-else-if="previewIsMd" @click="showMdPreview">渲染预览</button>
-                    <button class="btn btn-primary" v-if="previewMode === 'text'" @click="savePreview">保存修改</button>
+                    <button class="btn btn-ghost" v-if="previewMode === 'markdown' && !machine" @click="showMdSource">编辑源码</button>
+                    <button class="btn btn-ghost" v-else-if="previewIsMd && !machine" @click="showMdPreview">渲染预览</button>
+                    <button class="btn btn-primary" v-if="previewMode === 'text' && !machine" @click="savePreview">保存修改</button>
                     <button class="btn btn-ghost" @click="closePreview">关闭</button>
                     <span class="preview-saved" v-if="previewSaved">已保存</span>
                 </div>
@@ -298,8 +316,8 @@
                 <div class="modal-title">当前目录</div>
                 <div class="modal-meta" style="word-break:break-all">{{ currentPath }}</div>
                 <div class="modal-actions" style="flex-direction:column">
-                    <button class="ctx-item" @click="blankNewFolder">新建文件夹</button>
-                    <button class="ctx-item" v-if="clipboard" @click="blankPaste">粘贴 ({{ clipboard.paths.length }})</button>
+                    <button class="ctx-item" v-if="!machine" @click="blankNewFolder">新建文件夹</button>
+                    <button class="ctx-item" v-if="clipboard && !machine" @click="blankPaste">粘贴 ({{ clipboard.paths.length }})</button>
                     <button class="ctx-item" @click="blankSelectAll">全选</button>
                     <button class="ctx-item" @click="invertSelect(); blankSheet = false">反选</button>
                     <button class="ctx-item" @click="blankRefresh">刷新</button>
@@ -318,22 +336,22 @@
                             @click="openPreview(actionTarget); actionTarget = null">预览</button>
                     <button class="ctx-item" v-if="actionTarget.type === 'file'"
                             @click="openAsText(actionTarget); actionTarget = null">用记事本打开</button>
-                    <button class="ctx-item" @click="askAIFor([actionTarget]); actionTarget = null">问 AI</button>
-                    <button class="ctx-item" @click="openUploadHost([actionTarget.path]); actionTarget = null">上传到服务器…</button>
-                    <div class="ctx-sep"></div>
+                    <button class="ctx-item" v-if="!machine" @click="askAIFor([actionTarget]); actionTarget = null">问 AI</button>
+                    <button class="ctx-item" v-if="!machine" @click="openUploadHost([actionTarget.path]); actionTarget = null">上传到服务器…</button>
+                    <div class="ctx-sep" v-if="!machine"></div>
                     <button class="ctx-item" @click="doDownloadOne(actionTarget.path)">下载</button>
-                    <button class="ctx-item" @click="clipboard = { mode: 'copy', paths: [actionTarget.path] }; actionTarget = null; toastMsg('已复制，去目标目录粘贴')">复制</button>
-                    <button class="ctx-item" @click="clipboard = { mode: 'move', paths: [actionTarget.path] }; actionTarget = null; toastMsg('已标记移动，请进入目标目录粘贴')">移动</button>
+                    <button class="ctx-item" v-if="!machine" @click="clipboard = { mode: 'copy', paths: [actionTarget.path] }; actionTarget = null; toastMsg('已复制，去目标目录粘贴')">复制</button>
+                    <button class="ctx-item" v-if="!machine" @click="clipboard = { mode: 'move', paths: [actionTarget.path] }; actionTarget = null; toastMsg('已标记移动，请进入目标目录粘贴')">移动</button>
                     <button class="ctx-item" @click="copyPath(actionTarget.path)">复制路径</button>
                     <div class="ctx-sep"></div>
                     <button class="ctx-item" @click="openEntryInTerminal(actionTarget); actionTarget = null">在终端中打开</button>
-                    <button class="ctx-item" v-if="isArchiveEntry(actionTarget)" @click="extractEntry(actionTarget)">解压到此处</button>
-                    <button class="ctx-item" v-if="actionTarget.type === 'file'" @click="doStart(actionTarget.path)">启动</button>
-                    <div class="ctx-sep"></div>
-                    <button class="ctx-item" @click="startRenameFrom(actionTarget)">重命名</button>
+                    <button class="ctx-item" v-if="isArchiveEntry(actionTarget) && !machine" @click="extractEntry(actionTarget)">解压到此处</button>
+                    <button class="ctx-item" v-if="actionTarget.type === 'file' && !machine" @click="doStart(actionTarget.path)">启动</button>
+                    <div class="ctx-sep" v-if="!machine"></div>
+                    <button class="ctx-item" v-if="!machine" @click="startRenameFrom(actionTarget)">重命名</button>
                     <button class="ctx-item" @click="propsTarget = actionTarget; actionTarget = null">属性</button>
-                    <div class="ctx-sep"></div>
-                    <button class="ctx-item danger" @click="deletePaths([actionTarget.path])">删除 (移入回收站)</button>
+                    <div class="ctx-sep" v-if="!machine"></div>
+                    <button class="ctx-item danger" v-if="!machine" @click="deletePaths([actionTarget.path])">删除 (移入回收站)</button>
                 </div>
                 <button class="modal-close" @click="actionTarget = null">&times;</button>
             </div>
@@ -345,14 +363,14 @@
                 <i data-icon="download"></i>
                 下载
             </button>
-            <button class="btn btn-secondary" @click="startCompress">压缩</button>
-            <button class="btn btn-secondary" @click="openAskAI">问 AI</button>
-            <button class="btn btn-secondary" @click="openUploadHost(selectedPaths)">传到服务器</button>
-            <button class="btn btn-danger" @click="deleteSelected">删除</button>
-            <button class="btn btn-secondary" @click="batchCopyMove('copy')">复制</button>
-            <button class="btn btn-secondary" @click="batchCopyMove('move')">移动</button>
+            <button class="btn btn-secondary" v-if="!machine" @click="startCompress">压缩</button>
+            <button class="btn btn-secondary" v-if="!machine" @click="openAskAI">问 AI</button>
+            <button class="btn btn-secondary" v-if="!machine" @click="openUploadHost(selectedPaths)">传到服务器</button>
+            <button class="btn btn-danger" v-if="!machine" @click="deleteSelected">删除</button>
+            <button class="btn btn-secondary" v-if="!machine" @click="batchCopyMove('copy')">复制</button>
+            <button class="btn btn-secondary" v-if="!machine" @click="batchCopyMove('move')">移动</button>
             <button class="btn btn-secondary" v-if="selCount === 1" @click="openSelectedInTerminal">在终端打开</button>
-            <button class="btn btn-secondary" v-if="clipboard" @click="pasteClipboard">粘贴 ({{ clipboard.paths.length }})</button>
+            <button class="btn btn-secondary" v-if="clipboard && !machine" @click="pasteClipboard">粘贴 ({{ clipboard.paths.length }})</button>
             <button class="btn btn-secondary" @click="selectAll">全选</button>
             <button class="btn btn-secondary" @click="invertSelect">反选</button>
             <button class="btn btn-ghost" @click="exitSelMode">取消选择</button>

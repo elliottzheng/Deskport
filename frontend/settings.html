@@ -105,6 +105,9 @@
             <label class="fed-check">
                 <input type="checkbox" v-model="r.terminal"> 接受它的终端会话
             </label>
+            <label class="fed-check">
+                <input type="checkbox" v-model="r.files"> 允许浏览它的文件（只读）
+            </label>
             <label class="field-label">接受它的外部应用（逗号分隔应用 id，<code>*</code> = 全部，留空 = 不接）</label>
             <input class="input" v-model.trim="r.appsText" placeholder="如 yuanchuang；多个用逗号隔开" spellcheck="false">
             <p class="settings-hint" v-if="fedDiscovered[r.id] && fedDiscovered[r.id].length">

@@ -313,7 +313,9 @@ window.FilesMethodsAi = {
             if (p && this.selected[p]) { this.openEntryInTerminal(this.selected[p]); }
         },
         openInTerminal(cwd, prog) {
-            sessionStorage.setItem('terminal-open', JSON.stringify({ cwd: cwd, cmd: prog }));
+            // 成员模式下带着 machine 交接, 终端页会在对应成员上开终端 (cwd 为成员本地路径)
+            sessionStorage.setItem('terminal-open', JSON.stringify(
+                { cwd: cwd, cmd: prog, machine: this.machine || '' }));
             this.ctxMenu = null;
             if (window.parent && window.parent !== window) {
                 window.parent.postMessage({ source: WP_MSG.SRC.EMBED, type: WP_MSG.SHELL.OPEN_TERMINAL }, '*');
@@ -326,6 +328,7 @@ window.FilesMethodsAi = {
         async pasteClipboard() {
             const cb = this.clipboard;
             if (!cb || !cb.paths.length) { return; }
+            if (this.machine) { this.toastMsg('成员文件只读，暂不支持粘贴'); return; }
             try {
                 const r = await fetch('/api/files/paste', {
                     method: 'POST',

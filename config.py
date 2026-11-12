@@ -31,6 +31,7 @@ def getRemotes():
     - terminal (缺省 true): 是否合并该机终端会话 (拉取/合并/WS 路由)
     - apps (缺省 [] = 一律不接): 接受该机哪些外部应用, ["*"] 全收;
       接受/拒绝某个 app 就是有没有它的 id
+    - files (缺省 false): 是否允许在文件页浏览该机的文件 (只读转发)
     """
     raw = load().get('remotes')
     if not isinstance(raw, list):
@@ -53,6 +54,7 @@ def getRemotes():
                     'token': str(item.get('token') or ''),
                     'terminal': item.get('terminal', True) is not False,
                     'apps': apps,
+                    'files': item.get('files', False) is True,
                     'models': models,
                     'model': str(item.get('model') or '').strip()})
     return out

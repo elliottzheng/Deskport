@@ -28,6 +28,40 @@ window.FilesMethodsCore = {
             return parts.length ? parts.join('、') : '常规';
         },
 
+        // ---- 联邦成员浏览 ----
+        // 给 /api/files* 的请求 URL 追加 machine 参数 (成员模式); 本机原样返回
+        fmUrl(base) {
+            if (!this.machine) { return base; }
+            return base + (base.includes('?') ? '&' : '?')
+                + 'machine=' + encodeURIComponent(this.machine);
+        },
+        async loadMachines() {
+            try {
+                const r = await fetch('/api/settings/federation');
+                const data = await r.json().catch(() => ({}));
+                this.machines = (data.fileMachines || []).filter(m => m.id);
+                if (this.machine && !this.machines.some(m => m.id === this.machine)) {
+                    this.machine = '';   // 策略被关或成员已删: 回本机
+                    this.toastMsg('该成员未开放文件浏览，已切回本机');
+                    await this.refresh();
+                }
+            } catch (err) { /* 无联邦配置时仅本机 */ }
+        },
+        async onMachineChange() {
+            // 路径是各机自己的命名空间: 切机器一律回到盘符根重新导航
+            this.loc = '';
+            this.currentPath = '/';
+            this.parentPath = null;
+            this.backStack = [];
+            this.fwdStack = [];
+            this.searchActive = false;
+            this.searchQuery = '';
+            this.clipboard = null;   // 剪贴板路径不跨机
+            this.machineOffline = false;
+            this.clearSelection();
+            await this.refresh();
+        },
+
         // ---- 导航 ----
         async navigate(path) {
             if (path === this.currentPath && this.loc !== 'inbox') { return; }
@@ -51,6 +85,7 @@ window.FilesMethodsCore = {
         },
         rememberLocation() {
             try {
+                if (this.machine) { return; }   // 成员路径不入本机的 localStorage
                 if (this.loc === 'inbox') {
                     localStorage.setItem(FM_LOC_KEY, 'inbox');
                 } else {
@@ -72,6 +107,8 @@ window.FilesMethodsCore = {
                     if (this.currentPath && this.currentPath !== '/') { q.set('path', this.currentPath); }
                     else { q.delete('path'); }
                 }
+                if (this.machine) { q.set('machine', this.machine); }
+                else { q.delete('machine'); }
                 history.replaceState(null, '', location.pathname + '?' + q.toString());
             } catch (err) { /* ignore */ }
             try {
@@ -89,9 +126,11 @@ window.FilesMethodsCore = {
             this.loading = true;
             this.error = '';
             try {
-                const r = await fetch('/api/files?path=' + encodeURIComponent(this.currentPath) + '&hidden=1');
+                const r = await fetch(this.fmUrl('/api/files?path='
+                    + encodeURIComponent(this.currentPath) + '&hidden=1'));
                 const data = await r.json();
                 if (!r.ok) {
+                    if (this.machine) { this.machineOffline = r.status === 502; }
                     // 恢复的路径已失效（删除/改名）: 回退到根目录, 避免一直报错
                     if (this.currentPath && this.currentPath !== '/' && !this._fallbackTried) {
                         this._fallbackTried = true;
@@ -105,6 +144,7 @@ window.FilesMethodsCore = {
                     return;
                 }
                 this._fallbackTried = false;
+                this.machineOffline = false;
                 this.currentPath = data.currentPath;
                 this.parentPath = data.parentPath;
                 this.entries = data.entries;
