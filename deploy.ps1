@@ -195,7 +195,7 @@ if (Test-Path $stateDir) {
     Say 'state files backed up'
 }
 robocopy $dst (Join-Path $backup 'prod') /E /XD .venv .git logs __pycache__ .run .deploy-backup `
-    /XF run.log locald.log sshd.log watchdog.log /NFL /NDL /NJH /NP | Out-Null
+    /XF *.log /R:2 /W:2 /NFL /NDL /NJH /NP | Out-Null
 Say ("prod code backup exit=" + $LASTEXITCODE)
 
 # 备份保留最近 3 份：历史备份曾把旧备份一起复制，导致目录指数级膨胀
@@ -209,9 +209,12 @@ foreach ($f in $daemonFiles) { $before[$f] = Hash-File (Join-Path $dst $f) }
 
 # ---------------- 3. sync ----------------
 Say 'robocopy sync...'
+# /XF *.log：运行中的守护进程/节点写着自己的日志，robocopy 遇到被占用的文件会按
+# /R 次数重试，默认 100 万次 × 30 秒 = 永远卡住（2026-11-12 实际卡了 12 分钟）。
+# 日志本来也不该从 dev 覆盖到 prod。重试限制在 2 次 × 2 秒，宁可报错也别静默卡死。
 robocopy $src $dst /E `
-    /XF config.json .rc.cookies .rc.cookies.dev run.log locald.log sshd.log watchdog.log `
-    /XD logs __pycache__ .venv .git .run .deploy-backup /NFL /NDL /NJH /NP | Out-Null
+    /XF config.json .rc.cookies .rc.cookies.dev *.log `
+    /XD logs __pycache__ .venv .git .run .deploy-backup /R:2 /W:2 /NFL /NDL /NJH /NP | Out-Null
 $rc = $LASTEXITCODE
 Say ("sync exit=" + $rc)
 if ($rc -ge 8) { Say 'sync failed'; exit 1 }
@@ -291,7 +294,7 @@ if (-not $smokeOk) {
     $prodBackup = Join-Path $backup 'prod'
     if (Test-Path $prodBackup) {
         robocopy $prodBackup $dst /E /XD .venv .git logs __pycache__ .run .deploy-backup `
-            /XF run.log locald.log sshd.log watchdog.log /NFL /NDL /NJH /NP | Out-Null
+            /XF *.log /R:2 /W:2 /NFL /NDL /NJH /NP | Out-Null
     }
     if (Test-Path (Join-Path $backup 'config.json')) {
         Copy-Item (Join-Path $backup 'config.json') $cfgPath -Force
