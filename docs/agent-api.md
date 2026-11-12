@@ -238,7 +238,9 @@ DELETE /api/agent/ssh/sessions/<sid>
 | GET | /api/tasks/<id> | 任务状态（含 `model`、`workspace`、`remoteCwd`） |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
 | GET | /api/tasks/<id>/events/stream?since=N | SSE 推送 |
-| POST | /api/tasks/<id>/message | 续聊 `{text}`（沿用原模型） |
+| POST | /api/tasks/<id>/message | 续聊 `{text, mode?, wait?}`，mode=queue（默认）/steer/reject |
+| GET | /api/tasks/<id>/messages | 排队中的消息 `{items, count}`（只列未投递的） |
+| DELETE | /api/tasks/<id>/messages/<mid> | 撤回一条排队消息 → `{ok, count}`（已投递 404） |
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
@@ -296,6 +298,21 @@ DELETE /api/agent/ssh/sessions/<sid>
   `GET /api/tasks/kimi-sessions?cwd=<工作目录>`；
 - **close 回收语义**：`waiting`/`paused` 任务的会话进程保留（45 分钟空闲
   回收，随时可续聊）；`close` 是明确结束——node/联邦侧的 ACP 进程立即回收；
+- **轮中插话（R5-5）**：`message` 的 `mode` 决定本轮执行中的行为——
+  `queue`（**默认**）：入服务端持久化队列，本轮结束后按序自动投递，
+  202 `{queued: true, position}`；队列随任务落盘，**web 重启不丢**（重启后
+  续聊/恢复时先清积压再执行你的新消息）；`steer`：插队首并打断当前轮
+  （同 /cancel：当前轮以 `cancelled` 落卡，部分回答保留），轮停止后立即
+  投递。**steer 会打断当前轮，执行方可能丢掉正在做的半截工作**（写到一半
+  的文件、执行到一半的命令），插话文本里请自带「上轮被打断，如何继续」的
+  上下文；`reject`：保留旧行为，轮中 409。`waiting` 状态发消息一律立即
+  投递，mode 不生效；有 live 挂起审批时 `reject` 409 带 `pending`
+  （R4-3c），`queue`/`steer` 照常入队——但服务端在审批落定前不投递
+  （旧审批 5 分钟超时拒绝会把刚开的新一轮带死）。排队消息可查看、可撤回：
+  `GET /api/tasks/<id>/messages` → `{items: [{id, text, at, by, steer}], count}`，
+  `DELETE /api/tasks/<id>/messages/<mid>`（已投递 404）；任务详情/事件响应
+  带 `queuedMessages` 计数。投递即从队列移除，事件流里对应 `user` 事件
+  （steer 投递带 `steer: true` 标记）；
 - **文件投递**（智能体够不到 Deskport 文件系统时的过渡通道）：
   `POST /api/tasks/files {"name": "报告.md", "contentB64": "..."}` →
   `{"path": "E:\\...\\报告.md"}`，把该 path 放进 `paths`；或建任务时直接带

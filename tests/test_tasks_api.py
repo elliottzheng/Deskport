@@ -1344,27 +1344,43 @@ def test_inter_turn_perm_unknown_callid_asks_not_borrow(env):
             ev.set()
 
 
-def test_message_with_live_pending_is_409(env):
-    """R4-3c #3：waiting 状态下有 live 挂起审批 → message 409 带 pending。"""
+def test_message_with_live_pending_reject_409_queue_enqueues(env):
+    """R4-3c #3 + R5-5：waiting + live 挂起审批 → mode=reject 409 带 pending；
+    默认 queue 照常入队（202 queued），投递时机由 runner 审批闸门兜住。"""
     import threading
-    resp = create(env, {'prompt': 'x'})
-    tid = resp.get_json()['task']['id']
-    with env.repo.lock:
-        task = env.repo.get(tid)
-        task_state_mark_waiting(task)
-        task['pendingPermission'] = '24'
-        env.repo.setAgent(tid, {'perm': {'requestId': '24', 'title': 'Bash',
-                                         'callId': 'callB', 'args': 'docker ps',
-                                         'options': []},
-                                 'permDecision': {'value': None},
-                                 'permEvent': threading.Event()})
-        env.repo.save()
+
+    def setupPending():
+        resp = create(env, {'prompt': 'x'})
+        tid = resp.get_json()['task']['id']
+        with env.repo.lock:
+            task = env.repo.get(tid)
+            task_state_mark_waiting(task)
+            task['pendingPermission'] = '24'
+            env.repo.setAgent(tid, {'queue': queue.Queue(),
+                                    'perm': {'requestId': '24', 'title': 'Bash',
+                                             'callId': 'callB', 'args': 'docker ps',
+                                             'options': []},
+                                    'permDecision': {'value': None},
+                                    'permEvent': threading.Event()})
+            env.repo.save()
+        return tid
+
+    tid = setupPending()
     resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
-                           data=json.dumps({'text': '继续'}),
+                           data=json.dumps({'text': '继续', 'mode': 'reject'}),
                            content_type='application/json')
     assert resp.status_code == 409
     body = resp.get_json()
     assert body['pending']['requestId'] == '24'
+    tid = setupPending()
+    resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
+                           data=json.dumps({'text': '继续'}),
+                           content_type='application/json')
+    assert resp.status_code == 202, resp.get_json()
+    assert resp.get_json()['queued'] is True
+    with env.repo.lock:
+        mq = env.repo.get(tid).get('messageQueue') or []
+    assert len(mq) == 1 and mq[0]['text'] == '继续'
 
 
 def task_state_mark_waiting(task):

@@ -28,6 +28,7 @@
                 modeBusy: false,
                 fullEvents: {},
                 error: '',
+                notice: '',
                 pickerOpen: false,
                 pickerSource: 'all',
                 inboxItems: [],
@@ -70,7 +71,12 @@
                         : '会话不可继续，请新建任务。';
                 }
                 if (s === 'closed') { return '会话已结束，不能再继续。'; }
-                if (s === 'running') { return '这一轮执行中，可以点“停止本轮”中断。'; }
+                if (s === 'running') {
+                    const n = this.detail.queuedMessages || 0;
+                    return n > 0
+                        ? '这一轮执行中；已有 ' + n + ' 条消息排队，本轮结束后自动送达。'
+                        : '这一轮执行中，新消息会排队，本轮结束后自动送达。';
+                }
                 return '';
             },
             pendingPermission() { return this.detail && this.detail.pendingPermission || ''; },
@@ -122,7 +128,7 @@
                             const patch = {};
                             ['status', 'resultFiles', 'error', 'lastText', 'canContinue',
                              'pendingPermission', 'canResume', 'awaitingAnswer', 'mode',
-                             'lastActiveLabel'].forEach(function (k) {
+                             'lastActiveLabel', 'queuedMessages'].forEach(function (k) {
                                 if (cur[k] !== undefined) { patch[k] = cur[k]; }
                             });
                             this.detail = Object.assign({}, this.detail, patch);
@@ -136,6 +142,7 @@
                 this.events = [];
                 this.after = 0;
                 this.message = '';
+                this.notice = '';
                 this.fullEvents = {};
                 this.loadDetail();   // R4-0 精简列表缺 resultFiles/createdLabel 等，详情端点补全
                 await this.loadEvents();
@@ -176,6 +183,7 @@
                         awaitingAnswer: data.awaitingAnswer,
                         pendingPermission: data.pendingPermission || '',
                         mode: data.mode,
+                        queuedMessages: data.queuedMessages || 0,
                     });
                     if (added && nearBottom) {
                         const self = this;
@@ -235,6 +243,7 @@
                 if (!text || !this.canSend || this.sending) { return; }
                 this.sending = true;
                 this.error = '';
+                this.notice = '';
                 try {
                     const r = await fetch('/api/tasks/' + this.selectedId + '/message', {
                         method: 'POST',
@@ -244,6 +253,10 @@
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                     this.message = '';
+                    this.notice = data.queued
+                        ? '已排队（第 ' + data.position + ' 位' +
+                          (data.steered ? '，插话将打断当前轮' : '') + '），本轮结束后自动送达。'
+                        : '';
                     await this.loadEvents();
                 } catch (err) {
                     this.error = err.message;
