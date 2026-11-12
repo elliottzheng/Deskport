@@ -20,6 +20,7 @@ Flask app (app.py, 0.0.0.0:6789, threaded=True)
    ├─ modules/ssh.py       SSH/SFTP（或经 sessionproxy 转发到 sshd）
    ├─ modules/tasks.py     任务/AI 交接 + aihandoff
    ├─ modules/settings.py  密码/收件箱/品牌/登录设备/上传目标
+   ├─ modules/feedback.py  用户反馈（提交/附件/检索/状态）+ feedback_store
    ├─ modules/plugins.py   插件发现与加载（原生 + legacy）+ 导航
    └─ 智能体面: agent_api(+sessions/sftp/upload/device_auth) / agent_nodes /
                 tasks_api(+runner/store/policy) / worklines / federation
@@ -42,7 +43,7 @@ Flask app (app.py, 0.0.0.0:6789, threaded=True)
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      pluginsModule, agentApiModule, agentNodesModule,
-                     tasksFederationModule, worklinesModule)
+                     tasksFederationModule, worklinesModule, feedbackModule)
 REGISTER_MODULES = (systemModule, metaModule, tasksModule,
                     worklinesModule, filesFederationModule)
 
@@ -70,6 +71,7 @@ for module in BLUEPRINT_MODULES:
 | `modules/aihandoff.py` | `blueprint`（`inbox_base`） | 与 `inbox_scan` 共用蓝图 |
 | `modules/control.py` | `blueprint`（`control_base`） | 控制台；`control_input` 导入时挂子路由 |
 | `modules/settings.py` | `blueprint` | 密码、收件箱、品牌、登录设备、上传目标 |
+| `modules/feedback.py` | `blueprint` | 用户反馈七个端点；存储/幂等/频控/状态机在 `feedback_store`（`<stateDir>/feedback.json` + `feedback/attachments/`） |
 | `modules/plugins.py` | `blueprint`（`plugins_base`）+ `load(app)` | 蓝图给 `/api/plugins`；`load()` 由 `_registerModules` 末尾调用，扫插件目录 |
 | `modules/agent_api.py` | `blueprint` | 智能体 API 主体；`agent_sessions` / `agent_sftp` / `agent_upload` / `device_auth` / `agent_local` 把路由挂到同一蓝图，随它一次注册 |
 | `modules/agent_nodes.py` | `blueprint`（当前无路由） | 远端节点 HTTP 客户端、`engine=remote` 引擎注册、节点模型/健康探测；端点本身挂在 `agent_api` 与 `tasks_federation` |

@@ -32,6 +32,7 @@
 | [ai-handoff.md](ai-handoff.md) | 收件箱与「交给 AI」：扫描去重、落点判断、案例目录、配置 |
 | [control.md](control.md) | 控制台：电源/进程/窗口/应用/文本/审计 |
 | [settings.md](settings.md) | 设置页：访问密码、收件箱扫描、品牌名称、登录设备、上传目标 |
+| [feedback.md](feedback.md) | 用户反馈：悬浮入口与浮层、信封契约、提交/检索/状态接口、脱敏规则、存储与偏差 |
 | [plugin-api.md](plugin-api.md) | 插件系统：原生清单、RemoteConnecter legacy 兼容、导航生成与认证 |
 | [external-apps.md](external-apps.md) | 外部应用反代挂载：prefix、白名单、与联邦成员 `apps` 的关系 |
 | [principles.md](principles.md) | 产品与设计原则 |

@@ -50,7 +50,9 @@ ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
 # termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性
 INFRA = {'state', 'internal_api', 'events', 'fsutil', 'textio', 'media', 'contracts',
          'decision', 'termcore', 'termprobe', 'wsproto', 'winenv'}
-ALLOWED_WINDOW = {'termManager', 'termUI', 'createSshSession', 'SSHUI',
+ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反馈入口
+                  'fetch', 'onerror',              # 反馈捕获层给请求/错误打的钩子
+                  'termManager', 'termUI', 'createSshSession', 'SSHUI',
                   'AppShell', 'AppShellV2', 'Icons', 'SftpMemory',
                   'SftpState', 'SftpMenu', 'SftpSelect', 'SftpTransfer',
                   'FilesMethodsSelect', 'TermSidebar', 'TermGeometry', 'WP_NAV',
