@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import deskport  # noqa: E402  同目录的单文件客户端
 
 HERE = Path(__file__).resolve().parent
-RUN_ROOT = HERE / "run"
+RUN_ROOT = Path(os.environ.get("DRIVER_RUN_DIR") or (HERE / "run"))
 TIMEOUT, MAX_TEXT, STALL_SEC = 900, 3000, 600   # 一轮等待上限 / 结论正文上限 / 无事件判停
 
 
