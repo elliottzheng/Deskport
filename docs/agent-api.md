@@ -448,8 +448,9 @@ Deskport 升级后重新拉取即更新（mtime 检测变更）。
   （升级时一并升），新字段直接可用，不为旧版保留别名或降级路径；
 - agent node 需要 Python ≥ 3.11（模型自动发现依赖 tomllib），入口有
   fail-fast 守卫；建议用 uv 跑 3.13；
-- 外部调用方 Python 封装参考：`deskport.py`（仅标准库）已按本 API 契约
-  处理 NUL 拒发、`after` 增量去重等；服务端修复后这些规避仍兼容。
+- 外部调用方的 Python 客户端就在仓库里：[`sdk/deskport.py`](../sdk/README.md)
+  （仅标准库，单文件），按本 API 契约处理了 NUL 拒发、`after` 增量去重、
+  大文件分块读取等；服务端修复后这些规避仍兼容。`curl` 之外需要写代码时优先用它。
 
 ## 技能封装（给智能体用）
 
