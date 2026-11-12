@@ -252,3 +252,12 @@ def machineOptions():
         if r.get('terminal'):
             out.append({'id': r['id'], 'name': r['name']})
     return out
+
+
+def fileMachines():
+    """文件页的机器选项: 本机 + 允许浏览其文件的远端（id 为空串表示本机）。"""
+    out = [{'id': '', 'name': '本机'}]
+    for r in remotes():
+        if r.get('files'):
+            out.append({'id': r['id'], 'name': r['name']})
+    return out

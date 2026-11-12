@@ -132,6 +132,7 @@ createApp({
         toRemoteRow(x) {
             return { id: x.id, name: x.name, base: x.base, token: x.token || '',
                      terminal: x.terminal !== false,
+                     files: x.files === true,
                      appsText: (x.apps || []).join(', ') };
         },
         async loadFederation() {
@@ -197,7 +198,7 @@ createApp({
                 return b.toString(36).padStart(2, '0');
             }).join('').slice(0, 6);
             this.fedRemotes.push({ id: id, name: '', base: '', token: '',
-                                   terminal: true, appsText: '' });
+                                   terminal: true, files: false, appsText: '' });
         },
         async saveRemotes() {
             if (this.fedBusy) { return; }
@@ -209,7 +210,7 @@ createApp({
             const payload = this.fedRemotes.map(function (r) {
                 const apps = (r.appsText || '').split(/[,，\s]+/).filter(Boolean);
                 return { id: r.id, name: r.name, base: r.base, token: r.token || '',
-                         terminal: r.terminal !== false, apps: apps };
+                         terminal: r.terminal !== false, files: r.files === true, apps: apps };
             });
             this.fedBusy = true;
             try {

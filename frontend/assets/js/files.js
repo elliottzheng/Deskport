@@ -16,7 +16,12 @@ createApp({
             error: '',
             useTempDir: false,
             executeAfter: false,
-        searchActive: false,   // L2: 搜索结果模式
+
+            // 联邦成员浏览: machine 为空串 = 本机; 只读, 切换即重置导航
+            machines: [],
+            machine: _initialMachine(),
+            machineOffline: false,
+          searchActive: false,   // L2: 搜索结果模式
         searchTruncated: false,
         dragOver: false,
         searchQuery: '',
@@ -123,6 +128,11 @@ createApp({
     computed: {
         drives() { return this.drivesCache; },
         quickList() { return this.pins; },
+        isRemote() { return !!this.machine; },
+        machineName() {
+            const m = this.machines.find(x => x.id === this.machine);
+            return m ? m.name : (this.machine || '本机');
+        },
         // 「此电脑」根视图没有真实目录, 后端会以 400 拒绝; 提前禁用并说明,
         // 而不是让用户选完文件才看到"无效的保存目录"
         canUpload() {
@@ -189,10 +199,11 @@ createApp({
         },
         crumbs() {
             if (this.loc === 'inbox') { return [{ label: '收件箱', path: '/files?loc=inbox' }]; }
+            const rootLabel = this.machine ? this.machineName : '此电脑';
             const p = this.currentPath || '/';
-            if (p === '/') { return [{ label: '此电脑', path: '/' }]; }
+            if (p === '/') { return [{ label: rootLabel, path: '/' }]; }
             const parts = p.split('\\').filter(Boolean);
-            const crumbs = [{ label: '此电脑', path: '/' }];
+            const crumbs = [{ label: rootLabel, path: '/' }];
             let acc = '';
             parts.forEach((seg, i) => {
                 acc = i === 0 ? seg + '\\' : acc + seg + '\\';
@@ -232,11 +243,13 @@ createApp({
     mounted() {
         // 地址栏编辑失焦即提交 (enter 已绑定)
         if (this.loc === 'inbox') { this.openInbox(); } else { this.refresh(); }
-        // 侧栏「此电脑」独立加载, 收件箱模式下也要能直接跳回磁盘
-        fetch('/api/files?path=%2F').then(r => r.json())
+        // 侧栏「此电脑」独立加载, 收件箱模式下也要能直接跳回磁盘;
+        // 成员模式下这里列的是成员的盘符
+        fetch(this.fmUrl('/api/files?path=%2F')).then(r => r.json())
             .then(d => { if (d && d.entries) { this.drivesCache = d.entries; } })
             .catch(() => {});
         fetch('/api/files/pins').then(r => r.json()).then(d => { this.pins = d.pins || []; }).catch(() => {});
+        this.loadMachines();
         // 浏览器退出全屏 (Esc) 时同步按钮文案
         document.addEventListener('fullscreenchange', () => { this.syncFullscreenFlag(); });
         window.addEventListener('scroll', () => { this.ctxMenu = null; }, true);

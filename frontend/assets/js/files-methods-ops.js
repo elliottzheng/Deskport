@@ -1,6 +1,7 @@
 // 自动拆分自 files.js：FilesMethodsOps
 window.FilesMethodsOps = {
         async deletePaths(paths) {
+            if (this.machine) { this.toastMsg('成员文件只读，暂不支持删除'); return; }
             if (!paths.length) { return; }
             try {
                 const r = await fetch('/api/files/recycle-delete', {
@@ -22,6 +23,11 @@ window.FilesMethodsOps = {
             return this.deletePaths(this.selectedPaths);
         },
         async downloadPaths(paths) {
+            if (this.machine && paths.length > 1) {
+                // 多选拢 ZIP 要在成员机上写文件, 第一版只读不放行
+                this.toastMsg('成员模式暂只支持单个文件下载');
+                return;
+            }
             if (paths.length === 1) {
                 const entry = this.entries.find(e => e.path === paths[0]);
                 if (entry && entry.type === 'file') {
@@ -58,7 +64,7 @@ window.FilesMethodsOps = {
         },
         doDownloadOne(path) {
             const a = document.createElement('a');
-            a.href = '/api/files/download?path=' + encodeURIComponent(path);
+            a.href = this.fmUrl('/api/files/download?path=' + encodeURIComponent(path));
             a.download = '';
             document.body.appendChild(a);
             a.click();
@@ -66,6 +72,7 @@ window.FilesMethodsOps = {
             if (this.isMobile) { this.toastMsg('开始下载…'); }
         },
         async doStart(path) {
+            if (this.machine) { this.toastMsg('成员文件只读，暂不支持启动'); return; }
             try {
                 const r = await fetch('/api/files/start', {
                     method: 'POST',
@@ -85,6 +92,7 @@ window.FilesMethodsOps = {
             const files = Array.from(ev.target.files || []);
             ev.target.value = '';
             if (!files.length) { return; }
+            if (this.machine) { this.toastMsg('成员文件只读，暂不支持上传'); return; }
             // 「此电脑」根视图没有真实目录, 后端会 400; 这里提前说明, 别让用户
             // 选完文件才看到一句"无效的保存目录"
             if (!this.canUpload) {
@@ -143,6 +151,7 @@ window.FilesMethodsOps = {
         },
         async extractPaths(paths) {
             if (!paths.length) { return; }
+            if (this.machine) { this.toastMsg('成员文件只读，暂不支持解压'); return; }
             this.busy = true;
             try {
                 const r = await fetch('/api/files/extract', {
@@ -184,8 +193,8 @@ window.FilesMethodsOps = {
         }
         this.loading = true;
         try {
-            const r = await fetch('/api/files/search?path=' + encodeURIComponent(this.currentPath)
-                + '&q=' + encodeURIComponent(q));
+            const r = await fetch(this.fmUrl('/api/files/search?path=' + encodeURIComponent(this.currentPath)
+                + '&q=' + encodeURIComponent(q)));
             const data = await r.json();
             this.entries = data.results;
             this.searchActive = true;
@@ -206,6 +215,10 @@ window.FilesMethodsOps = {
         this.dragOver = false;
         const files = Array.from((ev.dataTransfer && ev.dataTransfer.files) || []);
         if (!files.length) { return; }
+        if (this.machine) {
+            this.toastMsg('成员文件只读，暂不支持上传');
+            return;
+        }
         if (!this.canUpload) {
             this.toastMsg('请先进入某个磁盘或文件夹再上传');
             return;

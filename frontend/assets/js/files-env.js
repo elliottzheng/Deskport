@@ -26,3 +26,8 @@ function _initialPath() {
     try { return localStorage.getItem(FM_PATH_KEY) || '/'; } catch (err) { return '/'; }
 }
 
+// 联邦成员浏览: ?machine=<成员id>, 只从 URL 取 (切成员即重置路径, 不入 localStorage)
+function _initialMachine() {
+    return (new URLSearchParams(location.search).get('machine') || '').trim();
+}
+

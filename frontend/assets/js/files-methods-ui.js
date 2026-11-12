@@ -114,9 +114,9 @@ window.FilesMethodsUi = {
                 this.previewTarget = e;
                 // 两段式: 缩略图先秒开, 原图 (inline) 加载完自动替换。
                 // 缩略图放大会糊 —— 全屏预览必须用原图
-                this.previewShownSrc = '/api/files/thumb?path=' + encodeURIComponent(e.path);
-                this.previewFullSrc = '/api/files/download?path=' + encodeURIComponent(e.path)
-                                      + '&inline=1';
+                this.previewShownSrc = this.fmUrl('/api/files/thumb?path=' + encodeURIComponent(e.path));
+                this.previewFullSrc = this.fmUrl('/api/files/download?path=' + encodeURIComponent(e.path)
+                                                 + '&inline=1');
                 this.previewFullscreen = true;
                 this.$nextTick(() => { WPCommon.fullscreenToggle(this.$refs.previewBox); });
                 return;
@@ -129,7 +129,7 @@ window.FilesMethodsUi = {
             this.previewContent = '加载中…';
             this.previewMdHtml = '';
             try {
-                const r = await fetch('/api/files/read', {
+                const r = await fetch(this.fmUrl('/api/files/read'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: e.path }),
@@ -173,6 +173,7 @@ window.FilesMethodsUi = {
             this.previewFullscreen = !!document.fullscreenElement;
         },
         async savePreview() {
+            if (this.machine) { this.toastMsg('成员文件只读，不能保存'); return; }
             if (this.previewLossy) { this.toastMsg('二进制文件只读，不能保存'); return; }
             try {
                 const r = await fetch('/api/files/write', {
@@ -200,7 +201,7 @@ window.FilesMethodsUi = {
             return e.type === 'file' && IMAGE_EXTS.includes(this.extOf(e));
         },
         thumbUrl(e) {
-            return '/api/files/thumb?path=' + encodeURIComponent(e.path);
+            return this.fmUrl('/api/files/thumb?path=' + encodeURIComponent(e.path));
         },
 
         // ---- FM-16/18 打开方式: 强制文本 (乱码原文可见, 有损只读) ----

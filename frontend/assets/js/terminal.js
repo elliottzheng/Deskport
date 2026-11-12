@@ -131,7 +131,8 @@
         const pending = JSON.parse(sessionStorage.getItem('terminal-open') || 'null');
         if (pending && pending.cwd) {
             sessionStorage.removeItem('terminal-open');
-            manager.createSession(pending.cmd || '', pending.cwd, { kick: pending.kick || null });
+            manager.createSession(pending.cmd || '', pending.cwd,
+                { kick: pending.kick || null, machine: pending.machine || '' });
         }
     } catch (err) { /* 忽略脏数据 */ }
 
@@ -153,7 +154,8 @@
             const p = JSON.parse(sessionStorage.getItem('terminal-open') || 'null');
             if (p && p.cwd) {
                 sessionStorage.removeItem('terminal-open');
-                manager.createSession(p.cmd || '', p.cwd, { kick: p.kick || null });
+                manager.createSession(p.cmd || '', p.cwd,
+                    { kick: p.kick || null, machine: p.machine || '' });
             }
         } catch (err) { /* 忽略 */ }
     });
