@@ -21,7 +21,7 @@ from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
 from modules import worklines_store
-from modules import fsutil, staging, task_cwd
+from modules import fsutil, staging, task_cwd, task_node
 from modules import agent_nodes
 from modules import model_availability
 from modules import events
@@ -57,22 +57,28 @@ def listTasks():
 
 
 def _mergeWorklineDefaults(data, wl):
-    """工作线给的默认执行点/模型/模式/边界；请求里显式给的优先。"""
+    """工作线给的默认执行点/目录/模型/模式/边界；请求里显式给的优先。
+
+    旧工作线的字段映射在 task_node 里做一次；旧远端线缺 node 直接报错让人补，
+    不能悄悄落到本机。返回 (data, errorPayload)，无错时 errorPayload 为 None。
+    """
     data = dict(data)
-    defaultEngine = (wl.get('engine') or '').strip().lower()
-    if not data.get('engine') and defaultEngine:
-        data['engine'] = defaultEngine
-    if (data.get('engine') or 'acp').lower() == 'remote':
-        for key in ('node', 'cwd'):
-            if not data.get(key) and wl.get(key):
-                data[key] = wl[key]
+    wlNode, missing = task_node.worklineNode(wl)
+    if not str(data.get('node') or '').strip():
+        data['node'] = wlNode
+        if missing:
+            return data, {'error': '工作线 %s 记录的是旧版远端执行点但缺少 node，'
+                                   '请先 PUT /api/worklines/%s 补 node'
+                                   % ((wl.get('id') or ''), (wl.get('id') or ''))}
+    if not data.get('cwd') and wl.get('cwd'):
+        data['cwd'] = wl['cwd']
     defaults = wl.get('defaults') or {}
     for key in ('model', 'mode'):
         if not data.get(key) and defaults.get(key):
             data[key] = defaults[key]
     if not data.get('policy') and wl.get('policy'):
         data['policy'] = wl['policy']
-    return data
+    return data, None
 
 
 @blueprint.route('/api/tasks', methods=['POST'])
@@ -81,7 +87,6 @@ def createTask():
     payload, code = createTaskResponse(data)
     return jsonify(payload), code
 
-
 def createTaskResponse(data):
     """建任务核心（/api/tasks 与 /api/worklines/<id> 的派活共用）。
 
@@ -89,13 +94,17 @@ def createTaskResponse(data):
     """
     store.repo.load()
     data = dict(data or {})
+    if (legacy := task_node.rejectLegacyEngine(data)):
+        return {'error': legacy}, 400
     worklineId = str(data.get('workline') or data.get('worklineId') or '').strip()
     workline = None
     if worklineId:
         workline = worklines_store.repo.get(worklineId)
         if workline is None:
             return {'error': '工作线不存在: %s' % worklineId}, 404
-        data = _mergeWorklineDefaults(data, workline)
+        data, wlError = _mergeWorklineDefaults(data, workline)
+        if wlError:
+            return wlError, 400
     prompt = (data.get('prompt') or '').strip()
     paths = data.get('paths') or []
     if not prompt:
@@ -105,9 +114,8 @@ def createTaskResponse(data):
                                  '上传到本机再用 paths 引用'}), 400
     if not isinstance(paths, list) or len(paths) > 20:
         return ({'error': 'paths 必须是数组且不超过 20 项'}), 400
-    engine = (data.get('engine') or 'acp').lower()
-    if engine not in ('acp', 'remote'):
-        return ({'error': 'engine 只能是 acp / remote'}), 400
+    node = task_node.normalize(data.get('node'))
+    local = task_node.isLocal(node)
     # 不传 mode 时逐项审批（安全默认）——要自动批准必须显式传 auto
     mode = (data.get('mode') or 'default').lower()
     if mode not in ('auto', 'default', 'plan', 'yolo'):
@@ -116,28 +124,22 @@ def createTaskResponse(data):
     if model:
         if len(model) > 100 or any(c < ' ' for c in model):
             return ({'error': 'model 不合法（≤100 字符，无控制字符）'}), 400
-    node = ''
-    remoteCwd = ''
-    kimiSessionId = ''
-    policy = {}
+    taskCwd = remoteCwd = ''
     try:
         policy = task_policy.validatePolicy(data.get('policy'))
-        taskCwd = task_cwd.resolve(data.get('cwd'), engine)
+        if local:
+            taskCwd = task_cwd.resolve(data.get('cwd'))
     except ValueError as e:
         return ({'error': str(e)}), 400
-    if engine == 'remote':
-        node = str(data.get('node') or '').strip()
-        if not node:
-            return ({'error': 'engine=remote 需要 node（执行点名）',
-                            'nodes': agent_nodes.listNodeNames()}), 400
+    if not local:
         if agent_nodes.findNode(node) is None \
                 and agent_nodes.findFederationMember(node) is None:
             return ({'error': '执行点不存在（agent node 或联邦成员）',
                             'nodes': agent_nodes.listNodeNames()}), 400
         remoteCwd = str(data.get('cwd') or '').strip()
         if not remoteCwd:
-            return ({'error': 'engine=remote 需要 cwd（远端工作目录）',
-                            'hint': 'cwd 必须是执行点上已存在的目录'}), 400
+            return ({'error': '执行点 %s 需要 cwd（该机器上的工作目录）' % node,
+                            'hint': 'cwd 必须是执行点上已存在的目录（由执行点校验）'}), 400
         if len(remoteCwd) > 500:
             return ({'error': 'cwd 过长'}), 400
         # R5-1a：联邦执行点的首条消息受对端 4000 上限约束，接力棒无法保证
@@ -145,8 +147,7 @@ def createTaskResponse(data):
         if workline and agent_nodes.findFederationMember(node) is not None:
             return ({'error': '工作线暂不支持联邦执行点（R5-1b 再做），'
                               '请改用 agent node'}), 400
-        paths = []   # 远端任务不接受本机文件，跨机传输不在本引擎范围
-    # acp 的 cwd 已在上方 task_cwd.resolve 校验（缺省 = workspace）
+        paths = []   # 非本机任务不接受本机文件（跨机投递是下一批）
     # 接手已有 Kimi CLI 会话（第二轮反馈 §2）：默认先 fork 复制，
     # 避免与用户开着的终端并发写同一会话；fork:false 且会话未被占用才直接接管
     kimiSessionId = str(data.get('kimiSessionId') or '').strip()   # 用户传的原会话
@@ -160,7 +161,7 @@ def createTaskResponse(data):
         if isinstance(fork, str):
             fork = fork.strip().lower() != 'false'
         kimiSessionFork = bool(fork)
-        if engine == 'acp':
+        if local:
             loadedSessionId = kimiSessionId
             if fork:
                 try:
@@ -178,17 +179,16 @@ def createTaskResponse(data):
                     return ({'error': '该会话已被任务 %s 接管，不能再次直接接管'
                                     % live[0]['id'],
                                     'hint': '去掉 fork:false 改用 fork 副本'}), 409
-        # engine=remote：kimiSessionId/fork 原样透传到节点侧 fork+load（R4-7）
+        # 非本机：kimiSessionId/fork 原样透传到执行点侧 fork+load（R4-7）
     # 模型白名单：执行点声明了可选列表时必须命中（§7.1 按活的性质挑模型）
-    decl = agent_nodes.nodeModelDecl(node or ('local' if engine == 'acp' else ''))
+    decl = agent_nodes.nodeModelDecl(node)
     if model and decl['models'] and model not in decl['models']:
         return ({'error': '执行点 %s 不支持模型 %s' % (decl['name'], model),
                         'models': decl['models'],
                         'defaultModel': decl['default']}), 400
     # R4-10 模型可用性门禁：24h 内探测失败的直接拒绝，省一次必然失败的派活；
     # 没探测过的（usable=null）照常放行
-    gateErr, gateAvail = model_availability.modelGate(
-        node or ('local' if engine == 'acp' else ''), model)
+    gateErr, gateAvail = model_availability.modelGate(node, model)
     if gateErr:
         return ({'error': gateErr,
                         'usableModels': gateAvail['usableModels'],
@@ -230,15 +230,15 @@ def createTaskResponse(data):
         'createdAt': store._now(), 'startedAt': 0, 'endedAt': 0,
         'seq': 0, 'events': [], 'lastText': '',
         'resultFiles': [], 'error': '', 'sessionId': loadedSessionId,
-        'engine': engine, 'kimiSessionId': kimiSessionId,
+        'kimiSessionId': kimiSessionId,
         'kimiSessionFork': kimiSessionFork,
         'owner': getattr(g, 'agentTokenName', '') or '面板',
         'mode': mode, 'model': model, 'modelEffective': modelEffective,
         'policy': policy,
         'resume': False, 'closedByUser': False,
         'pendingPermission': '', 'lastActiveAt': 0,
-        'node': node, 'remoteCwd': remoteCwd,
-        'cwd': taskCwd or (workspace if engine == 'acp' else ''),
+        'node': node,
+        'cwd': (taskCwd or workspace) if local else remoteCwd,
         'sources': manifest,
     }
     injected = ''
@@ -531,7 +531,7 @@ def cancelTask(task, taskId):
         store.repo.append_event(task, 'status', text='已请求停止当前这轮')
         return jsonify({'ok': True, 'status': task.get('status')})
     if client is not None:
-        # R4-5/缺陷修复：cancel 只结束当前这一轮（node/联邦引擎与 stdio 同
+        # R4-5/缺陷修复：cancel 只结束当前这一轮（node/联邦执行点与 stdio 同
         # 语义）——轮结束后 runner 把任务置回 waiting，任务保持可续聊；
         # 不再终态化成 cancelled（那会让后续 message 一律 409）
         runner._denyPendingPermission(agent)
@@ -922,7 +922,7 @@ def listKimiSessions():
                    'node=%s cwd=%s' % (node or '-', cwd or '-'), request.remote_addr)
     return jsonify({'sessions': items, 'node': node,
                     'hint': 'POST /api/tasks {"kimiSessionId": "<id>", '
-                            '"engine": "remote", "node": "<节点>"} '
+                            '"node": "<执行点>", "cwd": "<目录>"} '
                             '接手（默认 fork 副本，不干扰原会话）'})
 
 

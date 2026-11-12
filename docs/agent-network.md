@@ -45,8 +45,8 @@
 ## 三、任务生命周期
 
 1. **派活** `POST /api/tasks` → `clientFactoryFor` 选执行点
-   （engine=acp → 本机 node；engine=remote → 指定节点 + 远端 cwd；
-   node 未启用 → 回退 web 内 stdio 托管）→ `_sessionThread` 建常驻会话。
+   （node=local → 本机 node；node=其它 → 指定节点 + 远端 cwd；
+   本机 node 未启用 → 回退 web 内 stdio 托管）→ `_sessionThread` 建常驻会话。
 2. **执行** node 侧 spawn `kimi acp`（或 `session/load` 接续存档会话）；
    中枢与 node 之间一条 **SSE 长连接**——update 到达即回调进任务卡。
    回答的 chunk 只累积缓冲（log 逐 chunk 流水可追溯），回合结束以
@@ -75,7 +75,7 @@
 - 上下文超过阈值（默认 75%）落一条 status 事件，`GET /api/worklines/<id>`
   的 `nextAction=rotate` 提示；`POST .../rotate` 换新会话接棒、旧任务 close。
   默认不自动轮换（轮中切会丢半截工作）。
-- 远端写回（engine=remote / 联邦）留到 R5-1b；联邦执行点暂不接受工作线。
+- 远端写回（非本机执行点 / 联邦）留到 R5-1b；联邦执行点暂不接受工作线。
 
 ## 四、韧性模型（会话为什么是「永生」的）
 
@@ -138,7 +138,7 @@
 | node HTTP 层 / 会话存档 | `agent_node/node_api.py` |
 | node 入口（参数/自愈回收/信号） | `agent_node/agent_node.py` |
 | SSH 隧道传输层 | `modules/agent_tunnel.py` |
-| HTTP 客户端 + 引擎注册 + 节点 API | `modules/agent_nodes.py` |
+| HTTP 客户端 + 执行点分派注册 + 节点 API | `modules/agent_nodes.py` |
 | 任务编排（生命周期骨架 + factory hook） | `modules/tasks_runner.py` |
 | 任务路由（含任务 SSE） | `modules/tasks_api.py` |
 | 回退客户端（web 内 stdio） | `modules/kimi_acp.py` |

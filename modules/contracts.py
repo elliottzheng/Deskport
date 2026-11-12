@@ -37,7 +37,6 @@ class TaskSummary(TypedDict):
     endedAt: float
     workspace: str
     cwd: str
-    engine: str
     lastText: str
     resultFiles: list[dict]
     error: str
@@ -49,7 +48,6 @@ class TaskSummary(TypedDict):
     kimiSessionFork: bool
     policy: dict
     node: str
-    remoteCwd: str
     workline: dict
     resume: bool
     canContinue: bool

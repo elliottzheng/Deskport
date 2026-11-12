@@ -74,7 +74,7 @@ for module in BLUEPRINT_MODULES:
 | `modules/feedback.py` | `blueprint` | 用户反馈七个端点；存储/幂等/频控/状态机在 `feedback_store`（`<stateDir>/feedback.json` + `feedback/attachments/`） |
 | `modules/plugins.py` | `blueprint`（`plugins_base`）+ `load(app)` | 蓝图给 `/api/plugins`；`load()` 由 `_registerModules` 末尾调用，扫插件目录 |
 | `modules/agent_api.py` | `blueprint` | 智能体 API 主体；`agent_sessions` / `agent_sftp` / `agent_upload` / `device_auth` / `agent_local` 把路由挂到同一蓝图，随它一次注册 |
-| `modules/agent_nodes.py` | `blueprint`（当前无路由） | 远端节点 HTTP 客户端、`engine=remote` 引擎注册、节点模型/健康探测；端点本身挂在 `agent_api` 与 `tasks_federation` |
+| `modules/agent_nodes.py` | `blueprint`（当前无路由） | 远端节点 HTTP 客户端、执行点分派注册（local/agent/federation）、节点模型/健康探测；端点本身挂在 `agent_api` 与 `tasks_federation` |
 | `modules/tasks_federation.py` | `blueprint` | `/api/tasks/nodes*`（执行点呈现、探测、健康） |
 | `modules/federation.py` | 无路由 | `bindApp(app)` 交给刷新线程做成员广播与导航注入 |
 | `modules/external_proxy.py` | `register(app, apps)` | 手工调用：挂反代前缀，`prefix` 与已有路由重合直接抛错拒绝装配 |

@@ -26,12 +26,12 @@ exec / SFTP / 改配置的全权交给手机。本模块新增 share scope，只
       不许 .. / 绝对路径 / 分隔符），paths 给文件夹路径，prompt 末尾补
       「以上附件在 <folder> 目录下」；文件名冲突自动 (2)，绝不覆盖；
     - taskId 给了 → 走 tasks_api.deliverMessage（回合中排队，不另造通道）；
-    - 没给 → tasks_api.createTaskResponse 建任务（engine=acp，paths 带上）；
+    - 没给 → tasks_api.createTaskResponse 建任务（本机执行点，paths 带上）；
     - 令牌缺 share → 403 {"need":"share"}（full 视为含 share）；
     - 审计 agent.share（target=taskId, detail=文件数+prompt 长度）。
 
 执行点边界（2026-11-13 与主控确认）:
-    engine=remote 的任务在远端机器上跑，本机暂存区（_agent_tasks/_uploads/…）
+    非本机执行点的任务在远端机器上跑，本机暂存区（_agent_tasks/_uploads/…）
     在那边不存在，tasks_api 也会丢弃 paths——附件等于丢失。因此本通道只
     接受本机执行点（node 缺省或 "local"）；远端投递需要另一条跨机文件通道，
     不在本批范围，显式 400 而不是假装成功。
@@ -301,8 +301,7 @@ def shareSubmit():
         _audit('agent.share', '', 'fail', 'prompt 加目录说明超长')
         return jsonify({'error': 'prompt 过长（加上文件夹说明超过 %d 字符）'
                                  % MAX_PROMPT}), 400
-    data = {'prompt': finalPrompt, 'paths': paths,
-            'engine': 'acp', 'mode': mode}
+    data = {'prompt': finalPrompt, 'paths': paths, 'mode': mode}
     if model:
         data['model'] = model
     payload, code = tasks_api.createTaskResponse(data)

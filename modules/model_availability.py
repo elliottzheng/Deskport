@@ -173,6 +173,7 @@ def recentTaskModels(node, days=7, cap=8):
     会话存档，两处口径互补。
     """
     try:
+        from modules import task_node
         from modules import tasks_store as store
         store.repo.load()
         cutoff = time.time() * 1000 - days * 86400 * 1000
@@ -181,9 +182,7 @@ def recentTaskModels(node, days=7, cap=8):
                            key=lambda x: -(x.get('createdAt') or 0))
         seen = []
         for t in items:
-            tnode = t.get('node') or ('local' if (t.get('engine') or 'acp') == 'acp'
-                                      else '')
-            if tnode != node:
+            if task_node.of(t) != node:
                 continue
             model = str(t.get('model') or t.get('modelEffective') or '').strip()
             if model and model not in seen and (t.get('createdAt') or 0) >= cutoff:

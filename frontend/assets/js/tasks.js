@@ -42,6 +42,9 @@
             isLocalRun() {
                 return this.runWhere === 'local';
             },
+            remoteNodes() {
+                return this.nodes.filter((n) => n.kind !== 'local');
+            },
             isRunning() {
                 return !!this.detail && ['queued', 'running'].indexOf(this.detail.status) >= 0;
             },
@@ -204,12 +207,10 @@
                 this.busy = true;
                 this.error = '';
                 try {
-                    const body = { prompt: prompt, mode: this.mode };
+                    const body = { prompt: prompt, mode: this.mode, node: this.runWhere };
                     if (this.isLocalRun) {
                         body.paths = this.paths;
                     } else {
-                        body.engine = 'remote';
-                        body.node = this.runWhere;
                         body.cwd = this.remoteCwd;
                     }
                     const r = await fetch('/api/tasks', {

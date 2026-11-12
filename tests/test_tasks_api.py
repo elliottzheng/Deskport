@@ -48,30 +48,25 @@ def create(env, body):
                            content_type='application/json')
 
 
-def test_remote_missing_node_is_400_with_nodes(env, monkeypatch):
-    """反馈 §3.5：缺 node 400 + nodes 提示，不再 500 HTML。"""
+def test_unknown_node_is_400_with_nodes(env, monkeypatch):
+    """执行点不存在：400 + nodes 提示，不再 500 HTML。缺省 node 是 local。"""
     import modules.agent_nodes as nodesMod
     monkeypatch.setattr(nodesMod, 'findNode', lambda name: None)
     monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
     monkeypatch.setattr(nodesMod, 'listNodeNames', lambda: ['local', 'ai-xmyz'])
-    resp = create(env, {'prompt': 'x', 'engine': 'remote'})
-    body = resp.get_json()
+    assert create(env, {'prompt': 'x'}).status_code == 202
+    resp = create(env, {'prompt': 'x', 'node': 'ghost', 'cwd': '/tmp'})
     assert resp.status_code == 400
-    assert body['nodes'] == ['local', 'ai-xmyz']
-    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'ghost',
-                        'cwd': '/tmp'})
-    assert resp.status_code == 400
-    assert 'ghost' in json.dumps(resp.get_json()['nodes']) or \
-        resp.get_json()['nodes'] == ['local', 'ai-xmyz']
+    assert resp.get_json()['nodes'] == ['local', 'ai-xmyz']
 
 
 def test_remote_missing_cwd_is_400_not_accepted(env, monkeypatch):
-    """反馈 §3.5：缺 cwd 直接 400，不再受理后异步失败。"""
+    """非本机执行点缺 cwd 直接 400，不再受理后异步失败。"""
     import modules.agent_nodes as nodesMod
     monkeypatch.setattr(nodesMod, 'findNode',
-                        lambda name: {'name': name} if name == 'local' else None)
+                        lambda name: {'name': name} if name == 'ai-xmyz' else None)
     monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
-    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local'})
+    resp = create(env, {'prompt': 'x', 'node': 'ai-xmyz'})
     assert resp.status_code == 400
     assert 'cwd' in resp.get_json()['error']
 
@@ -91,14 +86,13 @@ def test_prompt_limit_in_error_message(env):
     assert '4000' in resp.get_json()['error']
 
 
-def test_engine_p_removed_not_alias(env):
-    """API 不做跨版本兼容（2026-11-10 决策）：废弃引擎名 p 直接拒绝。"""
-    resp = create(env, {'prompt': 'x', 'engine': 'p'})
-    assert resp.status_code == 400
-    assert resp.get_json()['error'] == 'engine 只能是 acp / remote'
-    resp = create(env, {'prompt': 'x', 'engine': 'zzz'})
-    assert resp.status_code == 400
-    assert resp.get_json()['error'] == 'engine 只能是 acp / remote'
+def test_engine_param_rejected_with_pointer(env):
+    """engine 已从对外面移除：传了就 400，不忽略、不映射。"""
+    for value in ('acp', 'remote', 'p', 'zzz'):
+        resp = create(env, {'prompt': 'x', 'engine': value})
+        assert resp.status_code == 400, value
+        error = resp.get_json()['error']
+        assert 'node' in error and 'cwd' in error
 
 
 def test_list_counts_running_and_queued(env):
@@ -136,22 +130,30 @@ def test_close_returns_final_status(env):
 
 
 def test_summary_workspace_shows_remote_cwd(env, monkeypatch):
-    """反馈 §4：remote 任务的 workspace 字段显示远端 cwd。"""
+    """非本机任务的 workspace 字段显示执行目录。"""
     task = {'id': 'r1', 'status': 'waiting', 'createdAt': 0, 'events': [],
-            'engine': 'remote', 'node': 'ai-xmyz', 'remoteCwd': '/mnt/sda1',
+            'node': 'ai-xmyz', 'cwd': '/mnt/sda1',
             'workspace': r'E:\x\_agent_tasks\local-dir'}
     out = store.repo.summary(task)
     assert out['workspace'] == '/mnt/sda1'
+    assert out['cwd'] == '/mnt/sda1'
+    assert 'engine' not in out
 
 
-def test_engine_not_overwritten_on_session_start(env):
-    """反馈 §4：remote 任务建卡后 engine 保持 remote（曾被强制改成 acp）。"""
-    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local',
-                        'cwd': '/tmp'})
+def test_task_record_has_node_and_cwd_not_engine(env, monkeypatch):
+    """建卡只写 node/cwd/workspace；历史记录没有 node 时读作 local。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'findNode', lambda name: {'name': name})
+    monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
+    resp = create(env, {'prompt': 'x', 'node': 'ai-xmyz', 'cwd': '/tmp'})
     tid = resp.get_json()['task']['id']
     with env.repo.lock:
         task = env.repo.get(tid)
-        assert task['engine'] == 'remote'
+    assert task['node'] == 'ai-xmyz' and task['cwd'] == '/tmp'
+    assert 'engine' not in task and 'remoteCwd' not in task
+    legacy = {'id': 'old', 'status': 'waiting', 'createdAt': 0, 'events': [],
+              'workspace': r'E:\x\ws'}
+    assert store.repo.summary(legacy)['node'] == 'local'
 
 
 def _approveSoon(agent, optionId, delay=0.0):
@@ -607,13 +609,13 @@ def test_task_adopt_fork_failure_is_400_with_reason(env, monkeypatch):
 def test_task_adopt_bad_session_id_rejected(env, monkeypatch):
     import modules.agent_nodes as nodesMod
     monkeypatch.setattr(nodesMod, 'findNode',
-                        lambda name: {'name': name} if name == 'local' else None)
+                        lambda name: {'name': name} if name == 'ai-xmyz' else None)
     monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
     resp = create(env, {'prompt': 'x', 'kimiSessionId': 'rm -rf /'})
     assert resp.status_code == 400
     assert '格式不合法' in resp.get_json()['error']
-    # R4-7 起 remote 也接受 kimiSessionId（节点侧 fork+load）
-    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local',
+    # R4-7 起非本机执行点也接受 kimiSessionId（节点侧 fork+load）
+    resp = create(env, {'prompt': 'x', 'node': 'ai-xmyz',
                         'cwd': '/tmp', 'kimiSessionId': _sid('a')})
     assert resp.status_code == 202
 
@@ -696,7 +698,7 @@ def test_list_brief_fields_and_last_text_truncation(env):
     item = [t for t in body['tasks'] if t['id'] == tid][0]
     assert item['lastText'] == 'word' * 50
     assert item['lastTextTruncated'] is True
-    for key in ('id', 'title', 'status', 'engine', 'node', 'model',
+    for key in ('id', 'title', 'status', 'node', 'model',
                 'modelEffective', 'kimiSessionId', 'createdAt', 'endedAt',
                 'error', 'lastText', 'lastTextTruncated'):
         assert key in item, key
@@ -1380,12 +1382,10 @@ def task_state_mark_waiting(task):
     task['status'] = 'waiting'
 
 
-def test_wait_returns_permission_while_waiting_remote_shape(env):
-    """R4-3c #2：waiting + live 挂起 → wait 返回 permission（remote 同链路）。"""
+def test_wait_returns_permission_while_waiting(env):
+    """R4-3c #2：waiting + live 挂起 → wait 返回 permission。"""
     import threading
-    from modules import tasks_runner as runner
-    resp = create(env, {'prompt': 'x', 'engine': 'remote', 'node': 'local',
-                        'cwd': '/tmp'})
+    resp = create(env, {'prompt': 'x'})
     tid = resp.get_json()['task']['id']
     with env.repo.lock:
         task = env.repo.get(tid)

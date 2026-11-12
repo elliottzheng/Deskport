@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""本机任务的「工作目录」（cwd）：与 Deskport 造的任务目录（workspace）分开。
+"""本机执行点的「工作目录」（cwd）：与 Deskport 造的任务目录（workspace）分开。
 
-engine=acp 也可以指定 cwd——ACP 进程在那个目录里跑，便于直接改项目；
+本机任务也可以指定 cwd——执行进程在那个目录里跑，便于直接改项目；
 workspace 仍然由 Deskport 建，日志 / inputs/ / close 清理只认 workspace。
+非本机执行点的 cwd 在远端，由远端校验，与本模块无关。
 cwd 是非空入参，所以必须校验：绝对路径、存在、是目录、且在允许的根之下
 （config.workDirs 或 fallbackDir），不能变成任意目录入口。
 """
@@ -14,14 +15,11 @@ from modules import fsutil
 MAX_CWD = 500   # 与 remote cwd 的上限一致
 
 
-def resolve(value, engine='acp'):
-    """校验并归一化 acp 任务的 cwd；返回 '' = 未指定（跑在 workspace）。
+def resolve(value):
+    """校验并归一化本机任务的 cwd；返回 '' = 未指定（跑在 workspace）。
 
-    engine != acp 时原样忽略（remote 的 cwd 在远端，由远端校验）；
-    非法/越界抛 ValueError（路由层转 400）。
+    非法/越界抛 ValueError（路由层转 400）。非本机执行点不走这里。
     """
-    if (engine or 'acp').lower() != 'acp':
-        return ''
     raw = str(value or '').strip()
     if not raw:
         return ''

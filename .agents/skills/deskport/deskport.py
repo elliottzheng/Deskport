@@ -184,23 +184,25 @@ class Deskport:
     def task(self, task_id: str) -> "Task":
         return Task(self, task_id)
 
-    def create_task(self, prompt: str, engine: str = "acp", mode: str = "default",
-                    node: str | None = None, cwd: str | None = None,
+    def create_task(self, prompt: str, node: str = "local", mode: str = "default",
+                    cwd: str | None = None,
                     paths: list[str] | None = None, model: str | None = None,
                     attachments: dict[str, bytes | str] | None = None,
                     kimi_session: str | None = None, fork: bool = True,
                     policy: dict | None = None) -> "Task":
         """派活给 Deskport 托管的智能体。默认 mode=default（危险操作逐项等审批），
-        需要全自动时显式传 mode="auto"。acp/remote 都可给 cwd（acp=进程工作目录，任务目录仍是 workspace；remote=远端目录）。
+        需要全自动时显式传 mode="auto"。node=执行点（缺省 "local"）；cwd=执行目录
+        （本机可给绝对目录，任务目录仍是 workspace；非本机给该机器上已存在的目录，
+        缺省 = 任务目录）。两者都支持 kimi_session 接手（R4-7）。
         model 可选（列表见 nodes() 的 models）；attachments={文件名: 内容} 随任务上传。
         prompt 服务端上限 4000 字符，长材料放 attachments。
         kimi_session=已有 Kimi 会话 id（见 kimi_sessions()）：默认 fork 副本再接手，
-        fork=False 直接接管原会话（被占用时服务端 409）。acp 和 remote 都支持（R4-7）。
+        fork=False 直接接管原会话（被占用时服务端 409）。
         policy=服务端审批边界（R4-2）：{"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则],
         "default":"ask|allow|deny", "timeoutSec":n}；边界内自动放行，越界才挂起。"""
         if len(prompt) > 4000:
             raise ValueError(f"prompt {len(prompt)} 字符超过服务端上限 4000；长内容请用 attachments")
-        body: dict = {"prompt": prompt, "engine": engine, "mode": mode}
+        body: dict = {"prompt": prompt, "node": node, "mode": mode}
         if model:
             body["model"] = model
         if kimi_session:
@@ -212,11 +214,9 @@ class Deskport:
                 {"name": n, "contentB64": base64.b64encode(
                     d.encode("utf-8") if isinstance(d, str) else d).decode()}
                 for n, d in attachments.items()]
-        if engine == "remote":
-            if not (node and cwd):
-                raise ValueError("engine=remote 需要 node 和 cwd")
-            body.update(node=node, cwd=cwd)
-        elif cwd:
+        if node and node != "local" and not cwd:
+            raise ValueError("非本机执行点需要 cwd（该机器上已存在的目录）")
+        if cwd:
             body["cwd"] = cwd
         if paths:
             body["paths"] = paths
@@ -436,7 +436,7 @@ class Workline:
         return j.get("workline", j)
 
     def send(self, text: str, **task_opts) -> tuple[str, "Task"]:
-        """发一句话：返回 (routed, Task)。routed ∈ new/message/queued。task_opts 用于新开任务时（engine、mode、model…）。"""
+        """发一句话：返回 (routed, Task)。routed ∈ new/message/queued。task_opts 用于新开任务时（node、cwd、mode、model…）。"""
         body = {"prompt": text, **task_opts}
         j = self.dp._request("POST", f"/api/worklines/{self.id}/tasks", body, timeout=150)
         tid = (j.get("task") or {}).get("id") or j.get("taskId")

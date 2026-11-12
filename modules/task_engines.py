@@ -1,21 +1,24 @@
 # -*- coding: utf-8 -*-
-"""任务引擎策略：引擎只暴露 start(task, manifest)，runner 不再 if/else。
+"""执行点分派表：按节点类型（local / agent / federation）注册启动器。
 
-新增引擎只需 register(name, engine)，不改 tasks_runner。
+执行点只暴露 start(task, manifest)，runner 不再 if/else。
+新增类型只需 register(kind, runner)，不改 tasks_runner。
 """
 import logging
 import threading
 from typing import Protocol
 
-log = logging.getLogger('task-engines')
+log = logging.getLogger('task-executors')
+
+KINDS = ('local', 'agent', 'federation')
 
 
-class TaskEngine(Protocol):
+class TaskRunner(Protocol):
     def start(self, task, manifest): ...
 
 
-class ThreadEngine:
-    """把现有线程体适配成 TaskEngine（Adapter + Strategy）。"""
+class ThreadRunner:
+    """把现有线程体适配成 TaskRunner（Adapter + Strategy）。"""
 
     def __init__(self, target, **kwargs):
         self.target = target
@@ -26,17 +29,17 @@ class ThreadEngine:
                          kwargs=self.kwargs, daemon=True).start()
 
 
-_engines = {}
+_runners = {}
 
 
-def register(name, engine):
-    _engines[(name or 'acp').lower()] = engine
+def register(kind, runner):
+    _runners[(kind or 'local').lower()] = runner
 
 
-def get(name):
-    key = (name or 'acp').lower()
-    engine = _engines.get(key)
-    if engine is None:
-        log.warning('未知任务引擎 %s，回退 acp', key)
-        engine = _engines.get('acp')
-    return engine
+def get(kind):
+    key = (kind or 'local').lower()
+    runner = _runners.get(key)
+    if runner is None:
+        log.warning('未知执行点类型 %s，回退 local', key)
+        runner = _runners.get('local')
+    return runner

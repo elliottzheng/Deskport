@@ -280,7 +280,7 @@ def getAgentNodeToken():
 
 
 def getLocalAgentNode():
-    """本机智能体节点（engine=acp 任务的托管者）；localAgentNodePort=0 表示未启用。
+    """本机智能体节点（本机执行点 local 任务的托管者）；localAgentNodePort=0 表示未启用。
 
     返回与 agentNodes 条目同构的 dict（无 via，本机直连），None = 未启用。
     """

@@ -80,7 +80,7 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 已完成：`terminal.css`（577）拆为 terminal 213 / terminal-controls 232 / terminal-mobile 132。
 已完成：TaskRepository（tasks_store）/ HostRepository + ConnectionRegistry（ssh_hosts）/ SessionRegistry（termcore）；StreamingZipJob（files_archive）；SSHHostStore Observer（前端）。
 已完成：前端消息契约 `messages.js`（`WP_MSG`，壳/iframe 不再裸写字符串）。
-已完成：任务状态机 `task_state`、引擎策略 `task_engines`、缩略图 `media`、共享跳过目录 `fsutil`；`files_browse→pins`、`inbox_scan→files/decision` 横向依赖已移除。
+已完成：任务状态机 `task_state`、执行点分派 `task_engines`（按 local/agent/federation）、缩略图 `media`、共享跳过目录 `fsutil`；`files_browse→pins`、`inbox_scan→files/decision` 横向依赖已移除。
 已完成：`modules/control.py`（459）已拆为 `control_base` 25 / `control_input` 144 / `control` 309。
 已完成：`frontend/assets/js/ssh-ui.js`（780）已拆为 `ssh-ui-ctx` 19 / `ssh-sftp-ui` 478 / `ssh-ui` 306。
 已完成：`modules/aihandoff.py`（536）已拆为 `inbox_base` 8 / `inbox_scan` 298 / `aihandoff` 247。

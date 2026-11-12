@@ -20,7 +20,7 @@ import time
 import uuid
 
 import config
-from modules import state
+from modules import state, task_node
 
 BATON_FILE = 'WORKLINE.md'     # 工作区里的副本，也是执行方的写回目标
 PROMPT_LIMIT = 4000            # 首条消息总长预算（与建任务 prompt 上限一致）
@@ -217,7 +217,6 @@ class WorklineRepository:
                   'updatedBy': str(data.get('by') or 'master'),
                   'tasks': [], 'currentTask': '',
                   'policy': data.get('policy') or {},
-                  'engine': str(data.get('engine') or '').strip().lower(),
                   'node': str(data.get('node') or '').strip(),
                   'cwd': str(data.get('cwd') or '').strip(),
                   'repo': str(data.get('repo') or '').strip(),
@@ -242,9 +241,11 @@ class WorklineRepository:
             for key in ('policy', 'defaults'):
                 if key in patch:
                     wl[key] = patch.get(key) or {}
-            for key in ('engine', 'node', 'cwd', 'repo', 'branch'):
+            for key in ('node', 'cwd', 'repo', 'branch'):
                 if key in patch:
                     wl[key] = str(patch.get(key) or '').strip()
+            if 'node' in patch:
+                task_node.forgetLegacyEngine(wl)
             if 'autoRotate' in patch:
                 wl['autoRotate'] = bool(patch.get('autoRotate'))
             if 'contextWarn' in patch:
@@ -349,7 +350,7 @@ def turnTail(task):
         return ''
     note = ''
     workspace = task.get('workspace') or ''
-    if (task.get('engine') or 'acp') == 'acp' and workspace:
+    if task_node.isLocal(task_node.of(task)) and workspace:
         doc = repo.readDoc(wl)
         path = os.path.join(workspace, BATON_FILE)
         if os.path.isdir(workspace) and _readText(path) != doc:
@@ -366,7 +367,7 @@ def syncFromWorkspace(task):
     本轮写回放弃（单写者，不覆盖）；None 表示没有变化或不可读回。
     """
     wl, info = _wlOf(task)
-    if not wl or (task.get('engine') or 'acp') != 'acp':
+    if not wl or not task_node.isLocal(task_node.of(task)):
         return None
     path = os.path.join(task.get('workspace') or '', BATON_FILE)
     if not os.path.isfile(path):

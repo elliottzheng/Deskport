@@ -18,7 +18,6 @@ import urllib.request
 from flask import Blueprint, jsonify, request
 
 import config
-from modules import task_engines
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 log = logging.getLogger('federation-tasks')
@@ -37,9 +36,9 @@ def nodesList():
     withStatus = request.args.get('modelStatus') == '1'
     nodes = []
 
-    def entry(name, via):
+    def entry(name, via, kind):
         models, defaultModel = nodeModelsFor(name)
-        item = {'name': name, 'via': via,
+        item = {'name': name, 'via': via, 'kind': kind,
                 'models': models, 'defaultModel': defaultModel,
                 'modelSelectable': bool(models or defaultModel)}
         if withStatus:
@@ -50,11 +49,11 @@ def nodesList():
         nodes.append(item)
 
     for n in config.getAgentNodes():
-        entry(n['name'], n['via'])
+        entry(n['name'], n['via'], 'agent')
     local = config.getLocalAgentNode()
-    entry(local['name'] if local is not None else 'local', '')
+    entry(local['name'] if local is not None else 'local', '', 'local')
     for member in config.getRemotes():
-        entry(member['name'], 'federation')
+        entry(member['name'], 'federation', 'federation')
     return jsonify({'nodes': nodes})
 
 

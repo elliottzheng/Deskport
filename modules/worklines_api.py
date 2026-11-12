@@ -7,7 +7,7 @@
 """
 from flask import Blueprint, g, jsonify, request
 
-from modules import task_policy
+from modules import task_node, task_policy
 from modules import tasks_api
 from modules import tasks_store
 from modules import worklines_store
@@ -65,8 +65,7 @@ def _detail(wl):
     out = _brief(wl)
     out['doc'] = worklines_store.repo.readDoc(wl)
     out['policy'] = wl.get('policy') or {}
-    out['engine'] = wl.get('engine') or ''
-    out['node'] = wl.get('node') or ''
+    out['node'] = task_node.worklineNode(wl)[0]
     out['cwd'] = wl.get('cwd') or ''
     out['defaults'] = wl.get('defaults') or {}
     tasks_store.repo.load()
@@ -113,15 +112,14 @@ def createWorkline():
     policy, err = _parsePolicy(data.get('policy'))
     if err:
         return _policyError(err)
-    engine = str(data.get('engine') or 'acp').strip().lower()
-    if engine not in ('', 'acp', 'remote'):
-        return jsonify({'error': 'engine 只能是 acp / remote'}), 400
+    if (legacy := task_node.rejectLegacyEngine(data)):
+        return jsonify({'error': legacy}), 400
     defaults = data.get('defaults') if isinstance(data.get('defaults'), dict) else {}
     worklines_store.repo.load()
     try:
         wl = worklines_store.repo.create({
             'id': data.get('id'), 'title': title, 'policy': policy,
-            'engine': engine, 'node': data.get('node'), 'cwd': data.get('cwd'),
+            'node': data.get('node'), 'cwd': data.get('cwd'),
             'repo': data.get('repo'), 'branch': data.get('branch'),
             'defaults': defaults, 'autoRotate': data.get('autoRotate'),
             'contextWarn': data.get('contextWarn'), 'by': _by()})
@@ -149,8 +147,10 @@ def updateWorkline(wid):
     if not wl:
         return _notFound(wid)
     data = _json()
+    if (legacy := task_node.rejectLegacyEngine(data)):
+        return jsonify({'error': legacy}), 400
     patch = {'by': _by()}
-    for key in ('title', 'engine', 'node', 'cwd', 'repo', 'branch'):
+    for key in ('title', 'node', 'cwd', 'repo', 'branch'):
         if key in data:
             patch[key] = data.get(key)
     if 'policy' in data:
@@ -201,7 +201,7 @@ def _routeOf(task):
 
 def _dispatchNew(wl, data, prompt):
     body = {'prompt': prompt, 'workline': wl['id']}
-    for key in ('engine', 'node', 'cwd', 'model', 'mode', 'policy', 'wait'):
+    for key in ('node', 'cwd', 'model', 'mode', 'policy', 'wait'):
         if key in data and data.get(key) not in (None, ''):
             body[key] = data[key]
     payload, code = tasks_api.createTaskResponse(body)
@@ -214,6 +214,8 @@ def worklineTask(wid):
     if not wl:
         return _notFound(wid)
     data = _json()
+    if (legacy := task_node.rejectLegacyEngine(data)):
+        return jsonify({'error': legacy}), 400
     prompt = str(data.get('prompt') or '').strip()
     if not prompt:
         return jsonify({'error': 'prompt 不能为空'}), 400
@@ -247,6 +249,8 @@ def rotateWorkline(wid):
     if not wl:
         return _notFound(wid)
     data = _json()
+    if (legacy := task_node.rejectLegacyEngine(data)):
+        return jsonify({'error': legacy}), 400
     oldId = wl.get('currentTask') or ''
     prompt = str(data.get('prompt') or '').strip() or DEFAULT_ROTATE_PROMPT
     payload, code = _dispatchNew(wl, data, prompt)

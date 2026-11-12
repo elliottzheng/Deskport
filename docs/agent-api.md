@@ -143,11 +143,11 @@ POST /api/agent/share           (scope=share, multipart/form-data)
 - `taskId` 给了 → 追加消息正文 = `prompt` + `附件：\n- <path>`，走
   `/api/tasks/<id>/message` 的既有投递路径：任务在跑就进持久化队列
   （202 语义），空闲立即投递；任务不存在或已 `closed` → **409**；
-- 没给 → 新建任务（`engine=acp`），`paths` 带上，文件被复制进任务工作区
+- 没给 → 新建任务（本机执行点），`paths` 带上，文件被复制进任务工作区
   `inputs/`（folder 模式是整个文件夹复制过去），执行方直接可读；
 - 令牌缺 `share` → `403 {"need": "share"}`（`full` 视为含 share）；
   无令牌 401；`prompt` 超长 / 文件数 >10 / 文件名不合法 / `mode` 非法 → 400；
-- **只支持本机执行点**：`engine=remote` 的任务在远端机器上跑，本机暂存区
+- **只支持本机执行点**：非本机执行点的任务在远端机器上跑，本机暂存区
   在那边不存在，且任务 API 会丢弃本机 `paths`——附件等于丢失。因此
   `node` 非 `local` 一律 400 `{"error", "nodes": ["local"]}`，不假装成功。
   远端投递需要另一条跨机文件通道（未实现）；
@@ -292,8 +292,8 @@ DELETE /api/agent/ssh/sessions/<sid>
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
-| POST | /api/tasks | 建任务 → 202 `{prompt, engine, node, cwd, mode, model, paths, attachments}` |
-| GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`cwd`/`remoteCwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
+| POST | /api/tasks | 建任务 → 202 `{prompt, node, cwd, mode, model, paths, attachments}`；`node` 缺省 `local`，`cwd` 缺省任务目录 |
+| GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`cwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
 | GET | /api/tasks/<id>/events/stream?since=N | SSE 推送 |
 | POST | /api/tasks/<id>/message | 续聊 `{text, mode?, wait?}`，mode=queue（默认）/steer/reject |
@@ -316,11 +316,13 @@ DELETE /api/agent/ssh/sessions/<sid>
 对账时先用 `/log` 找到 seq，再用 `/event/<seq>` 取单条。`/download` 只能读该任务工作区内的文件，
 路径越界一律 403。
 
-- `engine: "acp"`（缺省）= 本机 Kimi（agent node 托管，web 重启可接手）；
-  `paths` 引用本机输入文件；`prompt` 上限 **4000 字符**，超限报错会写明数字；
-  `cwd` 可选（见下节「工作目录 vs 任务目录」），缺省跑在任务目录（旧行为）；
-- `engine: "remote"` 必须给 `node`（执行点）与 `cwd`（远端已存在目录），
-  缺任一 → 400 并附 `nodes` 提示；
+- `node`（执行点，缺省 `"local"`）= 去哪台机器跑：`local` 是本机 Kimi
+  （agent node 托管，web 重启可接手）；其它值见 `GET /api/tasks/nodes`
+  （agent node 或联邦成员，不存在 → 400 并附 `nodes` 提示）；
+- `cwd`（执行目录，缺省 = Deskport 分配的任务目录）：本机必须是绝对路径、
+  存在、是目录且在 `config.workDirs` / `fallbackDir` 之下；非本机是该机器
+  上已存在的目录（必填，由对端校验）。两者的细节见下节；
+- `engine` 字段已移除：传了直接 **400**，不会被忽略或映射；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；
 - `model`（可选）：给执行点选模型（§7）。`GET /api/tasks/nodes` 里每个执行点
@@ -358,9 +360,9 @@ DELETE /api/agent/ssh/sessions/<sid>
   审批若 callId 在本任务 tool 事件里查不到（后台幽灵审批），自动拒绝
   （`auto_denied rule=orphan`），不挂起、不挡 message。没有 policy 的
   任务两条都不生效，行为不变；
-- **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（仅
-  engine=acp）。默认先 `kimi fork` 复制副本再加载——不干扰用户开着的
-  终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
+- **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
+  都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
+  用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
   但会话已被其他任务持有时 409。候选列表
   `GET /api/tasks/kimi-sessions?cwd=<工作目录>`；
 - **close 回收语义**：`waiting`/`paused` 任务的会话进程保留（45 分钟空闲
@@ -402,20 +404,21 @@ DELETE /api/agent/ssh/sessions/<sid>
 
 - `workspace`：Deskport 造的任务目录（`<fallbackDir>/_agent_tasks/<时间-摘要-id>`）。
   日志、`inputs/` 副本、`resultFiles`、close 清理**只认它**；
-- `cwd`：ACP 进程的工作目录。`engine=acp` 可传本机绝对目录，让执行方直接
-  在项目里干活；不传 = `workspace`（旧行为完全不变）。`engine=remote` 的
-  `cwd` 是远端目录（语义照旧，`workspace` 仍是本机任务卡目录）。
+- `cwd`：执行进程的工作目录。本机可传绝对目录，让执行方直接在项目里
+  干活；不传 = `workspace`。非本机的 `cwd` 是该机器上的目录（必填），
+  `workspace` 仍是本机任务卡目录。
 
-`engine=acp` 的 `cwd` 校验：绝对值、存在、是目录、且在 `config.workDirs`
-或 `config.fallbackDir` 之下；任一条不满足 → 400，**不建任务**（不让它变成
-任意目录入口）。`paths` / `attachments` 仍然复制进 `<workspace>/inputs/`；
-`cwd != workspace` 时首条 prompt 会自动追加一行，写明工作目录与附件的绝对
-路径。close 只回收会话，不删 `cwd` 里的任何文件。
+本机 `cwd` 的校验：绝对值、存在、是目录、且在 `config.workDirs` 或
+`config.fallbackDir` 之下；任一条不满足 → 400，**不建任务**（不让它变成
+任意目录入口）。非本机的 `cwd` 不在本机校验，由执行点决定。`paths` /
+`attachments` 仍然复制进 `<workspace>/inputs/`；`cwd != workspace` 时首条
+prompt 会自动追加一行，写明工作目录与附件的绝对路径。close 只回收会话，
+不删 `cwd` 里的任何文件。
 
-两种派本机活的方式：
+派本机活的两种写法：
 
-- `acp + cwd`：在本机现有目录里改代码（项目就在这台机器上）——推荐；
-- `remote + node=<本机节点> + cwd`：走 agent node/联邦，多一层 HTTP；
+- `node: "local" + cwd`：在本机现有目录里改代码（项目就在这台机器上）——推荐；
+- `node: "<本机 agent node 名>" + cwd`：走 agent node，多一层 HTTP；
   本机活没有跨机需求时不必绕这一层。
 
 **任务事件类型**：`status` / `user` / `assistant`（回答终版，逐 chunk 流水在
@@ -449,10 +452,10 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | /api/worklines | 建线 `{id?, title, doc?, policy?, engine?, node?, cwd?, repo?, branch?, defaults?, autoRotate?, contextWarn?}` |
+| POST | /api/worklines | 建线 `{id?, title, doc?, policy?, node?, cwd?, repo?, branch?, defaults?, autoRotate?, contextWarn?}` |
 | GET | /api/worklines | 列表（含 `currentTask`/`currentStatus`/`context`/`nextAction`） |
 | GET | /api/worklines/<id> | 详情：`doc`（接力棒全文）、`rev`、`taskList`、`policy`、`nextAction` |
-| PUT | /api/worklines/<id> | 改 `doc`/`title`/`policy`/`defaults`；带 `baseRev` 做乐观锁，过期 409 |
+| PUT | /api/worklines/<id> | 改 `doc`/`title`/`policy`/`defaults`/`node`/`cwd`；带 `baseRev` 做乐观锁，过期 409 |
 | POST | /api/worklines/<id>/tasks | 在工作线上派活：`{prompt, mode?, wait?}`，服务端自动路由 |
 | POST | /api/worklines/<id>/rotate | 换新会话接棒（新任务带接力棒，旧任务 close） |
 | DELETE | /api/worklines/<id> | 删线（当前任务在跑时 409） |
@@ -463,7 +466,7 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
   降级为摘要 + "先读 WORKLINE.md"。完整正文同时写到任务工作区的
   `WORKLINE.md`（不计入 resultFiles）。
 - **写回**：每轮 prompt 尾部追加约定——本轮结束前把接力棒整篇覆盖写到
-  `WORKLINE.md`，无进展则保持原样。轮末中枢比对 hash 后落库（引擎 acp；
+  `WORKLINE.md`，无进展则保持原样。轮末中枢比对 hash 后落库（本机执行点；
   远端写回是 R5-1b）；事件流落 `status`「接力棒已更新 rev …」。
   若主控在轮中改过（`rev` 变了），本轮写回跳过、不覆盖。
 - **上下文**：任务详情 `context.used/max` 超过线阈值（默认 75%，可
@@ -474,7 +477,7 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
   且可续 → `routed=message`；running/queued → 入持久化队列 `routed=queued`；
   已结束或无会话 → 新建带接力棒任务 `routed=new`。返回 `taskId`。
 - **边界**：联邦执行点暂不支持工作线（对端 4000 上限会吃掉接力棒，400）；
-  engine=remote 任务能注入（内联在首条消息里），但不做轮末写回。
+  非本机任务能注入（内联在首条消息里），但不做轮末写回。
 - 上线验收：`python tools/accept_worklines.py --base <url> --token <令牌>`
   （真实跑两轮对话 + 一次轮换；写回是否发生默认只 WARN，`--strict` 升级）。
 

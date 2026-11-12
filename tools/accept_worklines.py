@@ -164,7 +164,7 @@ def main():
                        '2) 在文件末尾追加一行 "- 验收回合完成 %s"（保留原有内容）；\n'
                        '3) 最后只回复一句：WL-ACK-%s。\n'
                        '不要新建别的文件，不要做别的事。' % (MARK, MARK)),
-            'engine': 'acp', 'mode': args.mode}
+            'node': 'local', 'mode': args.mode}
     if args.model:
         body['model'] = args.model
     code, data = api.post('/api/worklines/%s/tasks' % wid, body, timeout=120)

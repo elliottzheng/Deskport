@@ -13,7 +13,7 @@ import threading
 import time
 
 import config
-from modules import contracts, fsutil, task_state, task_cwd
+from modules import contracts, fsutil, task_state, task_cwd, task_node
 from modules import sensitive_values
 from modules.staging import _safeAttachmentName
 
@@ -238,9 +238,9 @@ class TaskRepository:
         lastText = task.get('lastText') or ''
         return {
             'id': task['id'], 'title': task.get('title', ''),
-            'status': task.get('status', ''), 'engine': task.get('engine', ''),
+            'status': task.get('status', ''),
             'owner': task.get('owner') or '',
-            'node': task.get('node') or '',
+            'node': task_node.of(task),
             'model': task.get('model') or '',
             'modelEffective': task.get('modelEffective') or '',
             'kimiSessionId': task.get('kimiSessionId') or '',
@@ -253,18 +253,19 @@ class TaskRepository:
 
     def summary(self, task) -> contracts.TaskSummary:
         status = task.get('status', '')
-        remoteCwd = task.get('remoteCwd') or ''
+        node = task_node.of(task)
+        remote = not task_node.isLocal(node)
+        cwd = task_node.cwdOf(task)
         return {
             'id': task['id'], 'title': task.get('title', ''), 'prompt': task.get('prompt', ''),
             'status': status, 'createdAt': task.get('createdAt', 0),
             'owner': task.get('owner') or '',
             'createdLabel': _iso(task.get('createdAt', 0)),
             'startedAt': task.get('startedAt', 0), 'endedAt': task.get('endedAt', 0),
-            # remote 任务展示远端 cwd（本机 workspace 目录对调用方毫无意义）
-            'workspace': remoteCwd or task.get('workspace', ''),
-            # cwd = 执行进程的工作目录（acp 可指定；remote 即远端目录）
-            'cwd': task.get('cwd') or remoteCwd or task.get('workspace', ''),
-            'engine': task.get('engine', ''),
+            # 非本机任务展示执行目录（本机 workspace 目录对调用方毫无意义）
+            'workspace': cwd if remote else task.get('workspace', ''),
+            # cwd = 执行进程的工作目录（本机可指定；非本机即远端目录）
+            'cwd': cwd,
             'lastText': task.get('lastText', ''),
             'resultFiles': task.get('resultFiles', []),
             'error': task.get('error', ''),
@@ -274,8 +275,7 @@ class TaskRepository:
             'modelEffective': task.get('modelEffective') or '',
             'kimiSessionId': task.get('kimiSessionId') or '',
             'kimiSessionFork': bool(task.get('kimiSessionFork')),
-            'node': task.get('node') or '',
-            'remoteCwd': remoteCwd,
+            'node': node,
             'workline': task.get('workline') or {},
             'resume': bool(task.get('resume')),
             'canContinue': task_state.canContinue(task),

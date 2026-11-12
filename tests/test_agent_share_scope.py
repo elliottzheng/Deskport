@@ -88,7 +88,7 @@ def seedTask(env, **over):
     task = {'id': 'task-' + 'a' * 8, 'title': '旧任务', 'prompt': '旧描述',
             'status': 'waiting', 'sessionId': 'sess-1', 'events': [], 'seq': 0,
             'createdAt': time.time() - 60, 'lastActiveAt': time.time() - 10,
-            'workspace': str(env.tmp / 'ws'), 'engine': 'acp', 'node': '',
+            'workspace': str(env.tmp / 'ws'), 'node': 'local',
             'mode': 'default', 'resultFiles': []}
     task.update(over)
     env.repo.put(task)

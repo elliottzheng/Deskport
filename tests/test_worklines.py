@@ -74,7 +74,7 @@ def mkTask(env, **kw):
     task = {'id': kw.pop('id', 'task%02d' % _counter['n']), 'title': 't',
             'prompt': 'x', 'workspace': str(env.tmp / 'ws'), 'status': 'waiting',
             'createdAt': 0, 'events': [], 'seq': 0, 'sessionId': 's1',
-            'engine': 'acp', 'resultFiles': []}
+            'node': 'local', 'resultFiles': []}
     task.update(kw)
     env.repo.put(task)
     return task
@@ -245,6 +245,47 @@ def test_routing_queued_task_enqueues(env):
     body = resp.get_json()
     assert body['routed'] == 'queued' and body['position'] == 1
     assert (task.get('messageQueue') or [])[0]['text'] == '排队'
+
+
+def test_worklines_api_rejects_engine_param(env):
+    """engine 已从对外面移除：建线/改线传了都 400。"""
+    resp = post(env, '/api/worklines', {'title': 'x', 'engine': 'acp'})
+    assert resp.status_code == 400
+    assert 'node' in resp.get_json()['error']
+    wl = newWorkline(env)
+    resp = put(env, '/api/worklines/%s' % wl['id'], {'engine': 'acp'})
+    assert resp.status_code == 400
+
+
+def test_legacy_workline_engine_maps_to_node(env, monkeypatch):
+    """旧工作线只有 engine 时：acp→local、remote→原 node；remote 缺 node 报错。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'findNode', lambda name: {'name': name})
+    monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
+
+    def legacy(wid, engine, node=''):
+        """模拟旧盘上只有 engine 的工作线元数据（新建接口不再写 engine）。"""
+        wl = env.wlRepo.create({'id': wid, 'title': wid, 'node': node})
+        with env.wlRepo.lock:
+            wl['engine'] = engine
+            env.wlRepo.save()
+        return wl
+
+    wl = legacy('legacy-acp', 'acp')
+    resp = post(env, '/api/worklines/%s/tasks' % wl['id'], {'prompt': '开工'})
+    assert resp.status_code == 202, resp.get_json()
+    assert env.repo.get(resp.get_json()['task']['id'])['node'] == 'local'
+
+    wl2 = legacy('legacy-remote', 'remote', 'ai-xmyz')
+    resp = post(env, '/api/worklines/%s/tasks' % wl2['id'],
+                {'prompt': '开工', 'cwd': '/mnt/x'})
+    assert resp.status_code == 202, resp.get_json()
+    assert env.repo.get(resp.get_json()['task']['id'])['node'] == 'ai-xmyz'
+
+    wl3 = legacy('legacy-nonode', 'remote')
+    resp = post(env, '/api/worklines/%s/tasks' % wl3['id'], {'prompt': '开工'})
+    assert resp.status_code == 400
+    assert 'node' in resp.get_json()['error']
 
 
 def test_routing_closed_task_starts_new_with_baton(env):

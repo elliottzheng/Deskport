@@ -66,10 +66,10 @@
                     </div>
                 </div>
                 <div class="task-options">
-                    <label class="task-mode">执行位置
+                    <label class="task-mode">执行点
                         <select class="input task-where" v-model="runWhere">
                             <option value="local">本机</option>
-                            <option v-for="n in nodes" :key="n.name" :value="n.name">{{ n.name }}</option>
+                            <option v-for="n in remoteNodes" :key="n.name" :value="n.name">{{ n.name }}</option>
                         </select>
                     </label>
                     <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
@@ -115,7 +115,7 @@
                     <div class="task-detail-title">{{ detail.title || detail.prompt }}</div>
                     <div class="task-detail-meta">
                         {{ detail.createdLabel }} · {{ statusLabel(detail.status) }} · {{ modeLabel(detail.mode) }}
-                        <span v-if="detail.node"> · 节点 {{ detail.node }}<template v-if="detail.remoteCwd"> · {{ detail.remoteCwd }}</template></span>
+                        <span v-if="detail.node && detail.node !== 'local'"> · 执行点 {{ detail.node }}<template v-if="detail.cwd"> · {{ detail.cwd }}</template></span>
                         <span v-if="detail.lastActiveLabel"> · 最近 {{ detail.lastActiveLabel }}</span>
                     </div>
                 </div>

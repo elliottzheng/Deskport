@@ -89,7 +89,7 @@ def seedTask(env, **over):
     task = {'id': 'task-' + 'a' * 8, 'title': '旧任务', 'prompt': '旧描述',
             'status': 'waiting', 'sessionId': 'sess-1', 'events': [], 'seq': 0,
             'createdAt': time.time() - 60, 'lastActiveAt': time.time() - 10,
-            'workspace': str(env.tmp / 'ws'), 'engine': 'acp', 'node': '',
+            'workspace': str(env.tmp / 'ws'), 'node': 'local',
             'mode': 'default', 'resultFiles': []}
     task.update(over)
     env.repo.put(task)
@@ -128,7 +128,7 @@ def test_create_task_with_two_files_and_prompt(env):
         assert (env.tmp / 'taskroot' / '_uploads') in pathlib.Path(path).parents
     task = env.repo.get(body['taskId'])
     assert task['prompt'] == '把这两份讲义合成一份周测卷'
-    assert task['engine'] == 'acp' and task['mode'] == 'default'
+    assert task['node'] == 'local' and task['mode'] == 'default'
     names = [s['input'] for s in task['sources']]
     assert any('讲义一.pdf' in n for n in names) and any('讲义二.pdf' in n for n in names)
     audits = _auditOf(env.audit, 'agent.share')

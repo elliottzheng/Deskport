@@ -71,7 +71,7 @@ def test_remote_adopt_task_fields_and_client(env, monkeypatch):
                                       'models': [], 'model': ''})
     monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
     sid = _sid('a')
-    resp = create(env, {'prompt': '接手远端会话', 'engine': 'remote',
+    resp = create(env, {'prompt': '接手远端会话',
                         'node': 'ai-xmyz', 'cwd': '/mnt/sda1/x',
                         'kimiSessionId': sid, 'fork': False})
     assert resp.status_code == 202

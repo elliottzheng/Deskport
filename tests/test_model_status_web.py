@@ -93,7 +93,7 @@ def test_nodes_list_model_status_flag_returns_probed_only(webEnv):
 
 def test_create_task_rejects_known_unusable_model(webEnv):
     resp = webEnv.client.post('/api/tasks', headers=H, data=json.dumps({
-        'prompt': 'x', 'engine': 'remote', 'node': 'ai-xmyz', 'cwd': '/tmp',
+        'prompt': 'x', 'node': 'ai-xmyz', 'cwd': '/tmp',
         'model': 'bad/m1'}), content_type='application/json')
     assert resp.status_code == 400
     body = resp.get_json()
@@ -104,7 +104,7 @@ def test_create_task_rejects_known_unusable_model(webEnv):
 def test_create_task_allows_unprobed_model(webEnv):
     """没探测过的（modelStatus 里没有条目）照常放行。"""
     resp = webEnv.client.post('/api/tasks', headers=H, data=json.dumps({
-        'prompt': 'x', 'engine': 'remote', 'node': 'ai-xmyz', 'cwd': '/tmp',
+        'prompt': 'x', 'node': 'ai-xmyz', 'cwd': '/tmp',
         'model': 'idle/m3'}), content_type='application/json')
     assert resp.status_code == 202
 

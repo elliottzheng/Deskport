@@ -61,8 +61,7 @@ def create(env, body):
 def test_create_acp_with_cwd_records_dir_and_keeps_workspace(env):
     marker = env.proj / 'keep.txt'
     marker.write_text('原文件', encoding='utf-8')
-    resp = create(env, {'prompt': '改项目', 'engine': 'acp',
-                        'cwd': str(env.proj)})
+    resp = create(env, {'prompt': '改项目', 'cwd': str(env.proj)})
     assert resp.status_code == 202, resp.get_json()
     tid = resp.get_json()['task']['id']
     with env.repo.lock:
@@ -80,7 +79,7 @@ def test_create_acp_with_cwd_records_dir_and_keeps_workspace(env):
 
 
 def test_acp_without_cwd_runs_in_workspace(env):
-    resp = create(env, {'prompt': 'x', 'engine': 'acp'})
+    resp = create(env, {'prompt': 'x'})
     assert resp.status_code == 202
     with env.repo.lock:
         task = env.repo.get(resp.get_json()['task']['id'])
@@ -100,7 +99,7 @@ def test_bad_or_escaping_cwd_is_400_and_creates_nothing(env):
         ('.. 越界', os.path.join(str(env.proj), '..', '..', 'outside')),
     ]
     for label, cwd in cases:
-        resp = create(env, {'prompt': 'x', 'engine': 'acp', 'cwd': cwd})
+        resp = create(env, {'prompt': 'x', 'cwd': cwd})
         assert resp.status_code == 400, (label, resp.get_json())
         assert 'cwd' in resp.get_json()['error'], label
     with env.repo.lock:
@@ -111,8 +110,7 @@ def test_bad_or_escaping_cwd_is_400_and_creates_nothing(env):
 def test_close_with_cwd_leaves_both_dirs_intact(env):
     marker = env.proj / 'keep.txt'
     marker.write_text('原文件', encoding='utf-8')
-    tid = create(env, {'prompt': 'x', 'engine': 'acp',
-                       'cwd': str(env.proj)}).get_json()['task']['id']
+    tid = create(env, {'prompt': 'x', 'cwd': str(env.proj)}).get_json()['task']['id']
     with env.repo.lock:
         workspace = env.repo.get(tid)['workspace']
     (open(os.path.join(workspace, 'result.md'), 'w', encoding='utf-8')).close()
@@ -127,7 +125,7 @@ def test_close_with_cwd_leaves_both_dirs_intact(env):
 def test_create_failure_cleanup_only_removes_workspace(env):
     marker = env.proj / 'keep.txt'
     marker.write_text('原文件', encoding='utf-8')
-    resp = create(env, {'prompt': 'x', 'engine': 'acp', 'cwd': str(env.proj),
+    resp = create(env, {'prompt': 'x', 'cwd': str(env.proj),
                         'paths': [str(env.tmp / 'nope.txt')]})
     assert resp.status_code == 400
     assert os.listdir(str(env.tmp / 'root')) == []
@@ -161,7 +159,7 @@ def test_session_thread_passes_cwd_to_client(env):
     workspace = str(env.tmp / 'ws')
     os.makedirs(workspace)
     task = {'id': 'cwd-thread', 'prompt': '做点事', 'workspace': workspace,
-            'cwd': os.path.realpath(str(env.proj)), 'engine': 'acp',
+            'cwd': os.path.realpath(str(env.proj)), 'node': 'local',
             'status': 'queued', 'events': [], 'seq': 0, 'createdAt': 0,
             'closedByUser': False}
     with env.repo.lock:
@@ -212,7 +210,7 @@ def test_session_thread_falls_back_to_workspace_without_cwd(env):
     workspace = str(env.tmp / 'ws-plain')
     os.makedirs(workspace)
     task = {'id': 'no-cwd-thread', 'prompt': '看看', 'workspace': workspace,
-            'engine': 'acp', 'status': 'queued', 'events': [], 'seq': 0,
+            'node': 'local', 'status': 'queued', 'events': [], 'seq': 0,
             'createdAt': 0, 'closedByUser': False}
     with env.repo.lock:
         env.repo.put(task)
@@ -246,7 +244,7 @@ def test_prompt_lists_absolute_inputs_when_cwd_differs():
 
 
 def test_local_node_payload_carries_cwd(env, monkeypatch):
-    """engine=acp + 本机 node：POST /api/sessions 的 cwd 就是任务 cwd。"""
+    """本机执行点 + agent node：POST /api/sessions 的 cwd 就是任务 cwd。"""
     node = {'name': 'local', 'url': 'http://127.0.0.1:1', 'token': '',
             'via': '', 'remote': ''}
     monkeypatch.setattr(configMod, 'getLocalAgentNode', lambda: node)
@@ -258,7 +256,7 @@ def test_local_node_payload_carries_cwd(env, monkeypatch):
         return 500, {'error': 'stop'}
 
     monkeypatch.setattr(nodesMod, 'nodeRequest', fakeRequest)
-    task = {'engine': 'acp', 'node': '', 'cwd': os.path.realpath(str(env.proj)),
+    task = {'node': 'local', 'cwd': os.path.realpath(str(env.proj)),
             'model': '', 'kimiSessionId': '', 'kimiSessionFork': True}
     client = nodesMod.clientFactoryFor(task)(cwd=task['cwd'])
     with pytest.raises(RuntimeError):
@@ -268,7 +266,7 @@ def test_local_node_payload_carries_cwd(env, monkeypatch):
 
 
 def test_remote_cwd_semantics_unchanged(env, monkeypatch):
-    """remote 仍用 remoteCwd；传进来的 workspace 不覆盖它。"""
+    """旧远端记录只有 remoteCwd 时读时兜底；传进来的 cwd 不覆盖它。"""
     node = {'name': 'ai-xmyz', 'url': 'http://127.0.0.1:1', 'token': '',
             'via': '', 'remote': ''}
     monkeypatch.setattr(nodesMod, 'findNode', lambda name: node)
@@ -279,7 +277,7 @@ def test_remote_cwd_semantics_unchanged(env, monkeypatch):
         return 500, {'error': 'stop'}
 
     monkeypatch.setattr(nodesMod, 'nodeRequest', fakeRequest)
-    task = {'engine': 'remote', 'node': 'ai-xmyz', 'remoteCwd': '/mnt/proj',
+    task = {'node': 'ai-xmyz', 'remoteCwd': '/mnt/proj',
             'cwd': '', 'model': '', 'kimiSessionId': '', 'kimiSessionFork': True}
     client = nodesMod.clientFactoryFor(task)(cwd=r'E:\ws')
     assert client.cwd == '/mnt/proj'
@@ -298,7 +296,7 @@ def _load_client():
     return mod
 
 
-def test_client_sends_acp_cwd_and_remote_still_requires_node():
+def test_client_sends_cwd_and_remote_still_requires_cwd():
     dpMod = _load_client()
     dp = dpMod.Deskport('http://127.0.0.1:1', token='x')
     bodies = []
@@ -308,7 +306,7 @@ def test_client_sends_acp_cwd_and_remote_still_requires_node():
         return {'task': {'id': 't1'}}
 
     dp._request = fakeRequest
-    dp.create_task('x', engine='acp', cwd=r'E:\proj')
+    dp.create_task('x', cwd=r'E:\proj')
     assert bodies[0]['cwd'] == r'E:\proj'
     with pytest.raises(ValueError):
-        dp.create_task('x', engine='remote', cwd=r'E:\proj')
+        dp.create_task('x', node='ai-xmyz')

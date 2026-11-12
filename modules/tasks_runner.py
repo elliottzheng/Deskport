@@ -13,13 +13,12 @@ import time
 import config
 from modules import sensitive_values
 from modules import tasks_store as store
-from modules import task_state
+from modules import task_state, task_node
 from modules import task_engines
 from modules import worklines_store
 from modules.kimi_acp import KimiAcp, extractText
 
 log = logging.getLogger('tasks')
-
 
 def maxRunning():
     """并发 running 上限（R4-9）：config.taskMaxRunning，缺省 8，0=不限。
@@ -316,7 +315,7 @@ def _handleAcpPermission(task, agent, params, requestId):
 
     policy = task.get('policy') or {}
     peerJudged = False
-    if policy and task.get('engine') == 'remote':
+    if policy and not task_node.isLocal(task_node.of(task)):
         from modules import agent_nodes
         peerJudged = bool(agent_nodes.findFederationMember(task.get('node') or ''))
     if policy and options and not peerJudged:
@@ -505,7 +504,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
     client = None
     try:
         client = clientFactory(
-            cwd=task.get('cwd') or task['workspace'],
+            cwd=task_node.cwdOf(task) or task['workspace'],
             on_update=lambda update: (_handleAcpUpdate(task, update)
                                       if agent.get('ready') else None),
             on_permission=lambda params, rid: _handleAcpPermission(task, agent, params, rid),
@@ -668,7 +667,8 @@ def _resumeWithMessage(task, text):
 
 
 def _startTask(task, manifest):
-    task_engines.get(task.get('engine')).start(task, manifest)
+    from modules.agent_nodes import executionKind
+    task_engines.get(executionKind(task.get('node'))).start(task, manifest)
 
 
 def _shutdownClients():
@@ -684,6 +684,6 @@ def _shutdownClients():
 
 atexit.register(_shutdownClients)
 
-# acp/remote 引擎由 modules/agent_nodes 注册（clientFactoryFor 统一选择
-# 本机 node / 远端节点 / 联邦成员 / web 内 stdio）。旧 'p' 引擎已随
-# tasks_legacy 一并移除（API 不做跨版本兼容，部署面保持同版）。
+# 执行点类型（local / agent / federation）由 modules/agent_nodes 注册，
+# clientFactoryFor 统一选择本机 node / 远端节点 / 联邦成员 / web 内 stdio。
+# 旧的分派方式已随跨版本兼容一起移除（部署面保持同版）。

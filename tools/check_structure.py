@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""代码结构门禁：文件预算、存量例外、重复工具、横向 import、window 全局。
+"""代码结构门禁：文件预算、存量例外、重复工具、横向 import、window 全局、
+执行点字段（对外只认 node/cwd）。
 
 用法: python tools/check_structure.py [--strict]
 退出码: 预算/存量增长/未定义名违规 → 1；其它为 warning。
@@ -66,6 +67,37 @@ def read_lines(path):
     with open(path, encoding='utf-8', errors='replace') as f:
         text = f.read()
     return text, text.count('\n') + (0 if text.endswith('\n') or not text else 1)
+
+
+# 执行点门禁（2026-11-13）：对外只剩 node（去哪台机器，缺省 local）与
+# cwd（在哪个目录跑，缺省任务目录）。engine 不得回到 modules/ 与 frontend/：
+# 不许当入参名、不许读旧字段、用户可见文案不许出现「引擎」。
+# 唯一白名单 modules/task_node.py：旧任务记录 / 旧工作线元数据读取时映射一次
+# （acp→local），以及请求里带 engine 时显式 400——这两处必须认识旧名字。
+NODE_FIELD_ALLOWED = {'modules/task_node.py'}
+
+
+def scan_execution_point_fields(errors):
+    exts = ('.py', '.js', '.html', '.css')
+    for base_rel in ('modules', 'frontend'):
+        base = os.path.join(ROOT, base_rel)
+        for dirpath, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d != 'vendor']
+            for name in files:
+                if os.path.splitext(name)[1].lower() not in exts:
+                    continue
+                path = os.path.join(dirpath, name)
+                rel = os.path.relpath(path, ROOT).replace('\\', '/')
+                if rel in NODE_FIELD_ALLOWED:
+                    continue
+                text, _ = read_lines(path)
+                if '引擎' in text:
+                    errors.append('%s 出现「引擎」：统一叫执行点（node）' % rel)
+                m = re.search(r'\bengine\b', text, re.I)
+                if m:
+                    errors.append('%s:%d 出现 engine 字段/入参：对外只有 node/cwd'
+                                  '（白名单见 NODE_FIELD_ALLOWED）'
+                                  % (rel, text.count('\n', 0, m.start()) + 1))
 
 
 def scan_budget(errors, warnings):
@@ -202,6 +234,7 @@ def main():
     parser.add_argument('--strict', action='store_true', help='warning 也视为失败')
     args = parser.parse_args()
     errors, warnings = [], []
+    scan_execution_point_fields(errors)
     scan_budget(errors, warnings)
     scan_duplicate_helpers(warnings)
     scan_feature_imports(warnings)

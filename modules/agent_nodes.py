@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""远端智能体节点：客户端 + 任务引擎注册 + 节点 API。
+"""远端智能体节点：客户端 + 执行点分派注册 + 节点 API。
 
 传输:
     直连 node url；配置 via=<SSH主机id> 时经 SSH 隧道（agent_tunnel）转发。
 客户端:
     RemoteAcpClient 与 KimiAcp 同接口（start/prompt/cancel/set_mode/close），
     传输为 HTTP + 事件轮询；权限决策、事件展示、续跑全部复用任务层。
-引擎:
-    engine='remote' 的任务在远端节点执行；workspace 仍是本机任务卡目录，
-    远端 cwd 用 task['remoteCwd']。会话活在 node 侧，web 重启可 resume。
+执行点:
+    node 非 local 的任务在该执行点执行；workspace 仍是本机任务卡目录，
+    cwd 是执行目录（远端目录由对端校验）。会话活在对端，web 重启可 resume。
 """
 import json
 import logging
@@ -21,7 +21,7 @@ import paramiko
 from flask import Blueprint, jsonify
 
 import config
-from modules import task_engines
+from modules import task_engines, task_node
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 blueprint = Blueprint('agent_nodes', __name__)
@@ -177,7 +177,7 @@ def localKimiModels(maxAgeSec=60):
 def nodeModelDecl(name=''):
     """执行点的模型声明：{name, models 可选清单, default}。
 
-    name 空 = engine=acp 的执行点（本机 node 或 web 内 stdio）。
+    name 空或 local = 本机执行点（本机 node 或 web 内 stdio）。
     优先级：config 显式声明 → node /health 自动上报（新版 node）→
     本机 kimi config.toml 自动发现。全空 = 该节点不能选模型（§7.5）。
     """
@@ -480,12 +480,12 @@ class RemoteAcpClient:
         return self.exit_code if self.exit_code is not None else 0
 
 
-# ---------------------------------------------------------------- 引擎
+# ---------------------------------------------------------------- 执行点
 
 def remoteClientFactory(task):
     """按任务生成与 KimiAcp 同签名的客户端工厂（cwd 换成远端目录）。"""
     node = task.get('node') or ''
-    remoteCwd = task.get('remoteCwd') or ''
+    remoteCwd = task_node.cwdOf(task)
     taskModel = task.get('model') or ''
     kimiSessionId = task.get('kimiSessionId') or ''
     kimiSessionFork = bool(task.get('kimiSessionFork', True))
@@ -508,18 +508,25 @@ def findFederationMember(name):
     return _find(name)
 
 
-def clientFactoryFor(task):
-    """统一客户端选择：remote→指定执行点（agent node 或联邦成员）；
-    acp→本机节点（启用时）否则 web 内 stdio。
+def executionKind(node):
+    """执行点类型：local / agent / federation（任务分派的唯一依据）。"""
+    name = str(node or '').strip()
+    if task_node.isLocal(name):
+        return 'local'
+    return 'federation' if findFederationMember(name) is not None else 'agent'
 
-    本机 node 化后 engine=acp 的会话也由本机 agent node 托管，
+
+def clientFactoryFor(task):
+    """统一客户端选择：非本机→该执行点（agent node 或联邦成员）；
+    local→本机节点（启用时）否则 web 内 stdio。
+
+    本机 node 化后 local 任务的会话由本机 agent node 托管，
     web 重启不再打断任务；未启用（localAgentNodePort=0）时回退 KimiAcp。
     """
     from modules.kimi_acp import KimiAcp
-    engine = (task.get('engine') or 'acp').lower()
+    nodeName = task_node.of(task)
     taskModel = task.get('model') or ''
-    if engine == 'remote':
-        nodeName = task.get('node') or ''
+    if not task_node.isLocal(nodeName):
         if findFederationMember(nodeName) is not None:
             from modules.tasks_federation import FederationTaskClient
             firstPrompt = task.get('prompt') or ''
@@ -559,21 +566,14 @@ def clientFactoryFor(task):
     return stdioFactory
 
 
-def _remoteSessionThread(task, manifest):
+def _sessionThread(task, manifest):
     from modules import tasks_runner
     tasks_runner._sessionThread(task, manifest, clientFactory=clientFactoryFor(task))
 
 
-task_engines.register('remote', task_engines.ThreadEngine(_remoteSessionThread))
-
-
-def _acpSessionThread(task, manifest):
-    from modules import tasks_runner
-    tasks_runner._sessionThread(task, manifest, clientFactory=clientFactoryFor(task))
-
-
-task_engines.register('acp', task_engines.ThreadEngine(_acpSessionThread))
-
+task_engines.register('local', task_engines.ThreadRunner(_sessionThread))
+task_engines.register('agent', task_engines.ThreadRunner(_sessionThread))
+task_engines.register('federation', task_engines.ThreadRunner(_sessionThread))
 
 # ---------------------------------------------------------------- API
 # 节点列表与健康检查路由在 modules/tasks_federation.py

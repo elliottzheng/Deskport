@@ -95,21 +95,26 @@ POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "
 
 ```text
 POST /api/tasks
-{"prompt": "目标描述", "engine": "acp", "mode": "auto", "model": "<可选>"}
+{"prompt": "目标描述", "node": "local", "mode": "auto", "model": "<可选>"}
 → 202 {"task": {"id": "...", ...}}
 ```
 
+- `node` = 执行点（去哪台机器）：缺省 `"local"`（本机）；其它值见
+  `GET /api/tasks/nodes`（agent node / 联邦成员）。`cwd` = 执行目录：
+  缺省 = Deskport 分配的任务目录。
+- 旧字段 `engine` 已移除：传了直接 400，不会被忽略或映射。
 - `mode` 不传 = `default`（逐项审批，安全默认）；要自动批准显式传 `"mode": "auto"`。
 - `model` 可选：按活的性质挑模型（机械活用快的，验收用与实施方不同的模型）；
   可选列表看 `GET /api/tasks/nodes` 的 `models`；续聊沿用原模型。
 - 接手已有 Kimi 会话：`GET /api/tasks/kimi-sessions?cwd=<目录>` 挑候选，
   `{"kimiSessionId": "<id>"}` 建任务（默认 fork 副本不干扰原会话，占用时 400 透传原因）。
 - 任务 close = 明确结束（node 侧进程立即回收）；不 close 的会话保留 45 分钟可随时续聊。
-- `engine: "remote"` 加 `"node": "...", "cwd": "<远端目录>"`。
-- `engine: "acp"` 也可加 `"cwd": "<本机绝对目录>"`：ACP 进程在该目录里跑，
-  可以直接改项目；**任务目录（workspace）仍由 Deskport 建**——日志、`inputs/`、
-  close 都只动 workspace，cwd 里的文件不会被清。cwd 必须存在、是目录，且在
-  `config.workDirs` / `fallbackDir` 之下（越界 400）；不传 = 跑在 workspace（旧行为）。
+- 非本机执行点（`"node": "<agent node 或联邦成员>"`）必须给 `"cwd": "<该机器上的目录>"`，
+  缺 cwd 或执行点不存在 → 400 并附 `nodes` 提示；目录由对端校验。
+- 本机也可给 `"cwd": "<本机绝对目录>"`：执行进程在该目录里跑，可以直接改项目；
+  **任务目录（workspace）仍由 Deskport 建**——日志、`inputs/`、close 都只动
+  workspace，cwd 里的文件不会被清。cwd 必须存在、是目录，且在
+  `config.workDirs` / `fallbackDir` 之下（越界 400）；不传 = 跑在 workspace。
   附件仍复制到 `<workspace>/inputs/`；cwd 与 workspace 不同时，prompt 会自动
   写明「工作目录是 cwd、附件在哪个绝对路径」。
 - `prompt` 上限 4000 字符；本机文件用 `paths: [绝对路径]`；没有现成文件时先上传：
