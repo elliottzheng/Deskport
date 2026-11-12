@@ -179,8 +179,8 @@ POST /api/agent/ssh/exec
   （先 TERM 后 KILL）；响应带 `pid` 便于自查；
 - 远端默认注入 `LANG=C.UTF-8`：UTF-8 输出是契约。
 
-本机专用别名路由 `POST /api/agent/local/exec` 等价于
-`POST /api/agent/ssh/exec` + `host: "local"`。
+本机专用别名：`POST /api/agent/local/exec` 等价于 `/api/agent/ssh/exec` + `host: "local"`；
+`/api/agent/local/sftp/{list,get,put}` 同理等价于 `/api/agent/sftp/*` + 本机（免填 `host`）。
 
 ## SFTP（读写文件，整读 8MB，可分块）
 
@@ -235,7 +235,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 |---|---|---|
 | GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
 | POST | /api/tasks | 建任务 → 202 `{prompt, engine, node, cwd, mode, model, paths, attachments}` |
-| GET | /api/tasks/<id> | 任务状态（含 `model`、`workspace`、`remoteCwd`） |
+| GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`remoteCwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
 | GET | /api/tasks/<id>/events/stream?since=N | SSE 推送 |
 | POST | /api/tasks/<id>/message | 续聊 `{text, mode?, wait?}`，mode=queue（默认）/steer/reject |
@@ -248,6 +248,15 @@ DELETE /api/agent/ssh/sessions/<sid>
 | POST | /api/tasks/nodes/<node>/probe | 手动触发模型可用性探测 `{models?: [...]}`（缺省=全部声明模型），立即入队后台探测 |
 | POST | /api/tasks/files | 上传文件 → 返回本机路径（塞进 paths 用） |
 | GET | /api/tasks/kimi-sessions?cwd= | 已存在的 Kimi CLI 会话（接手候选，按最近更新排序） |
+| GET | /api/tasks/<id>/event/<seq> | 单条事件（按 seq 从流水里取，`assistant_chunk` 不返回） |
+| GET | /api/tasks/<id>/log | 全量流水 jsonl（`application/x-ndjson`；`?download=1` 作为附件下载；无日志 404） |
+| GET | /api/tasks/<id>/download?path= | 取工作区里的结果文件（相对 `workspace` 解析；越界 403、不存在 404） |
+| POST | /api/tasks/<id>/policy | 更新审批边界（整份替换 `policy`；本轮 `running` 时 409，挂起中的审批不重判） |
+| GET | /api/tasks/nodes/<node>/health | 执行点健康探测：本机/远端 node 直连 `/health`，联邦成员转发 `/health` |
+
+`/log` 是逐 chunk 的完整流水（`assistant_chunk` 也在里面），事件流里只落回合结束的终版回答；
+对账时先用 `/log` 找到 seq，再用 `/event/<seq>` 取单条。`/download` 只能读该任务工作区内的文件，
+路径越界一律 403。
 
 - `engine: "acp"`（缺省）= 本机 Kimi（agent node 托管，web 重启可接手）；
   `paths` 引用本机输入文件；**不接受 `cwd`**（400，任务固定运行在独立

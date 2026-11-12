@@ -34,9 +34,14 @@
 | GET | `/api/ai/config` | `workDirs`、`fallbackDir`、`aiCommand`、`detectedCommands`、`inboxDirs` |
 | POST | `/api/ai/plan` | `{task, files[]}` → `{mode, suggestion, alternatives[], confidence, margin, source}` |
 | POST | `/api/ai/case` | `{task, files[], mode, dest, note}` → 建目录+复制+写任务文件，返回 `terminal{cwd,cmd,kick}` |
+| POST | `/api/ai/direct` | `{path, task?, note?}` → `{ok, dir, terminal{cwd,cmd,kick}}`；直接把该文件夹当 cwd，不复制、不写任务.txt |
 
 `items[]` 字段：`name, path, size, mtime, source, ext, kind, thumb, dupes[], id`。
 `kind` ∈ image / pdf / doc / sheet / slide / archive / media / other。
+
+`ai/direct` 是「就地开工」：不建案例目录、不复制文件，`task`（提示词）与 `note` 会拼成 `kick`
+交给 AI CLI（都为空则只开交互式终端）。只接受本机磁盘绝对路径（403），目录不存在 400；
+因为它不产生新落点，所以不受 `ai/case` 的工作目录白名单限制。
 
 ## 三、配置（config.json）
 

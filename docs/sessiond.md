@@ -53,6 +53,7 @@ python sessiond.py ssh      # sshd
 | 浏览器路径 | 代理到 | 说明 |
 |---|---|---|
 | `/api/terminal/ws` | locald `/ws/terminal` | WS 双向透传，帧协议不变 |
+| `/terminal/api/ws` | locald `/ws/terminal` | 旧路径别名（RemoteConnecter 插件写死），行为同 `/api/terminal/ws` |
 | `/api/terminal/sessions`、`DELETE /<id>` | locald `/sessions` | 列表与关闭 |
 | `/api/ssh/ws` | sshd `/ws/ssh` | WS 双向透传 |
 | `/api/ssh/sessions`、`DELETE /<id>` | sshd `/sessions` | 列表与关闭 |

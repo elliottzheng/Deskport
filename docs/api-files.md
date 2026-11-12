@@ -86,6 +86,25 @@ multipart：`file` + `path`（保存目录）+ `execute`/`tempdir`（`true`/`fal
 
 SFTP 的 `/api/ssh/sftp/read`、`/api/ssh/sftp/write` 使用同一套 `encoding` 契约（`modules/textio.py`）。
 
+## 快速访问、缩略图与粘贴
+
+### GET / POST /api/files/pins
+
+- GET → `{pins: [{path, label}]}`；`files_pins.json` 不存在时写入并返回默认项（主目录 / 桌面 / 下载 / 文档，只取真实存在的）
+- POST `{pins: [{path, label?}]}` → `{ok, pins}`；非数组 400，`label` 缺省取目录名
+- 存 `%APPDATA%\<stateDir>\files_pins.json`。联邦模式下这是中枢本地 UI 状态，**永不**转发给成员（`files_federation` 的 `LOCAL_PATHS`）
+
+### GET /api/files/thumb?path=
+
+返回 `image/png`。缩略图生成后缓存在 `<stateDir>\thumbs`，缓存键含路径哈希 + mtime + 尺寸，源文件改动自动失效。文件不存在 404、非图片扩展名 415（`media.MediaError` 带状态码）。联邦文件页允许把该端点转发给成员（只读端点之一）。
+
+### POST /api/files/paste
+
+`{mode: "copy"|"move", paths[], dest}` → `{ok, done, errors?}`。
+
+- 资源管理器剪贴板语义：复制/移动到 `dest`；同名目标自动加 `(1)`/`(2)` 不覆盖；`mode=move` 且源已在该目录时跳过
+- 状态码：全部成功 **200**；部分成功 **207**（带 `errors[]`）；全部失败 **500**；`mode` 非法 400、目标目录不存在 404
+
 ## 压缩与解压（L2）
 
 ### POST /api/files/extract
