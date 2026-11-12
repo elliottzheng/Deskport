@@ -11,6 +11,7 @@ import threading
 import time
 
 import config
+from modules import sensitive_values
 from modules import tasks_store as store
 from modules import task_state
 from modules import task_engines
@@ -51,6 +52,82 @@ def _flushAssistant(task):
                             full=buf, truncated=len(buf) > store.MAX_TEXT)
 
 
+def _argsText(args):
+    """工具参数（对象/字符串）→ 事件里存的文本。"""
+    return json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args
+
+
+def _parseArgs(text):
+    """参数文本 → 对象；解析不成 dict/list 返回 None。
+
+    流式参数在 tool_call_update.content 里是逐段 JSON 快照（先 '{'，再半
+    截，最后完整），只有完整那次解析得出来。
+    """
+    text = (text or '').strip()
+    if text[:1] not in ('{', '['):
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
+
+
+def _rememberLateArgs(task, update):
+    """参数后到（R5-9）：真实 Kimi 的流式形状是先来不带 rawInput 的
+    tool_call，参数随后在 tool_call_update 的 content 文本里补，rawInput
+    对象甚至晚于 request_permission 才到。
+
+    按 callId 记下这两条线索，供审批回查 policy、给已落卡的 tool 事件补参
+    数；返回 (callId, 可落盘的参数文本)，拿不到完整参数时文本为空。
+    """
+    callId = update.get('toolCallId') or ''
+    if not callId:
+        return '', ''
+    status = update.get('status') or ''
+    rawInput = update.get('rawInput')
+    # completed/failed 的 content 是工具输出，不是参数
+    text = '' if status in ('completed', 'failed') \
+        else extractText(update.get('content'))
+    argsText = ''
+    with store.repo.lock:
+        if rawInput is not None:
+            task.setdefault('_toolArgs', {})[callId] = rawInput
+            argsText = _argsText(rawInput)
+            last = task.get('_lastToolCall') or {}
+            if last.get('callId') == callId:
+                last['rawArgs'] = rawInput
+                last['args'] = argsText[:2000]
+        if text:
+            texts = task.setdefault('_toolArgText', {})
+            texts[callId] = text[-store.MAX_TEXT:]
+            if len(texts) > 50:
+                for k in list(texts.keys())[:-50]:
+                    texts.pop(k)
+            if not argsText:
+                parsed = _parseArgs(text)
+                if parsed is not None:
+                    argsText = json.dumps(parsed, ensure_ascii=False)
+    return callId, argsText
+
+
+def _backfillToolArgs(task, callId, argsText):
+    """把后到的参数补进已落卡的 tool 事件（写入前同样脱敏，R5-2）。"""
+    if not callId or not argsText:
+        return
+    text = sensitive_values.redactText(argsText)[:store.MAX_TEXT]
+    with store.repo.lock:
+        for event in reversed(task.get('events') or []):
+            if event.get('type') != 'tool' or event.get('callId') != callId:
+                continue
+            if event.get('args'):
+                return
+            event['args'] = text
+            event['truncated'] = len(argsText) > store.MAX_TEXT
+            store.repo.save()
+            return
+
+
 def _handleAcpUpdate(task, update):
     kind = update.get('sessionUpdate')
     if kind == 'agent_message_chunk':
@@ -63,7 +140,7 @@ def _handleAcpUpdate(task, update):
         args = update.get('rawInput')
         if args is None:
             args = extractText(update.get('content'))
-        argsText = json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args
+        argsText = _argsText(args)
         with store.repo.lock:
             # 审批事件要能对回工具调用（反馈 §3.4）：ACP 的 permission 请求
             # 常不带 rawInput——按 callId 回查原始参数（对象/字符串原样保留），
@@ -97,6 +174,8 @@ def _handleAcpUpdate(task, update):
                      callId=callId, status=update.get('status') or '')
         return
     if kind == 'tool_call_update':
+        lateCallId, lateArgs = _rememberLateArgs(task, update)
+        _backfillToolArgs(task, lateCallId, lateArgs)
         if update.get('status') not in ('completed', 'failed'):
             return
         raw = update.get('rawOutput')
@@ -180,6 +259,7 @@ def _handleAcpPermission(task, agent, params, requestId):
         last = task.get('_lastToolCall') or {}
         byKind = (task.get('_toolKinds') or {}).get(callId) if callId else None
         byCall = (task.get('_toolArgs') or {}).get(callId) if callId else None
+        streamed = (task.get('_toolArgText') or {}).get(callId) if callId else None
         # 轮间幽灵审批（R5-7 #2）：status=waiting（本轮已结束、等续聊）时
         # 收到的审批，callId 在本任务 tool 事件里查不到——后台任务结束后的
         # 残响会反复重放审批。直接拒绝，不挂起、不挡 message；执行轮次中
@@ -194,11 +274,16 @@ def _handleAcpPermission(task, agent, params, requestId):
     # 按 callId 回查 tool_call update 记下的 kind，再兜底最近一次调用
     if not kind:
         kind = byKind or last.get('kind') or ''
-    # 真实链路（R4 验收）：Kimi 的 request_permission 常不带 rawInput，
-    # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，
-    # 字符串统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉
-    if callId and byCall is not None:
-        rawInput = byCall               # 按 callId 精确回查：找到就用（空也认）
+    # 真实链路（R4 验收 / R5-9）：Kimi 的 request_permission 常不带 rawInput，
+    # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，字符串
+    # 统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉。
+    # 流式形状（模型在 tool_call 之后才吐参数）下按 callId 记下的可能是空串：
+    # 空的不认，退回审批自带/流式文本里的真参数（R5-9：旧的"空也认"会盖掉它）
+    if callId and byCall:
+        rawInput = byCall               # 按 callId 精确回查：参数记下了就用
+    if not rawInput and callId and streamed:
+        parsed = _parseArgs(streamed)
+        rawInput = parsed if parsed is not None else streamed
     if not rawInput and not callId:
         # 无 callId 才借用最近一次调用（R4-2b，连 callId 一起认领）；callId
         # 带着但查不到说明是另一次调用（后台/轮间请求，事件流里无对应 tool
@@ -215,6 +300,10 @@ def _handleAcpPermission(task, agent, params, requestId):
                 rawInput = parsed
         except ValueError:
             pass
+    if callId and rawInput:
+        # 回查到的参数按调用留痕：后续审批/孤儿判定都能查到（R5-9）
+        with store.repo.lock:
+            task.setdefault('_toolArgs', {})[callId] = rawInput
     # 审批事件自带被审批调用的参数（对象优先），name=工具名（反馈 §1）
     argsForEvent = rawInput if isinstance(rawInput, (dict, list)) \
         else str(rawInput or '')

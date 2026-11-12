@@ -319,7 +319,10 @@ DELETE /api/agent/ssh/sessions/<sid>
   `attachments: [{name, contentB64}]`（单附件 32MB / 总量 500MB / ≤20 项）；
 - `permission_request` 事件带 `callId` 与 `args`（工具调用的参数原文），
   能精确对回是哪个调用在等审批；ACP 不带 toolCallId 时回退最近一次
-  tool_call；
+  tool_call。参数可能晚于 tool_call 才到（R5-9：流式形状下 tool_call 只是
+  空壳，参数在 `tool_call_update` 里逐段补）：服务端按 callId 攒下流式
+  参数与后到的 rawInput，审批判定用完整参数，已落卡的 `tool` 事件会补全
+  `args`；
 - `close` 返回的就是终态（已 cancel 的任务保持 `cancelled`，close 幂等）。
 
 **任务事件类型**：`status` / `user` / `assistant`（回答终版，逐 chunk 流水在
