@@ -26,6 +26,9 @@
     font-family: var(--mono); overflow-wrap: anywhere; color: var(--text-2);
 }
 .settings-dir-remove { flex: 0 0 auto; height: 32px; padding: 0 10px; font-size: 12px; }
+.device-row { flex: 1; min-width: 0; }
+.device-name { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.device-meta { display: block; margin-top: 2px; color: var(--text-3); overflow-wrap: anywhere; }
 .settings-dir-add { display: flex; gap: 8px; margin: var(--sp-3) 0 var(--sp-2); }
 .settings-dir-add .input { margin-bottom: 0; flex: 1; min-width: 0; }
 .settings-dir-add .btn { flex: 0 0 auto; height: 44px; }

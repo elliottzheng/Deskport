@@ -28,12 +28,23 @@ createApp({
             fedError: '',
             fedOk: '',
             fedBusy: false,
+            devices: [],
+            deviceError: '',
+            deviceOk: '',
+            deviceBusy: false,
+            uploadTargets: [],
+            phonePath: '',
+            utError: '',
+            utOk: '',
+            utBusy: false,
         };
     },
     mounted() {
         this.loadInbox();
         this.loadBrand();
         this.loadFederation();
+        this.loadDevices();
+        this.loadUploadTargets();
     },
     methods: {
         async loadBrand() {
@@ -228,6 +239,83 @@ createApp({
                 this.fedError = err.message;
             } finally {
                 this.fedBusy = false;
+            }
+        },
+        async loadDevices() {
+            try {
+                const r = await fetch('/api/settings/devices');
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.devices = data.devices || [];
+            } catch (err) {
+                this.deviceError = '加载设备列表失败: ' + err.message;
+            }
+        },
+        async revokeDevice(d) {
+            if (this.deviceBusy) { return; }
+            this.deviceError = '';
+            this.deviceOk = '';
+            this.deviceBusy = true;
+            try {
+                const r = await fetch('/api/settings/devices/revoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: d.id }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.devices = data.devices || [];
+                this.deviceOk = '已吊销「' + d.name + '」的令牌，该设备需重新登录';
+                setTimeout(() => { this.deviceOk = ''; }, 2500);
+            } catch (err) {
+                this.deviceError = err.message;
+            } finally {
+                this.deviceBusy = false;
+            }
+        },
+        toTargetRow(x) {
+            return { id: x.id || '', name: x.name || '', path: x.path || '' };
+        },
+        async loadUploadTargets() {
+            try {
+                const r = await fetch('/api/settings/uploadTargets');
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                const builtin = data.builtinId || 'phone';
+                const rows = data.targets || [];
+                this.phonePath = (rows.find(t => t.id === builtin) || {}).path || '';
+                this.uploadTargets = rows.filter(t => t.id !== builtin).map(x => this.toTargetRow(x));
+            } catch (err) {
+                this.utError = '加载上传目标失败: ' + err.message;
+            }
+        },
+        addUploadTarget() {
+            this.uploadTargets.push({ id: '', name: '', path: '' });
+        },
+        async saveUploadTargets() {
+            if (this.utBusy) { return; }
+            this.utError = '';
+            this.utOk = '';
+            for (const t of this.uploadTargets) {
+                if (!t.name || !t.path) { this.utError = '每个目标都需要名称和目录'; return; }
+            }
+            this.utBusy = true;
+            try {
+                const r = await fetch('/api/settings/uploadTargets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ targets: this.uploadTargets }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                const builtin = data.builtinId || 'phone';
+                this.uploadTargets = (data.targets || []).filter(t => t.id !== builtin).map(x => this.toTargetRow(x));
+                this.utOk = '上传目标已保存；App 端只会看到名称';
+                setTimeout(() => { this.utOk = ''; }, 2500);
+            } catch (err) {
+                this.utError = err.message;
+            } finally {
+                this.utBusy = false;
             }
         },
         async submit() {

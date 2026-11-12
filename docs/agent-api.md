@@ -58,7 +58,8 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 ## 手机上传（POST /api/agent/upload，scope=upload）
 
 手机「分享」直达电脑的落盘通道：multipart 直传，不需要会话 Cookie，
-文件自动进收件箱（`phoneUploadDir` 并入收件箱观察目录）。
+落盘位置由上传目标白名单（`uploadTargets`）决定，文件自动进收件箱
+（内置 phone 目标的目录并入收件箱观察目录）。
 
 ```text
 POST /api/agent/upload    (X-Agent-Token: <scope 含 upload 的令牌>)
@@ -66,16 +67,25 @@ Content-Type: multipart/form-data
 
 字段:
   file     必填, 可重复（一次多个文件）
+  target   可选, 目标 id（缺省 "phone"）; 不存在 400
+           {"error": "上传目标不存在", "targets": [{id,name}...]}
   subdir   可选, 相对子目录（如 "照片/2026-11"）
 → 200 {"ok": true,
-       "saved": [{"path": "E:\\...\\手机上传\\a.pdf", "size": 123,
+       "saved": [{"path": "教研资料/11月/a.pdf", "size": 123,
                   "sha256": "<64hex>"}],
        "failed": [{"name": "b.txt", "error": "..."}]}
 ```
 
-- 落盘根目录 = config `phoneUploadDir`（缺省 `<fallbackDir>\手机上传`），
-  目录自动创建；收件箱开启时自动并入 `inboxDirs`，上传即出现在
-  `/api/inbox/recent`，可直接「交给 AI」；
+- 上传目标白名单 = 内置 `phone`（手机上传目录, 不可删）+ 设置页配置的
+  自定义目标（`GET /api/settings/uploadTargets` / `POST` 管理, 会话态）；
+  **path 只留在服务端**，下发给 App 的只有 id 和 name：
+  `GET /api/agent/upload/targets`（scope=upload）→
+  `{targets: [{id, name}], default: "phone"}`，登录响应的 `targets`
+  同样只含 id+name；
+- `saved[].path` = 目标名/相对路径（如 `教研资料/11月/a.pdf`），不暴露
+  服务器上的绝对路径；
+- 目标目录自动创建；phone 目标的目录自动并入 `inboxDirs`，上传即出现
+  在 `/api/inbox/recent`，可直接「交给 AI」；
 - `subdir` 只接受相对子路径：拒绝绝对路径、盘符（`C:`）、`..`、Windows
   非法字符，逐级校验，坏值整个请求 400；
 - 文件名逐个校验（纯文件名，≤120 字符）；**重名自动 `(2)`**，不覆盖；
@@ -84,9 +94,41 @@ Content-Type: multipart/form-data
 - 无令牌 401；令牌无 `upload` scope → 403 `{"need": "upload"}`；
   缺 `file` 字段 400；部分成功即 200，`failed[]` 带逐个原因
   （全部失败时 HTTP 状态按原因返回 4xx/5xx，不一律 500）；
-- 审计 `agent.upload` 记令牌名、scope 与 saved/failed 明细。
+- 审计 `agent.upload` 记令牌名、scope、target id 与 saved/failed 明细。
 
-手机端配置：服务器地址 + 令牌（`scopes: ["upload"]` 的那种）。
+手机端配置：服务器地址 + 令牌（`scopes: ["upload"]` 的那种）；App 也可以
+用访问密码登录自动换取设备令牌（见下节），无需手动填。
+
+## 设备登录（App 用网页密码换设备令牌）
+
+App 不保存密码：用网页访问密码登录一次，服务端签发一个**只带 `upload`
+权限、绑定设备名**的设备令牌；网页端设置页「登录设备」可见每台设备
+（设备名/签发时间/最后使用时间/来源 IP），可单独吊销。
+
+```text
+POST /api/agent/device/login    （无需令牌, 免 Cookie）
+{"password": "<网页访问密码>", "device": "小米手机"}
+→ 200 {"token": "<43字符>", "name": "小米手机", "scopes": ["upload"],
+       "createdAt": "2026-11-12 12:00:00",
+       "targets": [{"id": "phone", "name": "手机上传"}, ...]}
+→ 401 {"error": "密码错误"}    → 429 {"error": "尝试次数过多, 请稍后再试"}
+
+POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
+→ 200 {"ok": true}   之后旧令牌一律 401
+```
+
+- 令牌 `secrets.token_urlsafe(32)`，只在登录响应出现一次，任何接口
+  不再回显；服务端只存 SHA-256（`%APPDATA%\<stateDir>\devices.json`，
+  不进 config.json）；
+- 同设备名重新登录 = 替换旧令牌（旧的即刻失效）；设备上限 20 台；
+- 设备令牌与智能体令牌走同一鉴权入口：`/api/agent/upload` 放行，
+  exec / SFTP / sessions / `/api/tasks*` 一律 `403 {"need": "full"}`；
+- 防暴力破解（内存计数，重启清零）：每 IP 60 秒内失败≥5 拒到窗口滚出；
+  全局 10 分钟内失败≥20 锁 10 分钟（触发写审计 `device.lockout`），
+  锁定期间统一 429，网页登录不受影响；审计 `device.login`
+  ok/fail/locked 与 `device.logout`；
+- 设置页管理面：`GET /api/settings/devices`（列表不含令牌）、
+  `POST /api/settings/devices/revoke {"id": "..."}`（会话 Cookie 态）。
 
 ## 认证与错误格式
 

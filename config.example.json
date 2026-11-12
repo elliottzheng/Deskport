@@ -17,5 +17,6 @@
   "externalApps": {},
   "agentTokens": [],
   "phoneUploadDir": "",
-  "phoneUploadMaxMB": 2048
+  "phoneUploadMaxMB": 2048,
+  "uploadTargets": []
 }
