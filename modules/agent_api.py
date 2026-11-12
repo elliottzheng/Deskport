@@ -6,7 +6,8 @@
     与 config.json agentTokens[].tokenHash（SHA-256）比对；未命中一律 401。
     浏览器 Cookie 登录态同样放行（供面板 UI 未来复用）。
     令牌 scope: agentTokens[].scopes 白名单；没写 = 全权（向后兼容）。
-    现有端点要求 full，手机上传要求 upload；越权 403 {"error","need"}。
+    现有端点要求 full，手机上传要求 upload，转发任务要求 share；
+    越权 403 {"error","need"}。
 
 端点:
     GET  /api/agent/hosts          主机列表（只含 id/name/host/port，无凭据）
@@ -17,8 +18,9 @@
     modules/agent_sessions.py      持久会话（bash 常驻通道）
     modules/agent_local.py         Deskport 本机作为内置主机（全等价）
     modules/agent_upload.py        手机分享上传（scope=upload）
+    modules/agent_share.py         手机转发文件交给执行方（scope=share）
     modules/agent_skill_files.py   技能包附件（客户端/驱动/协作原则，同一套自举）
-    modules/device_auth.py         设备登录（App 密码换 upload 设备令牌, 自吊销）
+    modules/device_auth.py         设备登录（App 密码换 upload+share 设备令牌, 自吊销）
 
 审计: 每次调用写 events（agent.exec / agent.sftp.*）。
 安全: 插件安全模型同档——外部智能体 = 可信代码；危险命令审批是后续增强项。
@@ -49,6 +51,7 @@ blueprint = Blueprint('agent', __name__)
 
 SCOPE_FULL = 'full'
 SCOPE_UPLOAD = 'upload'
+SCOPE_SHARE = 'share'   # 手机「转发文件交给执行方」：投暂存区 + 建任务/追消息
 
 
 def tokenHash(token):

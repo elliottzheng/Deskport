@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """任务路由层：/api/tasks 参数校验、调用 store/runner、返回 JSON 或文件。"""
 import datetime
+import io
 import json
 import logging
 import os
@@ -864,12 +865,11 @@ def uploadTaskFile():
         return jsonify({'error': 'contentB64 不是合法 base64（已拒绝写入）'}), 400
     if len(raw) > store.MAX_UPLOAD_MB * 1024 * 1024:
         return jsonify({'error': '文件超过 %dMB 上限' % store.MAX_UPLOAD_MB}), 413
-    root = os.path.join(store.taskRoot(), '_uploads', uuid.uuid4().hex[:8])
     try:
-        os.makedirs(root, exist_ok=True)
-        path = fsutil.uniquePath(root, name)
-        with open(path, 'wb') as f:
-            f.write(raw)
+        path = store.saveStagedStream(name, io.BytesIO(raw),
+                                      store.MAX_UPLOAD_MB * 1024 * 1024)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 413
     except OSError as e:
         return jsonify({'error': str(e)}), 500
     tokenName = getattr(g, 'agentTokenName', '')

@@ -42,12 +42,13 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
   { "id": "kimi",   "name": "Kimi Code", "tokenHash": "<SHA-256>",
     "scopes": ["full"] },
   { "id": "phone",  "name": "手机", "tokenHash": "<SHA-256>",
-    "scopes": ["upload"] }
+    "scopes": ["upload", "share"] }
 ]
 ```
 
 - 现有 `/api/agent/*`（exec / sftp / sessions / skills / hosts）与
   `/api/tasks*` 全部要求 `full`；手机上传（见下节）要求 `upload`；
+  手机转发任务（见「转发文件 → 交给执行方」一节）要求 `share`；
 - 写了 `scopes` 就按白名单精确匹配；显式 `"scopes": ["full"]` 等价全权
   （也能上传）；
 - 越权返回 `403 {"error": "令牌无此权限", "need": "<所需 scope>"}`，
@@ -88,6 +89,8 @@ Content-Type: multipart/form-data
   在 `/api/inbox/recent`，可直接「交给 AI」；
 - `subdir` 只接受相对子路径：拒绝绝对路径、盘符（`C:`）、`..`、Windows
   非法字符，逐级校验，坏值整个请求 400；
+- App 的「只上传」去处用的就是 `subdir`（填文件夹名即可，不存在自动建）；
+  这条路径只要求 `upload` scope，不经过任务/`share`；
 - 文件名逐个校验（纯文件名，≤120 字符）；**重名自动 `(2)`**，不覆盖；
 - 流式写盘（不整读进内存）；单文件上限 config `phoneUploadMaxMB`
   （缺省 2048），超限该文件记 `failed` 且半成品不落盘，全部超限 → 413；
@@ -99,16 +102,68 @@ Content-Type: multipart/form-data
 手机端配置：服务器地址 + 令牌（`scopes: ["upload"]` 的那种）；App 也可以
 用访问密码登录自动换取设备令牌（见下节），无需手动填。
 
+## 转发文件 → 交给执行方（scope=share）
+
+手机从任何 App 分享文件过来时，顺手写一句「要怎么处理」，直接开一个新任务，
+或接到正在进行的任务上。手机令牌不需要 `full`——`share` 只放行这一件事。
+
+```text
+GET  /api/agent/share/nodes     (scope=share)
+→ {"nodes": [{"name": "local", "label": "本机", "status": "online",
+              "models": ["k2"], "defaultModel": "k2"}],
+   "default": "local"}
+
+GET  /api/agent/share/tasks     (scope=share)
+→ {"tasks": [{"id": "abc123", "title": "把两份讲义合成周测卷",
+              "status": "waiting", "updatedAt": 1762900000.0,
+              "node": "local"}]}         最近 20 条非 closed，按最后活动倒序
+
+POST /api/agent/share           (scope=share, multipart/form-data)
+  file     可重复 0..10 个（prompt 为空时至少 1 个）
+  prompt   ≤4000 字；空且有文件 → 服务端补一句最小说明
+  taskId   可选；给了 = 接到这个任务（追加一条消息）
+  node     可选；只接受本机（缺省 local）
+  model    可选；建新任务时的模型（须在该执行点的 models 里）
+  mode     可选 default|auto（缺省 default = 逐项审批）
+  organize 可选 none|folder（缺省 none）；folder = 新建文件夹装附件
+  folderName 可选；folder 模式缺省 share-<YYYYMMDD-HHmm>，重名自动 (2)
+→ 200 {"taskId": "abc123", "mode": "created" | "appended",
+       "paths": ["E:\\...\\_uploads\\1a2b3c4d\\讲义.pdf"], "prompt": "..."}
+```
+
+- 文件先落任务暂存区（与 `POST /api/tasks/files` 同一份落盘逻辑），返回
+  **绝对路径**；单文件 ≤ 20MB，超限 413 且不留半成品；
+- `organize=folder`（v3.1）：先在任务暂存区建文件夹
+  `_agent_tasks/_uploads/<folderName>`，文件放进去，`paths` 只给**文件夹
+  路径**，`prompt` 末尾自动补一行 `以上附件在 <folderName> 目录下`；
+  文件名/文件夹名冲突都自动 `(2)`，绝不覆盖；`folderName` 与文件名同一套
+  校验（纯名称，不许 `..` / 绝对路径 / 路径分隔符 / 盘符，≤120 字符），
+  非法 400；folder 模式没有文件 400；`organize` 其它值 400；
+  `organize=none`（缺省）行为与 v3 完全一致（`paths` 给逐个文件路径）；
+- `taskId` 给了 → 追加消息正文 = `prompt` + `附件：\n- <path>`，走
+  `/api/tasks/<id>/message` 的既有投递路径：任务在跑就进持久化队列
+  （202 语义），空闲立即投递；任务不存在或已 `closed` → **409**；
+- 没给 → 新建任务（`engine=acp`），`paths` 带上，文件被复制进任务工作区
+  `inputs/`（folder 模式是整个文件夹复制过去），执行方直接可读；
+- 令牌缺 `share` → `403 {"need": "share"}`（`full` 视为含 share）；
+  无令牌 401；`prompt` 超长 / 文件数 >10 / 文件名不合法 / `mode` 非法 → 400；
+- **只支持本机执行点**：`engine=remote` 的任务在远端机器上跑，本机暂存区
+  在那边不存在，且任务 API 会丢弃本机 `paths`——附件等于丢失。因此
+  `node` 非 `local` 一律 400 `{"error", "nodes": ["local"]}`，不假装成功。
+  远端投递需要另一条跨机文件通道（未实现）；
+- 审计 `agent.share`：target = taskId，detail = 文件数 + prompt 长度。
+
 ## 设备登录（App 用网页密码换设备令牌）
 
-App 不保存密码：用网页访问密码登录一次，服务端签发一个**只带 `upload`
-权限、绑定设备名**的设备令牌；网页端设置页「登录设备」可见每台设备
+App 不保存密码：用网页访问密码登录一次，服务端签发一个**只带 `upload` +
+`share` 权限、绑定设备名**的设备令牌；网页端设置页「登录设备」可见每台设备
 （设备名/签发时间/最后使用时间/来源 IP），可单独吊销。
 
 ```text
 POST /api/agent/device/login    （无需令牌, 免 Cookie）
 {"password": "<网页访问密码>", "device": "小米手机"}
-→ 200 {"token": "<43字符>", "name": "小米手机", "scopes": ["upload"],
+→ 200 {"token": "<43字符>", "name": "小米手机",
+       "scopes": ["upload", "share"],
        "createdAt": "2026-11-12 12:00:00",
        "targets": [{"id": "phone", "name": "手机上传"}, ...]}
 → 401 {"error": "密码错误"}    → 429 {"error": "尝试次数过多, 请稍后再试"}
@@ -121,8 +176,11 @@ POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
   不再回显；服务端只存 SHA-256（`%APPDATA%\<stateDir>\devices.json`，
   不进 config.json）；
 - 同设备名重新登录 = 替换旧令牌（旧的即刻失效）；设备上限 20 台；
-- 设备令牌与智能体令牌走同一鉴权入口：`/api/agent/upload` 放行，
-  exec / SFTP / sessions / `/api/tasks*` 一律 `403 {"need": "full"}`；
+- 设备令牌与智能体令牌走同一鉴权入口：`/api/agent/upload` 与
+  `/api/agent/share` 放行，exec / SFTP / sessions / `/api/tasks*` 一律
+  `403 {"need": "full"}`；
+- **旧设备令牌只有 `upload`**：升级后重新登录一次即可拿到 `share`
+  （转发任务会 403 `{"need": "share"}`，重新登录即解决）；
 - 防暴力破解（内存计数，重启清零）：每 IP 60 秒内失败≥5 拒到窗口滚出；
   全局 10 分钟内失败≥20 锁 10 分钟（触发写审计 `device.lockout`），
   锁定期间统一 429，网页登录不受影响；审计 `device.login`
@@ -463,7 +521,7 @@ Deskport 升级后重新拉取即更新（`files` / `sha256` 判断要不要换�
 ## 审计
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.*` / `agent.session.*` /
-`agent.task.create` / `agent.task.upload` / `agent.upload`），控制台审计可
+`agent.task.create` / `agent.task.upload` / `agent.upload` / `agent.share`），控制台审计可
 回看：哪个令牌、哪台主机、执行了什么。令牌越权（scope 不满足）另记
 `agent.scope`（result=deny，含令牌名与所需 scope）。
 

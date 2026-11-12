@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""设备登录 — App 用网页密码一次性换只带 upload 权限的设备令牌。
+"""设备登录 — App 用网页密码一次性换只带 upload+share 权限的设备令牌。
 
 端点（挂 agent_api 蓝图, app.py import 即随 agentApiModule 一次注册）:
     POST /api/agent/device/login  {password, device}
-      → {token, name, scopes:["upload"], createdAt}
+      → {token, name, scopes:["upload","share"], createdAt}
       密码与网页登录同一来源(config.getPassword)同一比对方式; 令牌只在
       这次响应出现, 任何接口都不再回显。同设备名重登=换新令牌, 旧令牌即废。
     POST /api/agent/device/logout   凭设备令牌自吊销（智能体令牌 403）
@@ -14,10 +14,10 @@
 目录。不进 config.json（签发/吊销/每次使用都要写，不能频繁重写主配置），
 也不放项目目录（本机清理进程删过项目目录文件，SSH 状态因此迁出，见
 config.py 头注）；stateDirName 自带 dev/prod 隔离。条目:
-    {id, name, tokenHash(SHA-256), kind:'device', scopes:['upload'],
+    {id, name, tokenHash(SHA-256), kind:'device', scopes:['upload','share'],
      createdAt, lastUsedAt, lastIp}
 令牌校验经 agent_api.agentFromRequest 回退进来：设备令牌与智能体令牌走
-同一个鉴权入口/scope 白名单——upload 放行，exec 与 /api/tasks 照常 403。
+同一个鉴权入口/scope 白名单——upload/share 放行，exec 与 /api/tasks 照常 403。
 
 防暴力破解（接口暴露公网；内存计数，重启清零，与网页登录同档）:
     - 每 IP: 60 秒内失败≥5 → 拒到失败滚出窗口（与 auth.py 同款）；
@@ -37,7 +37,10 @@ from flask import jsonify, request
 
 import config
 from modules import events, state
-from modules.agent_api import SCOPE_UPLOAD, agentFromRequest, blueprint, tokenHash
+from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD, agentFromRequest,
+                               blueprint, tokenHash)
+
+DEVICE_SCOPES = [SCOPE_UPLOAD, SCOPE_SHARE]
 
 DEVICES_FILE = 'devices.json'
 MAX_DEVICES = 20
@@ -101,7 +104,7 @@ def _issueDevice(devices, name, token, ip):
     kept = [d for d in devices if d.get('name') != name]
     kept.append({'id': secrets.token_hex(8), 'name': name,
                  'tokenHash': tokenHash(token), 'kind': 'device',
-                 'scopes': [SCOPE_UPLOAD], 'createdAt': nowText,
+                 'scopes': list(DEVICE_SCOPES), 'createdAt': nowText,
                  'lastUsedAt': '', 'lastIp': ip})
     _saveDevices(kept)
     return nowText
@@ -240,7 +243,7 @@ def deviceLogin():
                    for t in config.getUploadTargets()]
         events.log('device.login', name, 'ok', '', ip)
         return jsonify({'token': token, 'name': name,
-                        'scopes': [SCOPE_UPLOAD], 'createdAt': createdAt,
+                        'scopes': list(DEVICE_SCOPES), 'createdAt': createdAt,
                         'targets': targets})
     if _recordFailure(ip):
         events.log('device.lockout', 'global', 'on',

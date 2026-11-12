@@ -180,6 +180,20 @@ def test_upload_success_multi_files_with_subdir(env):
     assert 'scope=upload' in up[-1]['detail'] and 'target=phone' in up[-1]['detail']
 
 
+def test_upload_folder_name_creates_subdir(env):
+    """v3.1 验收：只上传 + 文件夹名 → 目标目录下真的出现该文件夹。"""
+    body = postUpload(env.client, TOKEN_UPLOAD,
+                      [('a.pdf', b'A'), ('b.pdf', b'B')],
+                      subdir='周测卷').get_json()
+    assert body['ok'] is True and len(body['saved']) == 2
+    folder = env.tmp / '手机上传' / '周测卷'
+    assert folder.is_dir()
+    assert sorted(p.name for p in folder.iterdir()) == ['a.pdf', 'b.pdf']
+    assert (folder / 'a.pdf').read_bytes() == b'A'
+    assert {e['path'] for e in body['saved']} == {'手机上传/周测卷/a.pdf',
+                                                  '手机上传/周测卷/b.pdf'}
+
+
 def test_upload_duplicate_name_gets_2(env):
     first = postUpload(env.client, TOKEN_UPLOAD, b'one')
     second = postUpload(env.client, TOKEN_UPLOAD, b'two')

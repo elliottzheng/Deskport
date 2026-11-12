@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""设备登录 — App 密码换 upload 设备令牌。
+"""设备登录 — App 密码换 upload+share 设备令牌。
 
 覆盖: 登录 ok / 错密码 401 / 坏设备名 400 不计失败 / 每 IP 限速 429 /
 全局锁 20 次/10 分钟（触发记 device.lockout, 网页登录不受影响）/
@@ -90,7 +90,7 @@ def test_login_ok_returns_token_once(env):
     resp = login(env.client)
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body['name'] == '小米手机' and body['scopes'] == ['upload']
+    assert body['name'] == '小米手机' and body['scopes'] == ['upload', 'share']
     assert len(body['token']) >= 40 and body['createdAt']
     stored = devicesFile()
     assert len(stored) == 1
@@ -216,7 +216,7 @@ def test_settings_list_revoke_and_session_required(env):
     env.client.post('/login', data={'password': PASSWORD})  # 拿会话 Cookie
     login(env.client)   # 先有一台设备
     listed = env.client.get('/api/settings/devices').get_json()['devices']
-    assert len(listed) == 1 and listed[0]['scopes'] == ['upload']
+    assert len(listed) == 1 and listed[0]['scopes'] == ['upload', 'share']
     assert listed[0]['createdAt'] and listed[0]['lastIp']
     token = login(env.client, device='第二台').get_json()['token']
     listed = env.client.get('/api/settings/devices').get_json()['devices']
