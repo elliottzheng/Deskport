@@ -348,7 +348,7 @@ def installSftp(monkeypatch, fake):
     import modules.ssh_sftp as sshSftpMod
     monkeypatch.setattr(sshSftpMod, '_openSftp', lambda hostId: fake)
     monkeypatch.setattr(agent_sftp, '_openSftp', lambda hostId: fake)
-    monkeypatch.setattr(agent_sftp, '_resolveHost',
+    monkeypatch.setattr(agent_sftp, 'resolveHost',
                         lambda nameOrId: {'id': 'office', 'name': nameOrId})
 
 

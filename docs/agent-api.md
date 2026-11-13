@@ -262,7 +262,8 @@ POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
 ]}
 ```
 
-同一套 exec / sessions / sftp 接口，只换 host 名。本机 shell 可选
+同一套 exec / sessions / sftp 接口，只换 node 名（`host` 是旧名，仍接受，响应两个键都回）。
+本机 shell 可选
 `bash`（默认，Git Bash）/ `powershell` / `pwsh`，传不支持的值 400 并附可选列表；
 响应回显参数。路径双写法：`/e/事项` 与 `E:\事项` 都接受，响应统一 Windows
 原生写法。服务端负责抹平 shell 差异：PowerShell 输出统一转 UTF-8、
@@ -274,11 +275,17 @@ POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
 
 ```text
 POST /api/agent/ssh/exec
-{"host": "ai-xmyz", "command": "uptime", "timeoutSec": 30, "cwd": "/path"}
+{"node": "ai-xmyz", "command": "uptime", "timeoutSec": 30, "cwd": "/path"}
 → {"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "",
-   "outTruncated": false, "durationMs": 123, "timeoutSec": 30, "pid": 4321}
+   "outTruncated": false, "durationMs": 123, "timeoutSec": 30, "pid": 4321,
+   "node": "ai-xmyz", "host": "ai-xmyz"}
 ```
 
+- `node` 指机器（缺省 `local`）：`local` 是本机，其余取 `GET /api/agent/hosts`
+  里的主机名或 id；不存在 → 404 并附 `availableHosts`。
+- **`node` 与 `host` 同义**（批次 J）：优先 `node`，`host` 是旧名、仍接受（手机
+  App 就在发 `host`），两个都给且不同 → 400 说清冲突；响应体 `node`/`host`
+  两个键都回，老客户端不改也能跑；
 - `cwd` 可省；用户命令原文透传（heredoc/多行/引号安全），`cwd` 由外壳处理；
 - `timeoutSec` 严格校验：1–600 整数，越界/非整 → 400，响应回显生效值；
 - 含 NUL 字符 → 400；
@@ -290,17 +297,20 @@ POST /api/agent/ssh/exec
   （先 TERM 后 KILL）；响应带 `pid` 便于自查；
 - 远端默认注入 `LANG=C.UTF-8`：UTF-8 输出是契约。
 
-本机专用别名：`POST /api/agent/local/exec` 等价于 `/api/agent/ssh/exec` + `host: "local"`；
-`/api/agent/local/sftp/{list,get,put}` 同理等价于 `/api/agent/sftp/*` + 本机（免填 `host`）。
+本机专用别名：`POST /api/agent/local/exec` 等价于 `/api/agent/ssh/exec` + `node: "local"`；
+`/api/agent/local/sftp/{list,get,put}` 同理等价于 `/api/agent/sftp/*` + 本机（免填 `node`）。
 
 ## SFTP（读写文件，整读 8MB，可分块）
 
 ```text
-POST /api/agent/sftp/list  {"host": "...", "path": "/srv"}      → {path, entries}
-POST /api/agent/sftp/get   {"host": "...", "path": "...", "offset": 0, "length": 4096}
-POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "sha256": "<可选>",
+POST /api/agent/sftp/list  {"node": "...", "path": "/srv"}      → {path, entries}
+POST /api/agent/sftp/get   {"node": "...", "path": "...", "offset": 0, "length": 4096}
+POST /api/agent/sftp/put   {"node": "...", "path": "...", "contentB64": "...", "sha256": "<可选>",
                             "mkdirs": true（可选，父目录不存在时自动创建，本机/SSH 主机均支持）}
 ```
+
+- 指代机器用 `node`（缺省 `local`）；`host` 是旧名，仍接受（同 exec）。
+  响应带 `node`/`host` 两个键；delete/mkdir/rename 同一套词汇；
 
 - 错误码语义：权限不足 **403** / 不存在 **404** / 用法错误（对目录 get、
   对文件 list）**400** / 超限 **413**；
@@ -321,10 +331,13 @@ POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "
 ## 持久会话（cd / export / venv 激活都延续）
 
 ```text
-POST   /api/agent/ssh/sessions              {"host": "...", "cwd": "...", "shell": "bash"} → {"sessionId"}
+POST   /api/agent/ssh/sessions              {"node": "...", "cwd": "...", "shell": "bash"} → {"sessionId"}
 POST   /api/agent/ssh/sessions/<sid>        {"command": "...", "timeoutSec": 30}
 DELETE /api/agent/ssh/sessions/<sid>
 ```
+
+- 开会话用 `node` 指机器（缺省 `local`）；`host` 是旧名，仍接受。响应回显
+  `node`/`host` 两个键，列表同样两个键都回；
 
 - 开会话时 `cwd` 不存在 → 直接 **400**（带回远端原始报错），不再
   "创建成功、执行全 500"；
@@ -614,7 +627,7 @@ GET /api/agent/skills/<name>/pack.zip     → application/zip：整包（手册 
 ```
 
 - **整包是主推**：zip 里是 `<name>/SKILL.md`、各附件，外加一份按本次请求地址生成的
-  `<name>/.deskport.json`（`url` = 下载用的地址，`host` 缺省 `local`）——**令牌不进包**，
+  `<name>/.deskport.json`（`url` = 下载用的地址，`node` 缺省 `local`；`host` 是旧名、同值）——**令牌不进包**，
   由人单独交给智能体，所以「一条链接 + 一个令牌」就能起跑；
 - 附件白名单 `.md` / `.py` / `.json` / `.txt`，单个 ≤ 2 MiB；名称正则挡 `..`、子目录、
   隐藏文件（400）；不存在 404 带 `available`；

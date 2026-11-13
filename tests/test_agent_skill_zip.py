@@ -66,11 +66,12 @@ def test_no_credentials_in_pack(env):
 
 
 def test_config_ready_but_tokenless(env):
-    """.deskport.json 带本次地址、默认 local；除说明外只有这两项，令牌绝不进包。"""
+    """.deskport.json 带本次地址、node/host 默认 local（同值）；令牌绝不进包。"""
     z = openPack(env.client.get(PACK))
     cfg = json.loads(z.read('deskport/.deskport.json').decode('utf-8'))
-    assert cfg['url'] == 'http://localhost' and cfg['host'] == 'local'
-    assert sorted(cfg) == ['_说明', 'host', 'url']
+    assert cfg['url'] == 'http://localhost'
+    assert cfg['node'] == 'local' and cfg['host'] == 'local'
+    assert sorted(cfg) == ['_说明', 'host', 'node', 'url']
     assert '不要写进这个文件' in cfg['_说明']
 
 

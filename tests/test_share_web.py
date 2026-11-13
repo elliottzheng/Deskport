@@ -148,6 +148,24 @@ def test_stage_rejects_bad_input(env):
     assert batches(env) == []
 
 
+def test_stage_with_legacy_host_field_still_200(env):
+    """批次 J：App 的 StageApi 带 host（旧名）；stage 没有机器参数，照常 200。"""
+    resp = env.client.post('/api/agent/share/stage',
+                           data={'file': [(io.BytesIO(b'x'), 'a.txt')],
+                                 'host': 'local'},
+                           headers={'X-Agent-Token': TOKEN_SHARE},
+                           content_type='multipart/form-data')
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body['ticket']
+    assert len(batches(env)) == 1
+    # 票据照常可用（顺带清掉暂存，不留垃圾）
+    done = submit(env, body['ticket'], way='new', organize='folder',
+                  folderName='批次J')
+    assert done.status_code == 200, done.get_json()
+    assert not [p for p in batches(env) if p.name.startswith('stage-')]
+
+
 def test_stage_info_requires_login(env):
     body = staged(env, files=[('a.txt', b'x')], prompt='看看')
     assert env.anonymous.get('/api/share/stage/' + body['ticket']).status_code == 401

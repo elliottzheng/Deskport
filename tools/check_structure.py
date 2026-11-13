@@ -125,11 +125,11 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
 # 规则: 跨模块 import 不得出现单下划线前缀（引私有名 / 公有名起私有别名都算）。
 # 本表登记的是「同包内部接缝」——提供方是使用方所在家族的共享底座, 私有助手
 # 只在该家族内流转; 每条附理由, 且只减不增: 新接缝必须公开化, 不许往这加项。
+# 批次 J: node/host 归一（agent_api.nodeArg）后, agent_sftp/agent_sessions 改走
+# 公开的 resolveHost / unknownHostError, agent_api 的两条主机解析接缝随之删除。
 PRIVATE_SEAM_ALLOWED = {
     ('agent_nodes', 'tasks_federation'): {'_memberCall'},      # federation 成员 RPC 是 tasks_federation 的内部机制
-    ('agent_sessions', 'agent_api'): {'_resolveHost', '_safeHosts'},  # agent 家族的主机解析/主机清单助手
     ('agent_sessions', 'agent_local'): {'_resolveShell'},      # 持久会话的 shell 解析在本机模块
-    ('agent_sftp', 'agent_api'): {'_resolveHost'},             # 同上: 主机解析助手
     ('agent_sftp', 'ssh_sftp'): {'_openSftp'},                 # SFTP 连接助手, ssh_sftp → agent_sftp 的本地分支要用
     ('agent_skill_files', 'agent_skills'): {'_skillsDir'},     # 技能包附件读写 agent_skills 的技能目录
     ('aihandoff', 'inbox_scan'): {'_under', '_sha256', '_dedupe'},  # 收件箱家族的遍历/摘要/去重助手

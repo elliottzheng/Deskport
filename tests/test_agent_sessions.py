@@ -305,3 +305,34 @@ def test_exec_unknown_session_is_404(env):
     resp = execCmd(env, 'ghost', 'ls')
     assert resp.status_code == 404
     assert 'error' in resp.get_json()
+
+
+# ---- 批次 J：node 与 host 同义（兼容优先） ----
+
+def openSessionRaw(env, body):
+    return env.client.post('/api/agent/ssh/sessions',
+                           headers={'X-Agent-Token': TOKEN},
+                           data=json.dumps(body),
+                           content_type='application/json')
+
+
+def test_open_session_accepts_node_alias(env):
+    """新名 node 开会话 200，响应 node/host 两个键都回。"""
+    resp = openSessionRaw(env, {'node': 'ai-xmyz', 'cwd': '/tmp'})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['node'] == 'ai-xmyz' and body['host'] == 'ai-xmyz'
+    sid = body['sessionId']
+    assert execCmd(env, sid, 'echo ok').get_json()['exit'] == 0
+    items = env.client.get('/api/agent/ssh/sessions',
+                           headers={'X-Agent-Token': TOKEN}).get_json()['sessions']
+    mine = [s for s in items if s['id'] == sid]
+    assert mine and mine[0]['node'] == 'ai-xmyz'
+
+
+def test_open_session_node_host_conflict_400(env):
+    """两个都给且不同 → 400 含「冲突」，且不开会话。"""
+    resp = openSessionRaw(env, {'node': 'ai-xmyz', 'host': 'other', 'cwd': '/tmp'})
+    assert resp.status_code == 400
+    assert '冲突' in resp.get_json()['error']
+    assert env.chanBox == []

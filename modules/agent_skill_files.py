@@ -12,7 +12,7 @@
 白名单正则，`..`、子目录、隐藏文件一律拒绝（400），不存在 404 并列出可选项。
 
 整包是给「一条链接 + 一个令牌」准备的：解开就是一个技能目录，`.deskport.json`
-按本次请求的地址生成（url/host），令牌单独给（绝不进包）。
+按本次请求的地址生成（url/node，令牌单独给，绝不进包）。
 
 组装逻辑 `buildSkillZip` 是共用的：需令牌的 pack.zip 传原文件字节，公开的
 `/api/agent/skill.zip`（modules/agent_tools.py）传按本次请求替换过
@@ -86,12 +86,16 @@ def agentSkillFileGet(skill, name):
 
 
 def _packConfig():
-    """整包里附带的 .deskport.json：地址取本次请求，默认执行点 local；**不含令牌**。"""
+    """整包里附带的 .deskport.json：地址取本次请求，默认执行点 local；**不含令牌**。
+
+    node/host 两个键同值（批次 J：node 是新名，host 是旧名）——新客户端读
+    node，老客户端读 host，都不用改。"""
     return {
-        '_说明': 'url = 下载这个包用的地址；host = 默认执行点（local 是本机，也可填 SSH '
-                '主机名，见 GET /api/agent/hosts）。令牌放同目录 .agent-token 文件或'
-                '环境变量 DESKPORT_TOKEN，不要写进这个文件。',
+        '_说明': 'url = 下载这个包用的地址；node = 默认执行点（local 是本机，也可填 SSH '
+                '主机名，见 GET /api/agent/hosts；host 是旧名，与 node 同值）。令牌放同目录 '
+                '.agent-token 文件或环境变量 DESKPORT_TOKEN，不要写进这个文件。',
         'url': request.host_url.rstrip('/'),
+        'node': 'local',
         'host': 'local',
     }
 

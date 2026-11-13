@@ -248,6 +248,17 @@ def test_upload_missing_file_field_400(env):
     assert resp.status_code == 400
 
 
+def test_upload_with_legacy_host_field_still_200(env):
+    """批次 J：App 发的 host 是旧名；upload 没有机器参数，带 host 照常 200。"""
+    data = {'file': [(io.BytesIO(b'x'), 'a.txt')], 'host': 'local'}
+    resp = env.client.post('/api/agent/upload', data=data,
+                           headers={'X-Agent-Token': TOKEN_UPLOAD},
+                           content_type='multipart/form-data')
+    assert resp.status_code == 200
+    assert resp.get_json()['ok'] is True
+    assert (env.tmp / '手机上传' / 'a.txt').read_bytes() == b'x'
+
+
 def test_upload_bad_filename_all_failed_is_400(env):
     """文件名带路径分隔符 = 校验失败；全部失败按原因 400，不一律 500。"""
     resp = postUpload(env.client, TOKEN_UPLOAD, [('sub/evil.txt', b'x')])

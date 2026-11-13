@@ -51,7 +51,7 @@ curl -s $D/api/agent/tools/deskport.py -o deskport.py
 
 ```python
 import deskport
-h = deskport.connect()   # 地址与令牌：同目录 .deskport.json，或 DESKPORT_URL / DESKPORT_HOST / DESKPORT_TOKEN
+h = deskport.connect()   # 地址与令牌：同目录 .deskport.json，或 DESKPORT_URL / DESKPORT_NODE / DESKPORT_TOKEN
 print(h.sh("uptime"))    # 失败抛 CommandError；h.cd("/srv/app") 绑定工作目录后再发命令
 ```
 
@@ -170,12 +170,13 @@ curl -s -X POST -H "X-Agent-Token: $T" "$D/api/tasks/<id>/close"
 ```bash
 curl -s -X POST "$D/api/agent/ssh/exec" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"host": "local", "command": "uname -a", "timeoutSec": 30, "cwd": "/srv/app"}'
+  -d '{"node": "local", "command": "uname -a", "timeoutSec": 30, "cwd": "/srv/app"}'
 ```
 
-- `host` 取 `local`（本机）或 `GET $D/api/agent/hosts` 里的主机名。
+- `node` 取 `local`（本机）或 `GET $D/api/agent/hosts` 里的主机名；缺省 `local`。
+- `node` 与 `host` 同义：`host` 是旧名，仍接受，但请用 `node`；两个都给且不同 → 400。
 - `timeoutSec` 1–600；输出上限 2 MiB；命令不允许含 NUL。
-- 响应：`{"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 123}`。
+- 响应：`{"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 123, "node": "local", "host": "local"}`。
 - 超时返回 `exit: null`、`reason: "timeout"`（被超时杀掉的进程可能仍有 `pid`）。
 
 ### 文件：POST /api/agent/sftp/{list,get,put}
@@ -184,19 +185,20 @@ curl -s -X POST "$D/api/agent/ssh/exec" \
 # 列目录
 curl -s -X POST "$D/api/agent/sftp/list" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"host": "local", "path": "/srv/app"}'
+  -d '{"node": "local", "path": "/srv/app"}'
 
 # 读文件（offset/length 分块；整读上限 8 MB）
 curl -s -X POST "$D/api/agent/sftp/get" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"host": "local", "path": "/srv/app/app.py", "offset": 0, "length": 65536}'
+  -d '{"node": "local", "path": "/srv/app/app.py", "offset": 0, "length": 65536}'
 
 # 写文件（严格校验 base64；可选 sha256；原子落盘）
 curl -s -X POST "$D/api/agent/sftp/put" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"host": "local", "path": "/srv/app/notes.txt", "contentB64": "aGVsbG8=", "sha256": "<可选>"}'
+  -d '{"node": "local", "path": "/srv/app/notes.txt", "contentB64": "aGVsbG8=", "sha256": "<可选>"}'
 ```
 
+- 指代机器的参数一律用 `node`（缺省 `local`）；`host` 是旧名，仍接受。
 - `list` → `{"path", "entries": [{"name", "path", "size", "mtime", "dir", "type", "mode", "target"}]}`。
 - `get` → `{"contentB64": "...", "total": 12345}`；`total > 已读长度` 时用更大的 `offset` 继续。
 - `put` 的 `contentB64` 是坏编码时 400，原文件不动；目标目录不存在时 404（本机可传 `"mkdirs": true`）。
@@ -270,4 +272,6 @@ while True:
 - 命令与任务都真实执行：优先只读；写文件、装软件、动服务之前先向你的用户说明。
 - 令牌等价于执行权，不要写进公开脚本、仓库或日志。
 - 名字写错时，响应会带 `availableHosts` / `nodes` / `models` 等提示，直接改用。
+- 指代机器的参数用 `node`（exec / sftp / 会话与任务同一套词汇，缺省 `local`）；
+  `host` 是旧名，仍接受，但请用 `node`。
 - 如果你恰好是 Kimi Code，上面整包（`skill.zip`）解开就是标准技能目录，放进 `~/.kimi-code/skills/` 即可当技能用；它不是使用本手册的前提。
