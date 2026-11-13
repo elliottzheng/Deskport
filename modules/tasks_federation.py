@@ -104,8 +104,8 @@ def nodeHealth(name):
 
 
 def findNode(name):
-    from modules.agent_nodes import findNode as _find
-    return _find(name)
+    from modules.agent_nodes import findNode
+    return findNode(name)
 
 
 def _agentNodeHealth(name):

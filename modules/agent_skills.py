@@ -13,7 +13,7 @@ import re
 
 from flask import jsonify
 
-from modules.agent_api import _agentRequired, blueprint
+from modules.agent_api import requireAgentScope, blueprint
 
 
 def _skillsDir():
@@ -24,7 +24,7 @@ def _skillsDir():
 @blueprint.route('/api/agent/skills')
 def agentSkillsList():
     """可分发的技能清单（供外部智能体自举与检测更新）。"""
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     root = _skillsDir()
@@ -49,7 +49,7 @@ def agentSkillsList():
 @blueprint.route('/api/agent/skills/<name>')
 def agentSkillGet(name):
     """返回技能原文（text/markdown），供智能体拉取安装到本地技能目录。"""
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     if not re.match(r'^[A-Za-z0-9_-]{1,40}$', name):

@@ -47,7 +47,7 @@ def _safeFolderName(raw):
         return ''
     if text in ('.', '..') or re.match(r'^[A-Za-z]:', text):
         return None
-    return staging._safeAttachmentName(text)
+    return staging.safeAttachmentName(text)
 
 
 def _defaultFolderName():

@@ -25,11 +25,11 @@ import time
 
 from flask import jsonify, request
 
-from modules.agent_api import MAX_OUTPUT_BYTES, _agentRequired, \
+from modules.agent_api import MAX_OUTPUT_BYTES, requireAgentScope, \
     auditAgentAction, blueprint, parseTimeoutSec
-from modules.fsutil import decodeBase64 as _decodeB64
+from modules.fsutil import decodeBase64
 from modules.fsutil import ensureParentDir
-from modules.agent_sftp import _mapSftpError
+from modules.agent_sftp import mapSftpError
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
@@ -325,7 +325,7 @@ def sftpListLocal(path):
     except FileNotFoundError as e:
         return jsonify({'error': str(e)}), 404
     except OSError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         return jsonify({'error': msg}), status
     return jsonify({'path': native, 'entries': entries})
 
@@ -354,7 +354,7 @@ def sftpGetLocal(path, offset=0, length=0):
     except FileNotFoundError as e:
         return jsonify({'error': str(e)}), 404
     except OSError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         return jsonify({'error': msg}), status
     return jsonify({'ok': True, 'path': native, 'size': len(chunk),
                     'total': total, 'offset': offset,
@@ -364,7 +364,7 @@ def sftpGetLocal(path, offset=0, length=0):
 def sftpPutLocal(path, contentB64, wantSha='', mkdirs=False):
     try:
         native = normalizeLocalPath(os.path.expanduser(str(path or '')))
-        raw = _decodeB64(contentB64)
+        raw = decodeBase64(contentB64)
     except ValueError:
         return jsonify({'error': 'contentB64 不是合法 base64（已拒绝写入，'
                                  '原文件未被改动）'}), 400
@@ -400,7 +400,7 @@ def sftpPutLocal(path, contentB64, wantSha='', mkdirs=False):
     except FileNotFoundError as e:
         return jsonify({'error': str(e)}), 404
     except OSError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         return jsonify({'error': msg}), status
     return jsonify({'ok': True, 'path': native, 'size': len(raw),
                     'sha256': hashlib.sha256(raw).hexdigest()})
@@ -411,7 +411,7 @@ def sftpPutLocal(path, contentB64, wantSha='', mkdirs=False):
 @blueprint.route('/api/agent/local/exec', methods=['POST'])
 def agentLocalExec():
     """本机 exec（host='local' 的等价入口；/api/agent/ssh/exec 亦可路由到此）。"""
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -453,7 +453,7 @@ def agentLocalExec():
 
 @blueprint.route('/api/agent/local/sftp/list', methods=['POST'])
 def agentLocalSftpList():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -465,7 +465,7 @@ def agentLocalSftpList():
 
 @blueprint.route('/api/agent/local/sftp/get', methods=['POST'])
 def agentLocalSftpGet():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -475,7 +475,7 @@ def agentLocalSftpGet():
 
 @blueprint.route('/api/agent/local/sftp/put', methods=['POST'])
 def agentLocalSftpPut():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     if request.content_length and request.content_length > MAX_FILE_BYTES * 2 + 65536:

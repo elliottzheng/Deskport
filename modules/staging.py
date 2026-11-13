@@ -6,7 +6,7 @@
 
 层次：本模块不 import 任何特性层模块——暂存区根由调用方传入
 （`tasks_store.taskRoot()`），依赖方向仍是 特性层 → 本模块。文件名
-校验 `_safeAttachmentName` 也在这里，tasks_store 反向导入使用。
+校验 `safeAttachmentName` 也在这里，tasks_store 反向导入使用。
 """
 import os
 import re
@@ -17,7 +17,7 @@ from modules import fsutil
 STAGING_CHUNK = 1024 * 1024   # 暂存区写盘块大小（不整读进内存）
 
 
-def _safeAttachmentName(name):
+def safeAttachmentName(name):
     """附件只允许纯文件名：无路径分隔符、无控制字符、≤120 字符。"""
     text = str(name or '').strip()
     if not text or len(text) > 120:
@@ -37,7 +37,7 @@ def saveStagedStream(name, stream, limitBytes, root, chunkSize=STAGING_CHUNK,
     文件名不合法 / 超过 limitBytes 抛 ValueError（调用方区分 400/413）；
     写盘失败抛 OSError。任何失败都不留半成品。
     """
-    safe = _safeAttachmentName(name)
+    safe = safeAttachmentName(name)
     if not safe:
         raise ValueError('name 必须是纯文件名（无路径分隔符，≤120 字符）')
     if folder:
@@ -80,7 +80,7 @@ def createStagedFolder(name, root):
     直接建在 `<root>/_uploads/` 下（同名的第二份得到 `name(2)`），
     返回绝对路径；名称不合法抛 ValueError。调用方负责在失败时清理。
     """
-    safe = _safeAttachmentName(name)
+    safe = safeAttachmentName(name)
     if not safe or safe in ('.', '..'):
         raise ValueError('文件夹名不合法（需纯名称，≤120 字符）')
     parent = os.path.join(root, '_uploads')

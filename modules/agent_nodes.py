@@ -502,8 +502,8 @@ def remoteClientFactory(task):
 
 def findFederationMember(name):
     """按 id 或 name 查联邦成员 Deskport（可作任务执行点）。"""
-    from modules.tasks_federation import findFederationMember as _find
-    return _find(name)
+    from modules.tasks_federation import findFederationMember
+    return findFederationMember(name)
 
 
 def executionKind(node):

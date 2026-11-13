@@ -18,9 +18,9 @@ import stat as statMod
 
 from flask import jsonify, request
 
-from modules.agent_api import _agentRequired, auditAgentAction, blueprint
-from modules.agent_sftp import (_mapSftpError, _normalize, _sftpFor,
-                                _sftpMakedirs, isLocal)
+from modules.agent_api import requireAgentScope, auditAgentAction, blueprint
+from modules.agent_sftp import (mapSftpError, normalize, sftpFor,
+                                sftpMakedirs, isLocal)
 
 
 def _audit(agent, op, target, result, detail=''):
@@ -105,7 +105,7 @@ def _mkdirSftp(sftp, path, parents):
     else:
         raise FileExistsError(path)
     if parents:
-        _sftpMakedirs(sftp, path)
+        sftpMakedirs(sftp, path)
     else:
         sftp.mkdir(path)
 
@@ -140,7 +140,7 @@ def _emptyDirError(exc):
 
 @blueprint.route('/api/agent/sftp/delete', methods=['POST'])
 def agentSftpDelete():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -155,10 +155,10 @@ def agentSftpDelete():
             path = _localPath(raw)
             count = _deleteLocal(path, recursive)
         else:
-            _host, sftp, err = _sftpFor(data.get('host'))
+            _host, sftp, err = sftpFor(data.get('host'))
             if err:
                 return jsonify({'error': err}), 404
-            path = _normalize(sftp, raw)
+            path = normalize(sftp, raw)
             _deleteSftp(sftp, path, recursive)
             count = 1
     except FileNotFoundError:
@@ -168,7 +168,7 @@ def agentSftpDelete():
         if isinstance(e, FileExistsError) or _emptyDirError(e):
             _audit(agent, 'delete', raw, 'fail', '目录非空')
             return jsonify({'error': '目录非空（如需整棵删除加 recursive:true）'}), 409
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         _audit(agent, 'delete', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     _audit(agent, 'delete', path, 'ok',
@@ -178,7 +178,7 @@ def agentSftpDelete():
 
 @blueprint.route('/api/agent/sftp/mkdir', methods=['POST'])
 def agentSftpMkdir():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -193,16 +193,16 @@ def agentSftpMkdir():
             path = _localPath(raw)
             _mkdirLocal(path, parents)
         else:
-            _host, sftp, err = _sftpFor(data.get('host'))
+            _host, sftp, err = sftpFor(data.get('host'))
             if err:
                 return jsonify({'error': err}), 404
-            path = _normalize(sftp, raw)
+            path = normalize(sftp, raw)
             _mkdirSftp(sftp, path, parents)
     except FileExistsError:
         _audit(agent, 'mkdir', raw, 'fail', '已存在')
         return jsonify({'error': '路径已存在: %s' % raw}), 409
     except OSError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         _audit(agent, 'mkdir', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     _audit(agent, 'mkdir', path, 'ok', 'parents=%s' % ('true' if parents else 'false'))
@@ -211,7 +211,7 @@ def agentSftpMkdir():
 
 @blueprint.route('/api/agent/sftp/rename', methods=['POST'])
 def agentSftpRename():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -227,17 +227,17 @@ def agentSftpRename():
             srcPath, dstPath = _localPath(src), _localPath(dst)
             _renameLocal(srcPath, dstPath, overwrite)
         else:
-            _host, sftp, err = _sftpFor(data.get('host'))
+            _host, sftp, err = sftpFor(data.get('host'))
             if err:
                 return jsonify({'error': err}), 404
-            srcPath = _normalize(sftp, src)
-            dstPath = _normalize(sftp, dst)
+            srcPath = normalize(sftp, src)
+            dstPath = normalize(sftp, dst)
             _renameSftp(sftp, srcPath, dstPath, overwrite)
     except FileExistsError:
         _audit(agent, 'rename', src, 'fail', '目标已存在')
         return jsonify({'error': '目标已存在: %s（overwrite:true 可覆盖）' % dst}), 409
     except OSError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         _audit(agent, 'rename', src, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     _audit(agent, 'rename', src, 'ok', '→ %s overwrite=%s'

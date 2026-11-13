@@ -28,7 +28,7 @@ import zipfile
 from flask import Response, jsonify, request
 
 from modules import agent_handbook, meta
-from modules.agent_api import _agentRequired, blueprint
+from modules.agent_api import requireAgentScope, blueprint
 from modules.agent_skills import _skillsDir
 
 _SKILL_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
@@ -60,7 +60,7 @@ def _skillFileEntries(skill):
 @blueprint.route('/api/agent/skills/<skill>/<name>')
 def agentSkillFileGet(skill, name):
     """技能附件原文；`?raw=1` 给文本，方便 `curl -o deskport.py`。"""
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     if not _SKILL_RE.match(skill) or not _FILE_RE.match(name):
@@ -144,7 +144,7 @@ def agentSkillPack(skill):
         curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o p.zip
         unzip -oq p.zip -d ~/.kimi-code/skills/ && export DESKPORT_TOKEN=$T
     """
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     if not _SKILL_RE.match(skill):

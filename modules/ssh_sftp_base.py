@@ -4,7 +4,7 @@
 从 ssh_sftp 拆出（2026-11-05）：原 503 行混了"远程文件 CRUD"与"批量传输打包"
 两个变化理由。本文件只放两者共用的底层，不注册任何路由。
 
-ops / transfer 两个模块都 import 本模块的 _sftpSession / _ensureRemoteDir。
+ops / transfer 两个模块都 import 本模块的 _sftpSession / ensureRemoteDir。
 """
 import posixpath
 import stat as statMod

@@ -16,6 +16,6 @@ from modules import ssh_sftp_ops       # noqa: F401  注册路由
 from modules import ssh_sftp_transfer  # noqa: F401  注册路由
 from modules.ssh_sftp_base import _openSftp          # noqa: F401  再导出
 from modules.ssh_sftp_base import _sftpSession       # noqa: F401  再导出
-from modules.ssh_sftp_base import ensureRemoteDir as _ensureRemoteDir  # noqa: F401
+from modules.ssh_sftp_base import ensureRemoteDir  # noqa: F401
 from modules.ssh_sftp_transfer import ZIP_SIZE_BUDGET       # noqa: F401  再导出
 from modules.ssh_sftp_transfer import ZipBudgetExceeded     # noqa: F401  再导出

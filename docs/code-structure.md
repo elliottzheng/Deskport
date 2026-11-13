@@ -120,7 +120,8 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 - 检查存量例外是否变长；
 - 扫描重复的 `fmtSize` / `fmtTime` / `escapeHtml`；
 - 扫描新增 `window.*` 赋值；
-- 扫描功能模块之间的横向 import；
+- 扫描功能模块之间的横向 import（未登记 `ALLOWED_FEATURE_IMPORTS` 的方向即报错，每条登记项附方向理由）；
+- 扫描跨模块 import 的单下划线私有名（`scan_private_seams`：引私有名、公有名起私有别名都拦；存量同包内部接缝登记在 `PRIVATE_SEAM_ALLOWED`，每条附理由、只减不增）；
 - pyflakes 覆盖 `app.py` / `auth.py` / `config.py` / `sessiond.py` / `watchdog.py`
   与 `modules/`、`tools/`、`tests/`：未定义名是错误，未使用 import 是 warning
   （有意为之的副作用 import 用 `# noqa: F401` 标注）。

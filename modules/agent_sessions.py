@@ -31,7 +31,7 @@ import paramiko
 from flask import jsonify, request
 
 from modules import events
-from modules.agent_api import (_agentRequired, _resolveHost, _safeHosts,
+from modules.agent_api import (requireAgentScope, _resolveHost, _safeHosts,
                                blueprint, parseTimeoutSec)
 from modules.ssh_hosts import getConnection
 
@@ -148,7 +148,7 @@ def _buildCommandPayload(command, nonce):
 
 @blueprint.route('/api/agent/ssh/sessions', methods=['POST'])
 def agentSessionOpen():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -240,7 +240,7 @@ def _pruneAndListLocked():
 
 @blueprint.route('/api/agent/ssh/sessions')
 def agentSessionList():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     with _sessionsLock:
@@ -250,7 +250,7 @@ def agentSessionList():
 
 @blueprint.route('/api/agent/ssh/sessions/<sid>', methods=['DELETE'])
 def agentSessionClose(sid):
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     with _sessionsLock:
@@ -267,7 +267,7 @@ def agentSessionClose(sid):
 
 @blueprint.route('/api/agent/ssh/sessions/<sid>', methods=['POST'])
 def agentSessionExec(sid):
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     with _sessionsLock:

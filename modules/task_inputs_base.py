@@ -22,7 +22,7 @@ class DeliverError(Exception):
 
 def safeName(name):
     """与暂存区同一套文件名规则（纯文件名、≤120）。"""
-    return staging._safeAttachmentName(name)
+    return staging.safeAttachmentName(name)
 
 
 def memberError(status, data, what):
