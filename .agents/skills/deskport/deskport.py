@@ -561,7 +561,7 @@ if __name__ == "__main__":
     a = ap.parse_args()
 
     def _unmangle(p):
-        """Git Bash(MSYS) 会把 /mnt/x 改写成 C:/Program Files/Git/mnt/x，这里还原成远端路径。"""
+        """Git Bash(MSYS) 会把 /mnt 之类的路径改写到 Git 安装目录下，这里还原成远端路径。"""
         if not p or not (len(p) > 2 and p[1] == ":" and p[2] in "/\\"):
             return p
         import shutil

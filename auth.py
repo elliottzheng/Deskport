@@ -19,6 +19,7 @@ EXEMPT_PREFIXES = (
     '/api/agent/device/login',  # 设备登录: 凭密码换 upload 设备令牌(无 Cookie)
     '/api/agent/handbook',      # 公开接入手册: 令牌之前就要能读
     '/api/agent/tools',         # 公开工具箱: 手册指向的零依赖客户端/驱动/协作原则
+    '/api/agent/skill.zip',     # 公开整包: 无令牌下一个 zip 拿全技能目录
     '/assets/css/tokens.css',
     '/assets/css/login.css',
     '/manifest.webmanifest',
@@ -139,6 +140,11 @@ def register(app):
         path = request.path
         if any(path == p or path.startswith(p + '/') or path.startswith(p + '?')
                for p in EXEMPT_PREFIXES):
+            return None
+        # 公开整包命名空间: /api/agent/*.zip 无令牌可达, 存不存在由路由回答
+        # （现在只有 /api/agent/skill.zip, 别的名字 404; 需令牌的 pack.zip
+        # 有自己的 _agentRequired, 不受这条影响）
+        if path.startswith('/api/agent/') and path.endswith('.zip'):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401

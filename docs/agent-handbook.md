@@ -27,6 +27,14 @@ T=<部署者发你的令牌>
 
 上面的裸 HTTP 是底座：任何语言都能照做。不想自己写轮询/审批/任务管理，就用现成工具——三级递进，**任选其一，不必全用**。
 
+**想一条命令拿全？** 整包 zip 把技能手册、客户端、驱动模板、协作原则和现成的 `.deskport.json` 打在一起（公开，无需令牌）：
+
+```bash
+curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip
+```
+
+解开得到 `deskport/` 目录，`SKILL.md` 里的地址按本次下载填入。**包里 `SKILL.md` 与 `COLLABORATION.md` 是必读**（不是"需要时再读"）：前者是完整用法，后者讲主控与执行方怎么分工、派活、验收。要当 Kimi 技能用就解到技能目录：`unzip -oq deskport-skill.zip -d ~/.kimi-code/skills/`。
+
 ### 1. 裸 HTTP（本手册其余部分）
 
 不带任何依赖，`curl` 或标准库 HTTP 即可。适合一次性调用，或要把调用逻辑嵌进你自己的程序。
@@ -66,7 +74,7 @@ curl -s $D/api/agent/tools/driver.py -o driver.py
 
 诚实声明：它假定执行方是 **Kimi Code**——`new <kimi会话id>` 接手已有会话、`/compact` 压缩上下文都是 Kimi 侧的能力；执行方不是 Kimi 时请用第 1 或第 2 级。用法一行：`driver.py <别名> [y|n|c|m|new <会话id>|st]`，边界写在 `driver.json`。
 
-`COLLABORATION.md` 讲主控怎么分工与验收，需要时再读：
+`COLLABORATION.md` 讲主控怎么分工与验收——**必读**（真去指挥别的智能体之前先读一遍）：
 
 ```bash
 curl -s $D/api/agent/tools/COLLABORATION.md -o COLLABORATION.md
@@ -262,4 +270,4 @@ while True:
 - 命令与任务都真实执行：优先只读；写文件、装软件、动服务之前先向你的用户说明。
 - 令牌等价于执行权，不要写进公开脚本、仓库或日志。
 - 名字写错时，响应会带 `availableHosts` / `nodes` / `models` 等提示，直接改用。
-- 如果你恰好是 Kimi Code，同一台机器上另有可选的技能包 `GET {{BASE}}/api/agent/skills/deskport/pack.zip`（需令牌）；它不是使用本手册的前提。
+- 如果你恰好是 Kimi Code，上面整包（`skill.zip`）解开就是标准技能目录，放进 `~/.kimi-code/skills/` 即可当技能用；它不是使用本手册的前提。

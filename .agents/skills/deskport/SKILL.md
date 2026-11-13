@@ -10,7 +10,8 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 
 ## 速查
 
-- API base: 部署 Deskport 的地址（本机部署为 `http://127.0.0.1:6789`；外网走部署者配的 HTTPS 隧道地址）
+- API base: `{{BASE}}`（部署 Deskport 的地址；本机部署即 `http://127.0.0.1:6789`，外网走部署者配的 HTTPS 隧道地址）
+- 技能版本: `{{VERSION}}`
 - 认证: `X-Agent-Token: <令牌>`；每个智能体应单独签发令牌（审计按令牌名留痕）
 - 主机: `GET /api/agent/hosts` 列出（SSH 主机 + 本机 `local`，本机带 os/defaultShell/shells）
 - 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`（远端节点升级后自动上报）
@@ -26,26 +27,28 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 | `driver.py` | 驱动模板：别名目录、边界判定、审批自动放行、409 排队；边界写在 `driver.json` |
 | `COLLABORATION.md` | 协作原则：主控与执行方怎么分工、派活、验收（真去指挥别的智能体前读一遍） |
 
-自举：**一条链接 + 一个令牌就够了**——整包是个 zip，解开就是技能目录，
+自举：**一条链接就够了**——整包是个 zip（公开，无需令牌），解开就是技能目录，
 里面的 `.deskport.json` 已经填好本次下载用的地址（令牌单独给，不在包里）：
 
 ```bash
-D=<中枢地址>; T=<令牌>
-curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip
-unzip -oq pack.zip -d ~/.kimi-code/skills/        # → ~/.kimi-code/skills/deskport/
-export DESKPORT_TOKEN=$T                          # 或写进 deskport/.agent-token
-python ~/.kimi-code/skills/deskport/deskport.py hosts   # 验一下
+D={{BASE}}
+curl -s "$D/api/agent/skill.zip" -o deskport-skill.zip
+unzip -oq deskport-skill.zip -d ./deskport-skill/    # → ./deskport-skill/deskport/
+export DESKPORT_TOKEN=<部署者发你的令牌>              # 或写进 ./deskport-skill/deskport/.agent-token
+python ./deskport-skill/deskport/deskport.py hosts   # 验一下
 ```
 
-不想解压整包时，也可以单个文件拉（`?raw=1` 直接落盘，响应头 `X-Skill-Sha256` 校验）：
+如果你是 Kimi Code，也可解到技能目录：`unzip -oq deskport-skill.zip -d ~/.kimi-code/skills/`（→ `~/.kimi-code/skills/deskport/`）。
+
+有令牌时也可以单个文件拉（`?raw=1` 直接落盘，响应头 `X-Skill-Sha256` 校验；清单含 `files`/`pack`/`sha256`，见 `GET /api/agent/skills`）：
 
 ```bash
-S=~/.kimi-code/skills/deskport; mkdir -p "$S"
+S=./deskport-skill/deskport; mkdir -p "$S"
+T=<部署者发你的令牌>
 curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
 for f in deskport.py driver.py COLLABORATION.md; do
   curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
-# 清单（含 files / pack / sha256）：GET /api/agent/skills
 ```
 
 客户端与驱动只用标准库（Python ≥ 3.9）。驱动默认读自己目录的 `driver.json`，
@@ -159,7 +162,7 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
 
 - 命令与任务都真实执行：优先只读；写操作（写文件、装软件、动服务）先向用户说明再执行。
 - 名字写错时响应带提示（`availableHosts` / `nodes` / `models`），直接改用，不用再列。
-- 401 = 令牌失效：检查令牌与 `config.json` 的 `agentTokens` 指纹是否匹配。
+- 401 = 令牌失效：检查令牌是否仍由部署者签发（服务端按 `config.json` 里的令牌指纹校验）。
 - 审计全留痕（agent.exec / agent.sftp.* / agent.session.* / agent.task.*），部署者可在控制台回看。
-- 本技能由中枢分发，可自举更新：手册与三个附件走同一套 URL（见上节），升级后重拉即同步；`X-Skill-Sha256` 用来判断要不要更新本地副本。
+- 本技能由中枢分发，可自举更新：整包 `/api/agent/skill.zip` 与单个文件走同一套 URL（见上节），升级后重拉即同步；`X-Skill-Sha256` 用来判断要不要更新本地副本。
 - 完整接口参考：仓库内 `docs/agent-api.md`；agent node 侧接口见 `agent_node/README.md`。

@@ -78,5 +78,7 @@ def test_handbook_toolbox_section(env):
     assert 'engine' not in body
     assert 'curl -s $D/api/agent/tools/deskport.py -o deskport.py' in body
     assert '任选其一，不必全用' in body
+    assert 'curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip' in body
+    assert '必读' in body
     toolbox = body.index('## 工具箱')
     assert toolbox < body.index('## 端点') < len(body)

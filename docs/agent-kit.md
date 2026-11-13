@@ -16,19 +16,22 @@
 客户端与驱动只用标准库（Python ≥ 3.9），拷一个文件到任何机器就能跑，不需要 pip。
 整包下载时还会多一份生成的 `.deskport.json`（`url` + `host`，不含令牌）。
 
-## 自举（一条链接 + 一个令牌）
+## 自举（一条链接，无需令牌）
 
-整包下载：`GET /api/agent/skills/deskport/pack.zip`（带 `X-Agent-Token`）。解开就是技能
-目录，包里的 `.deskport.json` 已按本次下载的地址填好 `url`，`host` 缺省 `local`；
-**令牌不进包**，由人单独交给智能体。
+整包下载：`GET /api/agent/skill.zip`（公开）。解开就是技能目录，包里的 `.deskport.json`
+已按本次下载的地址填好 `url`，`host` 缺省 `local`；`SKILL.md` 里的 `{{BASE}}`/`{{VERSION}}`
+按本次请求替换，解开即可照做；**令牌不进包**，由人单独交给智能体。
 
 ```bash
-D=<中枢地址>; T=<令牌>
-curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip
-unzip -oq pack.zip -d ~/.kimi-code/skills/        # → ~/.kimi-code/skills/deskport/
-export DESKPORT_TOKEN=$T                          # 或写进 deskport/.agent-token
-python ~/.kimi-code/skills/deskport/deskport.py hosts
+D=<中枢地址>
+curl -s "$D/api/agent/skill.zip" -o deskport-skill.zip
+unzip -oq deskport-skill.zip -d ./deskport-skill/    # → ./deskport-skill/deskport/
+export DESKPORT_TOKEN=<部署者发你的令牌>              # 或写进 ./deskport-skill/deskport/.agent-token
+python ./deskport-skill/deskport/deskport.py hosts
 ```
+
+有令牌时也可走需令牌的整包 `GET /api/agent/skills/deskport/pack.zip`（附件与原文件字节一致）：
+`curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip`。
 
 按文件拉（可选，便于只更新一个文件；`?raw=1` 直接落盘，`X-Skill-Sha256` 校验）：
 
@@ -50,12 +53,13 @@ done
 ## 没有令牌先拿工具（公开端点）
 
 三个工具文件（`deskport.py` / `driver.py` / `COLLABORATION.md`）不含凭据，可**不带令牌**
-直接下载；`SKILL.md` 不在此列（Kimi 技能格式，走上面的自举通道）：
+直接下载；整包 `skill.zip` 还额外带上按请求渲染的 `SKILL.md`：
 
 ```bash
 D=<中枢地址>
 curl -s $D/api/agent/tools -o -            # 清单 {name, bytes, sha256}
 curl -s $D/api/agent/tools/deskport.py -o deskport.py    # 响应头 X-Tools-Sha256 可校验
+curl -s $D/api/agent/skill.zip -o deskport-skill.zip     # 整包：5 个条目
 ```
 
 开关与手册共用 `handbookEnabled`（`false` 时 404）。详见 `docs/agent-api.md`「工具箱」。

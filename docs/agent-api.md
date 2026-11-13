@@ -597,17 +597,24 @@ Deskport 升级后重新拉取即更新（`files` / `sha256` 判断要不要换�
 GET /api/agent/tools            → {"tools": [{"name", "bytes", "sha256"}]}
 GET /api/agent/tools/<name>     → 原文件（.md → text/markdown，.py → text/plain）
                                   响应头 X-Tools-Sha256 与清单一致
+GET /api/agent/skill.zip        → 整包 zip：deskport/{SKILL.md, deskport.py, driver.py,
+                                  COLLABORATION.md, .deskport.json} 共 5 个条目
 ```
 
-- 白名单三个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活模板）、
-  `COLLABORATION.md`（主控与执行方的分工/验收）。**SKILL.md 不在内**：它是 Kimi
-  技能格式，走需令牌的 `/api/agent/skills/deskport`，两种格式不混；
+- 单文件白名单三个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活模板）、
+  `COLLABORATION.md`（主控与执行方的分工/验收）。**SKILL.md 不走单文件端点**——它含
+  `{{BASE}}`/`{{VERSION}}` 占位符、要按请求渲染，只从整包出，和三个工具一起发；
+- 整包从 `.agents/skills/deskport/` **实时组装**（`agent_skill_files.buildSkillZip`，
+  与需令牌的 pack.zip 同一处逻辑，单一来源不复制）；技能名白名单写死只有 `deskport`，
+  其它名字没有路由，子路径/`..`/隐藏文件一律 404；
+- 整包里 `SKILL.md` 的 `{{BASE}}`/`{{VERSION}}` 按本次请求替换（与 handbook 一致），
+  `.deskport.json` 带本次地址、不含令牌；
 - 目录仍是 `.agents/skills/deskport/`（单一来源，不复制文件）；
-- 开关与手册共用 `handbookEnabled`（显式 `false` 时两个端点 404）：工具箱入口写在
+- 开关与手册共用 `handbookEnabled`（显式 `false` 时三个端点 404）：工具箱入口写在
   手册里，手册关掉后这些地址失去被发现路径，独立开关只会造出半开状态；
-- 白名单外一律 404（不列目录内容）：`SKILL.md`、`..`、子目录、不存在的名字不区分；
-- 公开内容安全由 `tests/test_agent_tools.py` 正则把关：命中
-  `token\s*=\s*['"][A-Za-z0-9_-]{16,}` / `password` / `agentTokens` 即失败。
+- 白名单外一律 404（不列目录内容）：`SKILL.md`（单文件端点）、`..`、子目录、不存在的名字不区分；
+- 公开内容安全由 `tests/test_agent_tools.py` 与 `tests/test_agent_skill_zip.py` 正则把关：
+  命中 `token\s*=\s*['"][A-Za-z0-9_-]{16,}` / `password` / `agentTokens` / `C:\` / `/mnt/` 即失败。
 
 ## 审计
 

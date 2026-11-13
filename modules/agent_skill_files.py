@@ -13,6 +13,10 @@
 
 整包是给「一条链接 + 一个令牌」准备的：解开就是一个技能目录，`.deskport.json`
 按本次请求的地址生成（url/host），令牌单独给（绝不进包）。
+
+组装逻辑 `buildSkillZip` 是共用的：需令牌的 pack.zip 传原文件字节，公开的
+`/api/agent/skill.zip`（modules/agent_tools.py）传按本次请求替换过
+`{{BASE}}`/`{{VERSION}}` 的 SKILL.md——两处都是单一来源实时组装，不复制文件。
 """
 import hashlib
 import io
@@ -23,6 +27,7 @@ import zipfile
 
 from flask import Response, jsonify, request
 
+from modules import agent_handbook, meta
 from modules.agent_api import _agentRequired, _skillsDir, blueprint
 
 _SKILL_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
@@ -90,6 +95,46 @@ def _packConfig():
     }
 
 
+def renderedSkillManual(skill):
+    """SKILL.md 原文按本次请求替换 {{BASE}}/{{VERSION}}（与 handbook 一致）。
+
+    「如含即换」：没有占位符就原样返回；文件不存在返回 None。公开整包用它，
+    解开即可照做，地址就是本次下载用的地址。
+    """
+    path = os.path.join(_skillsDir(), skill, 'SKILL.md')
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding='utf-8') as f:
+        text = f.read()
+    return agent_handbook.render(text, agent_handbook.baseUrl(), meta.BUILD)
+
+
+def buildSkillZip(skill, manual=None):
+    """整包字节与条目数：SKILL.md（manual 给了用渲染后的文本，否则原文件字节）
+    + 白名单附件 + 现成的 .deskport.json；技能目录/SKILL.md 不存在返回 None。
+
+    pack.zip（需令牌、原样字节）与 /api/agent/skill.zip（公开、占位符已替换）
+    共用这一处；附件只认 _skillFileEntries 的白名单，__pycache__、子目录、
+    隐藏文件天然进不来。
+    """
+    root = os.path.join(_skillsDir(), skill)
+    manualPath = os.path.join(root, 'SKILL.md')
+    if not os.path.isfile(manualPath):
+        return None
+    entries = _skillFileEntries(skill)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        if manual is None:
+            z.write(manualPath, '%s/SKILL.md' % skill)
+        else:
+            z.writestr('%s/SKILL.md' % skill, manual)
+        for entry in entries:
+            z.write(os.path.join(root, entry['name']), '%s/%s' % (skill, entry['name']))
+        z.writestr('%s/.deskport.json' % skill,
+                   json.dumps(_packConfig(), ensure_ascii=False, indent=2) + '\n')
+    return buf.getvalue(), len(entries) + 2   # 手册 + 附件 + 配置
+
+
 @blueprint.route('/api/agent/skills/<skill>/pack.zip')
 def agentSkillPack(skill):
     """整包下载：解开就是一个技能目录——手册 + 全部附件 + 现成的 .deskport.json。
@@ -103,21 +148,13 @@ def agentSkillPack(skill):
         return err
     if not _SKILL_RE.match(skill):
         return jsonify({'error': '名称不合法'}), 400
-    root = os.path.join(_skillsDir(), skill)
-    manual = os.path.join(root, 'SKILL.md')
-    if not os.path.isfile(manual):
+    packed = buildSkillZip(skill)
+    if packed is None:
         names = [s for s in (os.listdir(_skillsDir()) if os.path.isdir(_skillsDir()) else [])
                  if os.path.isfile(os.path.join(_skillsDir(), s, 'SKILL.md'))]
         return jsonify({'error': '技能不存在', 'available': names}), 404
-    entries = _skillFileEntries(skill)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
-        z.write(manual, '%s/SKILL.md' % skill)
-        for entry in entries:
-            z.write(os.path.join(root, entry['name']), '%s/%s' % (skill, entry['name']))
-        z.writestr('%s/.deskport.json' % skill,
-                   json.dumps(_packConfig(), ensure_ascii=False, indent=2) + '\n')
-    resp = Response(buf.getvalue(), mimetype='application/zip')
+    blob, count = packed
+    resp = Response(blob, mimetype='application/zip')
     resp.headers['Content-Disposition'] = 'attachment; filename="%s-skill.zip"' % skill
-    resp.headers['X-Skill-Files'] = str(len(entries) + 2)   # 手册 + 附件 + 配置
+    resp.headers['X-Skill-Files'] = str(count)   # 手册 + 附件 + 配置
     return resp

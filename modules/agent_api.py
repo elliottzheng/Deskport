@@ -21,6 +21,8 @@
     modules/agent_upload.py        手机分享上传（scope=upload）
     modules/agent_share.py         手机转发文件交给执行方（scope=share）
     modules/agent_skill_files.py   技能包附件（客户端/驱动/协作原则，同一套自举）
+    modules/agent_handbook.py      公开接入手册 /api/agent/handbook（无需令牌）
+    modules/agent_tools.py         公开工具箱 /api/agent/tools 与整包 /api/agent/skill.zip（无需令牌）
     modules/device_auth.py         设备登录（App 密码换 upload+share 设备令牌, 自吊销）
 
 审计: 每次调用写 events（agent.exec / agent.sftp.*）。
