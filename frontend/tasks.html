@@ -74,6 +74,15 @@
                     </label>
                     <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
                            spellcheck="false" placeholder="远端工作目录，如 /mnt/sda1/yinglin/course">
+                    <template v-if="isLocalRun">
+                        <label class="task-mode" for="task-local-cwd">工作目录</label>
+                        <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
+                               spellcheck="false" list="task-cwd-roots"
+                               :placeholder="cwdRoots.length ? cwdRoots[0] : '绝对路径，如 C:\Users\你的用户名\Documents'">
+                        <datalist id="task-cwd-roots">
+                            <option v-for="d in cwdRoots" :key="d" :value="d"></option>
+                        </datalist>
+                    </template>
                     <label class="task-mode">模式
                         <select class="input" v-model="mode">
                             <option value="auto">自动批准（推荐）</option>
@@ -83,6 +92,7 @@
                         </select>
                     </label>
                     <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
+                    <span class="task-hint task-cwd-hint" v-if="isLocalRun">留空 = Deskport 分配的任务目录；填了必须是已存在的绝对路径，且在工作目录或默认工作空间之下<template v-if="cwdRoots.length">（可选：{{ cwdRoots.join('、') }}）</template></span>
                 </div>
                 <div class="task-compose-foot">
                     <span class="task-hint">{{ isLocalRun
@@ -115,7 +125,7 @@
                     <div class="task-detail-title">{{ detail.title || detail.prompt }}</div>
                     <div class="task-detail-meta">
                         {{ detail.createdLabel }} · {{ statusLabel(detail.status) }} · {{ modeLabel(detail.mode) }}
-                        <span v-if="detail.node && detail.node !== 'local'"> · 执行点 {{ detail.node }}<template v-if="detail.cwd"> · {{ detail.cwd }}</template></span>
+                        <span v-if="cwdLine"> · {{ cwdLine }}</span>
                         <span v-if="detail.lastActiveLabel"> · 最近 {{ detail.lastActiveLabel }}</span>
                     </div>
                 </div>
