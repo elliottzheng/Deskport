@@ -41,7 +41,7 @@ import config
 from modules import (agent_upload, events, fsutil, share_core, share_targets,
                      staging, task_node, tasks_store)
 from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD_REMOTE, agentHasScope,
-                               _agentRequired, blueprint)
+                               requireAgentScope, blueprint)
 
 TICKET_TTL = 300
 WAYS = ('upload', 'new', 'append')
@@ -128,7 +128,7 @@ def _consume(rec):
 @blueprint.route('/api/agent/share/stage', methods=['POST'])
 def shareStage():
     """原生 App 交文件换 ticket（设备令牌，scope=share）。"""
-    agent, err = _agentRequired(SCOPE_SHARE)
+    agent, err = requireAgentScope(SCOPE_SHARE)
     if agent is None:
         return err
     _purgeExpired()
@@ -151,7 +151,7 @@ def shareStage():
         return jsonify({'error': '创建暂存目录失败: %s' % e}), 500
     files = []
     for item in uploads:
-        name = staging._safeAttachmentName(item.filename)
+        name = staging.safeAttachmentName(item.filename)
         if not name:
             _removeDir(batch)
             return jsonify({'error': '文件名不合法（需纯文件名，≤120 字符）: %s'

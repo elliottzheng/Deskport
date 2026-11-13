@@ -91,15 +91,22 @@ for module in BLUEPRINT_MODULES:
 ```
 基础设施层   config / state / internal_api / events / fsutil / textio / media /
              contracts / decision / termcore / termprobe / wsproto / winenv
-特性层       terminal / ssh / files / tasks / control / screen / command / aihandoff / plugins
+特性层       terminal / ssh / screen / command / control / aihandoff /
+             agent_api / agent_local / agent_nodes / agent_sftp /
+             agent_sftp_write / agent_sessions / agent_share /
+             agent_skill_files / agent_tunnel / feedback / feedback_store /
+             files / files_archive / files_base / files_browse /
+             files_federation / files_pins / files_transfer /
+             tasks / tasks_api / tasks_runner / tasks_store /
+             worklines_api / worklines_store / task_cwd / task_node
 ```
 
-依赖方向：特性 → 基础设施；基础设施 → 基础设施。反向或横向即在门禁报 warning。
+依赖方向：特性 → 基础设施；基础设施 → 基础设施。特性横向 import（同层互引）须登记 `ALLOWED_FEATURE_IMPORTS` 并附方向理由，未登记即门禁报错；基础设施 → 特性同样拦（warning）。
 
 两份分类集合在 `tools/check_structure.py` 的 `INFRA` 与 `FEATURES`，上表以它们为准，新增共享内核要两边同步。两点现状：
 
 - `sensitive_values` / `task_state` / `model_availability` 实际只依赖 `config` 和标准库，属事实上的基础设施，但**还没**进 `INFRA`；
-- 智能体面（`agent_*` / `tasks_*` / `worklines_*` / `federation`）**还没**纳入 `FEATURES`，因此横向 import 检查对它们不生效（如 `tasks_federation → agent_nodes`）。改这一片时靠人工守分层：路由 `*_api` → 编排 `*_runner` → 状态 `*_store`。
+- 智能体面（`agent_*` / `feedback*` / `files_*` / `worklines_*` / `task_cwd` / `task_node`）已于批次 C（2026-11-13）纳入 `FEATURES`，现有方向逐条登记在 `ALLOWED_FEATURE_IMPORTS`（每条附理由）；跨模块 import 还不得出现单下划线私有名（`scan_private_seams` 拦「引私有名 / 公有名起私有别名」两种形态，存量同包内部接缝登记在 `PRIVATE_SEAM_ALLOWED`，只减不增）。
 
 ## 页面路由表与静态资源
 

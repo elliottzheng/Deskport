@@ -153,7 +153,7 @@ def auditAgentAction(agent, action, target, result, detail):
     events.log(action, target, result, detail, request.remote_addr)
 
 
-def _agentRequired(scope=SCOPE_FULL):
+def requireAgentScope(scope=SCOPE_FULL):
     """守卫: 无有效令牌 401；令牌缺所需 scope 403；通过返回令牌条目。
 
     缺省要求 full——现有 /api/agent/* 端点（exec/sftp/sessions/skills）
@@ -314,7 +314,7 @@ def _execOnHost(hostEntry, command, timeoutSec, cwd=''):
 
 @blueprint.route('/api/agent/hosts')
 def agentHosts():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     return jsonify({'hosts': _safeHosts(), 'tokenName': agent.get('name') or ''})
@@ -322,16 +322,16 @@ def agentHosts():
 
 @blueprint.route('/api/agent/ssh/exec', methods=['POST'])
 def agentExec():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
-    from modules.agent_local import isLocalHost as _isLocalHost, localEnabled
-    if _isLocalHost(data.get('host')):
+    from modules.agent_local import isLocalHost, localEnabled
+    if isLocalHost(data.get('host')):
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
-        from modules.agent_local import agentLocalExec as _localExecRoute
-        return _localExecRoute()
+        from modules.agent_local import agentLocalExec
+        return agentLocalExec()
     rawCommand = data.get('command')
     command = str(rawCommand or '').strip()
     cwd = str(data.get('cwd') or '').strip()

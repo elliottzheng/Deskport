@@ -31,7 +31,7 @@ App（设备令牌）  ──stage──▶  服务端暂存区 + 内存 ticket
 `multipart/form-data`：
 
 ```text
-file     0..10 个，可重复；文件名走 staging._safeAttachmentName
+file     0..10 个，可重复；文件名走 staging.safeAttachmentName
 prompt   可选，≤4000 字
 → 200 {"ticket": "<32 位十六进制>",
        "files": [{"name": "卷一.pdf", "size": 123}],
@@ -104,7 +104,7 @@ prompt   可选，≤4000 字
     但文本里的绝对路径会先抹成 `…`。部分成功与 `/api/agent/upload` 同口径
     （200 + `failed[]`，已成功的文件留在成员机）；
   - `subdir` 复用 `/api/agent/upload` 的 `_safeSubdir`（拒绝绝对路径、盘符、
-    `..`、非法字符）；文件名走 `staging._safeAttachmentName`，重名自动 `(2)`；
+    `..`、非法字符）；文件名走 `staging.safeAttachmentName`，重名自动 `(2)`；
 - `way=new` → 新建任务，返回 `{"taskId", "mode": "created", "paths", "prompt"}`；
   `taskId` 传了也忽略；
 - `way=append` → 必须带 `taskId`，追加一条消息（正文 = prompt + 附件路径清单），

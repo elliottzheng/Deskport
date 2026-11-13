@@ -147,7 +147,7 @@ def register(app):
             return None
         # 公开整包命名空间: /api/agent/*.zip 无令牌可达, 存不存在由路由回答
         # （现在只有 /api/agent/skill.zip, 别的名字 404; 需令牌的 pack.zip
-        # 有自己的 _agentRequired, 不受这条影响）
+        # 有自己的 requireAgentScope, 不受这条影响）
         if path.startswith('/api/agent/') and path.endswith('.zip'):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':

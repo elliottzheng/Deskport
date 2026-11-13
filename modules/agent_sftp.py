@@ -18,9 +18,9 @@ import stat as statMod
 
 from flask import jsonify, request
 
-from modules.agent_api import (auditAgentAction, _agentRequired, _resolveHost,
+from modules.agent_api import (auditAgentAction, requireAgentScope, _resolveHost,
                                blueprint)
-from modules.fsutil import decodeBase64 as _decodeB64
+from modules.fsutil import decodeBase64
 from modules.ssh_sftp import _openSftp
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -32,7 +32,7 @@ _TYPE_NAMES = {
 }
 
 
-def _sftpFor(hostNameOrId):
+def sftpFor(hostNameOrId):
     hostEntry = _resolveHost(str(hostNameOrId or ''))
     if hostEntry is None:
         return None, None, '主机不存在'
@@ -47,7 +47,7 @@ def isLocal(hostNameOrId):
     return isLocalHost(hostNameOrId)
 
 
-def _mapSftpError(e):
+def mapSftpError(e):
     """IOError → (status, 说明)。13=权限, 2=不存在, 其余按用法错误。"""
     errno = getattr(e, 'errno', None)
     text = str(e)
@@ -64,7 +64,7 @@ def _sftpParentOf(path):
     return norm[:norm.rfind('/')] if '/' in norm else ''
 
 
-def _sftpMakedirs(sftp, parent):
+def sftpMakedirs(sftp, parent):
     """逐级创建远端目录（SFTP 无递归 mkdir）；入参就是父目录。
     已存在/无法创建的段跳过，最终缺失由调用方 stat 兜底给出干净错误
     （不暴露临时文件名）。"""
@@ -90,7 +90,7 @@ def _joinPath(base, name):
     return base.rstrip('/') + '/' + name
 
 
-def _normalize(sftp, path):
+def normalize(sftp, path):
     """`~` 与相对路径统一解析为远端绝对路径。"""
     try:
         return sftp.normalize(path)
@@ -122,7 +122,7 @@ def _entryFor(sftp, base, attr):
 
 @blueprint.route('/api/agent/sftp/list', methods=['POST'])
 def agentSftpList():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -131,19 +131,19 @@ def agentSftpList():
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
         return sftpListLocal(data.get('path'))
-    _host, sftp, err = _sftpFor(data.get('host'))
+    _host, sftp, err = sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404
     raw = str(data.get('path') or '.').strip() or '.'
     try:
-        path = _normalize(sftp, raw)
+        path = normalize(sftp, raw)
         st = sftp.stat(path)
         if not statMod.S_ISDIR(st.st_mode):
             return jsonify({'error': '不是目录: %s' % path,
                             'hint': 'list 只能列目录，读文件请用 sftp/get'}), 400
         entries = [_entryFor(sftp, path, attr) for attr in sftp.listdir_attr(path)]
     except IOError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         auditAgentAction(agent, 'agent.sftp.list', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     auditAgentAction(agent, 'agent.sftp.list', path, 'ok',
@@ -153,7 +153,7 @@ def agentSftpList():
 
 @blueprint.route('/api/agent/sftp/get', methods=['POST'])
 def agentSftpGet():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
@@ -167,7 +167,7 @@ def agentSftpGet():
                                 int(data.get('length') or 0))
         except (TypeError, ValueError):
             return jsonify({'error': 'offset/length 必须是整数'}), 400
-    _host, sftp, err = _sftpFor(data.get('host'))
+    _host, sftp, err = sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404
     raw = str(data.get('path') or '')
@@ -191,7 +191,7 @@ def agentSftpGet():
     if length > MAX_FILE_BYTES:
         return jsonify({'error': 'length 上限 %d bytes' % MAX_FILE_BYTES}), 400
     try:
-        path = _normalize(sftp, raw)
+        path = normalize(sftp, raw)
         attr = sftp.stat(path)
         if statMod.S_ISDIR(attr.st_mode):
             return jsonify({'error': '是目录: %s' % path,
@@ -209,7 +209,7 @@ def agentSftpGet():
                 f.seek(offset)
             chunk = f.read(min(length or MAX_FILE_BYTES, MAX_FILE_BYTES))
     except IOError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         auditAgentAction(agent, 'agent.sftp.get', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     auditAgentAction(agent, 'agent.sftp.get', path, 'ok',
@@ -221,7 +221,7 @@ def agentSftpGet():
 
 @blueprint.route('/api/agent/sftp/put', methods=['POST'])
 def agentSftpPut():
-    agent, err = _agentRequired()
+    agent, err = requireAgentScope()
     if agent is None:
         return err
     # 解析请求体之前先看体量：超大上传直接拒，不等收完
@@ -235,14 +235,14 @@ def agentSftpPut():
         return sftpPutLocal(data.get('path'), data.get('contentB64'),
                             str(data.get('sha256') or ''),
                             mkdirs=bool(data.get('mkdirs')))
-    _host, sftp, err = _sftpFor(data.get('host'))
+    _host, sftp, err = sftpFor(data.get('host'))
     if err:
         return jsonify({'error': err}), 404
     path = str(data.get('path') or '')
     if not path:
         return jsonify({'error': '缺少 path'}), 400
     try:
-        raw = _decodeB64(data.get('contentB64'))
+        raw = decodeBase64(data.get('contentB64'))
     except ValueError:
         return jsonify({'error': 'contentB64 不是合法 base64（已拒绝写入，'
                                  '原文件未被改动）'}), 400
@@ -261,7 +261,7 @@ def agentSftpPut():
                              '父目录不存在')
             return jsonify({'error': '父目录不存在：%s' % parent,
                             'hint': '加 mkdirs:true 自动创建'}), 404
-        _sftpMakedirs(sftp, parent)
+        sftpMakedirs(sftp, parent)
         try:
             sftp.stat(parent or '.')
         except IOError:
@@ -291,7 +291,7 @@ def agentSftpPut():
             except IOError:
                 pass
     except IOError as e:
-        status, msg = _mapSftpError(e)
+        status, msg = mapSftpError(e)
         auditAgentAction(agent, 'agent.sftp.put', path, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     digest = hashlib.sha256(raw).hexdigest()

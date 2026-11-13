@@ -22,14 +22,14 @@
     - 目标目录自动创建；phone 目标目录自动并入收件箱观察目录
       （config.getInboxDirs）；
     - 重名自动 (2)（复用 fsutil.uniquePath），绝不静默覆盖；
-      文件名逐个过 tasks_store._safeAttachmentName；subdir 拒绝绝对
+      文件名逐个过 staging.safeAttachmentName；subdir 拒绝绝对
       路径、盘符、.. 与 Windows 非法字符；
     - 流式写盘: 1MB 一块边收边落并顺带算 SHA-256，全程不把整个文件
       读进内存；单文件上限 phoneUploadMaxMB（缺省 2048），超限删除
       半成品并记 413；
     - 全部失败按原因返回 4xx（超限 413 / 校验 400），不一律 500；
     - 审计 agent.upload 记令牌名与 target id；越权尝试由
-      _agentRequired 记 agent.scope（need=upload）。
+      requireAgentScope 记 agent.scope（need=upload）。
 """
 import hashlib
 import hmac
@@ -41,8 +41,8 @@ from flask import jsonify, request
 
 import config
 from modules import events, fsutil
-from modules.agent_api import SCOPE_UPLOAD, _agentRequired, blueprint
-from modules.tasks_store import _safeAttachmentName
+from modules.agent_api import SCOPE_UPLOAD, requireAgentScope, blueprint
+from modules.staging import safeAttachmentName
 
 READ_CHUNK = 1024 * 1024
 
@@ -77,7 +77,7 @@ def _resolveTarget(rawId):
 
 
 def _safeSubdir(raw):
-    """subdir 只接受相对子路径: 逐级过 _safeAttachmentName，拒绝绝对
+    """subdir 只接受相对子路径: 逐级过 safeAttachmentName，拒绝绝对
     路径、盘符、..、非法字符。合法返回规范化相对路径（/ 分隔）；空 = 根；
     非法返回 None。"""
     text = str(raw or '').strip()
@@ -89,7 +89,7 @@ def _safeSubdir(raw):
     for part in re.split(r'[\\/]+', text):
         if part in ('', '.'):
             continue
-        clean = _safeAttachmentName(part)
+        clean = safeAttachmentName(part)
         if part == '..' or not clean:
             return None
         parts.append(clean)
@@ -102,7 +102,7 @@ def _saveOne(fs, destDir, limitMB):
     """流式落盘单个文件。返回 (saved 条目, None) 或 (None, (错误, status))。
     条目带 name（重名处理后的最终文件名）, path 由调用方拼成
     目标名/相对路径后下发——绝对路径不出网。"""
-    name = _safeAttachmentName(fs.filename)
+    name = safeAttachmentName(fs.filename)
     if not name:
         return None, ('文件名不合法（需纯文件名，≤120 字符）', 400)
     target = fsutil.uniquePath(destDir, name, start=2, sep='')
@@ -139,7 +139,7 @@ def agentUploadTargets():
     智能体/设备令牌（scope=upload）与本机联邦令牌都可读——中枢把这条
     当作「这台机器自己声明了哪些上传目标」的唯一来源。
     """
-    agent, err = _agentRequired(SCOPE_UPLOAD)
+    agent, err = requireAgentScope(SCOPE_UPLOAD)
     if agent is None and not _federationFrom():
         return err
     return jsonify({'targets': publicTargets(),
@@ -148,7 +148,7 @@ def agentUploadTargets():
 
 @blueprint.route('/api/agent/upload', methods=['POST'])
 def agentUpload():
-    agent, err = _agentRequired(SCOPE_UPLOAD)
+    agent, err = requireAgentScope(SCOPE_UPLOAD)
     fromHeader = _federationFrom()
     if agent is None and not fromHeader:
         return err

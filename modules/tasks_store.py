@@ -15,7 +15,7 @@ import time
 import config
 from modules import contracts, fsutil, task_state, task_cwd, task_node
 from modules import sensitive_values
-from modules.staging import _safeAttachmentName
+from modules.staging import safeAttachmentName
 
 log = logging.getLogger('tasks')
 
@@ -38,7 +38,7 @@ def _saveAttachments(attachments, workspace):
     for item in attachments or []:
         if not isinstance(item, dict):
             raise ValueError('attachments 条目必须是 {name, contentB64} 对象')
-        name = _safeAttachmentName(item.get('name'))
+        name = safeAttachmentName(item.get('name'))
         if not name:
             raise ValueError('附件名不合法（需纯文件名，≤120 字符）')
         try:

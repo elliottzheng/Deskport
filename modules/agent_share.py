@@ -36,7 +36,7 @@ from flask import jsonify, request
 
 from modules import share_core, staging, task_node, tasks_store
 from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD_REMOTE,
-                               _agentRequired, agentHasScope, blueprint)
+                               requireAgentScope, agentHasScope, blueprint)
 
 MAX_FILES = share_core.MAX_FILES
 MAX_PROMPT = share_core.MAX_PROMPT
@@ -46,7 +46,7 @@ FILES_ONLY_PROMPT = share_core.FILES_ONLY_PROMPT
 
 @blueprint.route('/api/agent/share/nodes')
 def shareNodes():
-    agent, err = _agentRequired(SCOPE_SHARE)
+    agent, err = requireAgentScope(SCOPE_SHARE)
     if agent is None:
         return err
     return jsonify(share_core.nodesPayload())
@@ -54,7 +54,7 @@ def shareNodes():
 
 @blueprint.route('/api/agent/share/tasks')
 def shareTasks():
-    agent, err = _agentRequired(SCOPE_SHARE)
+    agent, err = requireAgentScope(SCOPE_SHARE)
     if agent is None:
         return err
     return jsonify(share_core.tasksPayload())
@@ -62,7 +62,7 @@ def shareTasks():
 
 @blueprint.route('/api/agent/share', methods=['POST'])
 def shareSubmit():
-    agent, err = _agentRequired(SCOPE_SHARE)
+    agent, err = requireAgentScope(SCOPE_SHARE)
     if agent is None:
         return err
 
@@ -114,7 +114,7 @@ def shareSubmit():
             return jsonify({'error': '建文件夹失败: %s' % e}), 500
         folderName = os.path.basename(stagedFolder)   # 重名时以 (2) 后的实际名为准
     for item in uploads:
-        name = staging._safeAttachmentName(item.filename)
+        name = staging.safeAttachmentName(item.filename)
         if not name:
             share_core._discard(stagedFiles, stagedFolder)
             share_core._audit('agent.share', taskId, 'fail', '文件名不合法')

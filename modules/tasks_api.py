@@ -771,7 +771,7 @@ def uploadTaskFile():
     等本机 exec/sftp 全等价上线后，这条只是便利通道，不是唯一路径。
     """
     data = request.get_json(force=True, silent=True) or {}
-    name = store._safeAttachmentName(data.get('name'))
+    name = staging.safeAttachmentName(data.get('name'))
     if not name:
         return jsonify({'error': 'name 必须是纯文件名（无路径分隔符，≤120 字符）'}), 400
     try:
