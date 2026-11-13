@@ -9,10 +9,12 @@
     - 落盘位置 = uploadTargets 白名单之一, form 字段 target 选 id,
       缺省 "phone"（内置手机上传, path=phoneUploadDir）; 不存在 400
       {"error":"上传目标不存在","targets":[{id,name}...]}（不含 path）;
-    - GET /api/agent/upload/targets 给 App 拉目标列表（只含 id+name,
+    - GET /api/agent/upload/targets 给 App / 分享页拉目标列表（只含 id+name,
       default=phone）; 登录响应同样只带 id+name;
     - 响应 saved[].path = 目标名/相对路径（如 教研资料/11月/a.pdf）,
-      服务器绝对路径不出网。
+      服务器绝对路径不出网;
+    - 联邦成员（X-Deskport-Token）也能读 targets、发 upload：成员自己把
+      target id 映射成目录，调用方只能给 id 与相对 subdir（批次 E）。
 
 设计约束（评估报告 §1/§5）:
     - 令牌必须持有 upload scope（全权令牌也放行）——手机丢失只暴露
@@ -30,8 +32,10 @@
       _agentRequired 记 agent.scope（need=upload）。
 """
 import hashlib
+import hmac
 import os
 import re
+from urllib.parse import unquote
 
 from flask import jsonify, request
 
@@ -41,6 +45,25 @@ from modules.agent_api import SCOPE_UPLOAD, _agentRequired, blueprint
 from modules.tasks_store import _safeAttachmentName
 
 READ_CHUNK = 1024 * 1024
+
+
+def publicTargets():
+    """下发给 App / 分享页的目标：只含 id+name，服务器路径不出网。"""
+    return [{'id': t['id'], 'name': t['name']}
+            for t in config.getUploadTargets()]
+
+
+def _federationFrom():
+    """联邦成员请求（X-Deskport-Token 命中本机 federationToken）→ 来源名。
+
+    成员端仍只往 uploadTargets 写、仍自己解析 target id——联邦调用方
+    没有任何办法指定绝对路径，所以这条通道不额外要 federationRoots。
+    """
+    token = config.getFederationToken()
+    given = (request.headers.get('X-Deskport-Token') or '').strip()
+    if not token or not given or not hmac.compare_digest(given, token):
+        return ''
+    return unquote(request.headers.get('X-Deskport-From') or '').strip() or '联邦'
 
 
 def _resolveTarget(rawId):
@@ -111,22 +134,25 @@ def _saveOne(fs, destDir, limitMB):
 
 @blueprint.route('/api/agent/upload/targets')
 def agentUploadTargets():
-    """App 拉上传目标列表: 只含 id+name, path 不出网; default=phone。"""
+    """上传目标列表: 只含 id+name, path 不出网; default=phone。
+
+    智能体/设备令牌（scope=upload）与本机联邦令牌都可读——中枢把这条
+    当作「这台机器自己声明了哪些上传目标」的唯一来源。
+    """
     agent, err = _agentRequired(SCOPE_UPLOAD)
-    if agent is None:
+    if agent is None and not _federationFrom():
         return err
-    targets = [{'id': t['id'], 'name': t['name']}
-               for t in config.getUploadTargets()]
-    return jsonify({'targets': targets,
+    return jsonify({'targets': publicTargets(),
                     'default': config.UPLOAD_TARGET_BUILTIN_ID})
 
 
 @blueprint.route('/api/agent/upload', methods=['POST'])
 def agentUpload():
     agent, err = _agentRequired(SCOPE_UPLOAD)
-    if agent is None:
+    fromHeader = _federationFrom()
+    if agent is None and not fromHeader:
         return err
-    tokenName = str(agent.get('name') or '')
+    tokenName = str((agent or {}).get('name') or ('联邦:' + fromHeader))
 
     def audit(result, detail):
         events.log('agent.upload', tokenName, result,
@@ -136,8 +162,7 @@ def agentUpload():
     if target is None:
         audit('fail', 'target 不存在')
         return jsonify({'error': '上传目标不存在',
-                        'targets': [{'id': t['id'], 'name': t['name']}
-                                    for t in config.getUploadTargets()]}), 400
+                        'targets': publicTargets()}), 400
     subdir = _safeSubdir(request.form.get('subdir'))
     if subdir is None:
         audit('fail', 'subdir 不合法 target=%s' % target['id'])

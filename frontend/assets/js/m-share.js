@@ -11,7 +11,10 @@
         busy: false,
         done: false,
         loadedNodes: false,
-        loadedTasks: false
+        loadedTasks: false,
+        loadedTargets: false,
+        targets: [],
+        nodeRows: []
     };
 
     function byId(id) { return document.getElementById(id); }
@@ -170,7 +173,73 @@
         });
         if (way === 'new') { loadNodes(); }
         if (way === 'append') { loadTasks(); }
+        if (way === 'upload') { loadTargets(); }
         showError('');
+    }
+
+    function nodeLabel(name) {
+        var rows = state.nodeRows || [];
+        for (var i = 0; i < rows.length; i += 1) {
+            if (rows[i].name === (name || 'local')) {
+                return rows[i].label || rows[i].name;
+            }
+        }
+        return name || '本机';
+    }
+
+    function loadTargets() {
+        if (state.loadedTargets) { return; }
+        state.loadedTargets = true;
+        request('/api/share/targets').then(function (data) {
+            state.targets = data.targets || [];
+            state.nodeRows = data.nodes || [{name: 'local', label: '本机',
+                                             status: 'online'}];
+            var select = byId('share-upload-node');
+            select.innerHTML = '';
+            state.nodeRows.forEach(function (node) {
+                var opt = document.createElement('option');
+                opt.value = node.name;
+                opt.textContent = (node.label || node.name)
+                    + (node.status === 'offline' ? '（离线）' : '');
+                opt.disabled = node.status === 'offline';
+                select.appendChild(opt);
+            });
+            var def = data['default'] || {};
+            select.value = def.node || 'local';
+            syncUploadTarget(def.id);
+        }).catch(function (e) {
+            state.loadedTargets = false;
+            showError(e.message);
+        });
+    }
+
+    // 机器换人：目标下拉只列这台机器声明的；离线项保留但不可选
+    function syncUploadTarget(preferredId) {
+        var node = byId('share-upload-node').value || 'local';
+        var select = byId('share-upload-target');
+        select.innerHTML = '';
+        var usable = 0;
+        (state.targets || []).forEach(function (item) {
+            if (item.node !== node) { return; }
+            var opt = document.createElement('option');
+            opt.value = item.id;
+            opt.textContent = item.name
+                + (item.status === 'offline' ? '（不可用）' : '');
+            opt.disabled = item.status === 'offline';
+            select.appendChild(opt);
+            if (item.status !== 'offline') { usable += 1; }
+        });
+        if (preferredId) {
+            for (var i = 0; i < select.options.length; i += 1) {
+                if (select.options[i].value === preferredId
+                        && !select.options[i].disabled) {
+                    select.value = preferredId;
+                    break;
+                }
+            }
+        }
+        show(byId('share-upload-target-empty'), usable === 0);
+        select.disabled = usable === 0;
     }
 
     function buildBody() {
@@ -186,6 +255,8 @@
         } else if (state.way === 'append') {
             body.taskId = byId('share-task').value;
         } else {
+            body.node = byId('share-upload-node').value || 'local';
+            body.target = byId('share-upload-target').value || '';
             body.subdir = byId('share-subdir').value.trim();
         }
         return body;
@@ -196,7 +267,8 @@
         var text = byId('share-result-text');
         var link = byId('share-task-link');
         if (body.uploaded) {
-            setText(title, '已上传 ' + body.uploaded.length + ' 个文件');
+            var where = body.node ? ('到 ' + nodeLabel(body.node)) : '';
+            setText(title, '已上传 ' + body.uploaded.length + ' 个文件' + where);
             setText(text, body.uploaded.map(function (item) {
                 return item.path;
             }).join('\n'));
@@ -244,6 +316,9 @@
             }
         });
         byId('share-node').addEventListener('change', syncNode);
+        byId('share-upload-node').addEventListener('change', function () {
+            syncUploadTarget();
+        });
         byId('share-organize').addEventListener('change', function () {
             show(byId('share-folder-field'), byId('share-organize').checked);
         });

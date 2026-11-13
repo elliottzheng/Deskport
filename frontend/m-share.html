@@ -90,11 +90,22 @@
 
     <section class="card share-panel" id="panel-upload" hidden>
         <div class="field">
+            <label class="field-label" for="share-upload-node">机器</label>
+            <select class="select" id="share-upload-node"></select>
+        </div>
+        <div class="field">
+            <label class="field-label" for="share-upload-target">上传目标</label>
+            <select class="select" id="share-upload-target"></select>
+            <p class="share-hint" id="share-upload-target-empty" hidden>
+                这台机器上没有可用的上传目标。
+            </p>
+        </div>
+        <div class="field">
             <label class="field-label" for="share-subdir">文件夹名（可选）</label>
             <input class="input" id="share-subdir" spellcheck="false" autocomplete="off"
-                   placeholder="如 周测卷；留空 = 收件箱根目录">
+                   placeholder="如 周测卷；留空 = 目标根目录">
         </div>
-        <p class="share-hint">文件进手机上传目录，收件箱里能直接看到。</p>
+        <p class="share-hint">文件存到这台机器上的目标目录，路径不会显示在这里。</p>
     </section>
 
     <p class="load-error" id="share-error" hidden></p>
