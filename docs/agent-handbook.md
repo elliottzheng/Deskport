@@ -295,7 +295,13 @@ while True:
 - `403`：令牌 scope 不够，响应带 `{"need": "<所需 scope>"}`；让部署者重发对应 scope 的令牌。
 - `400`：参数不合法（例如不认识 `node`、非本机执行点缺 `cwd`、`cwd` 不在执行点允许的根下、`prompt` 过长）。
 - `409`：当前状态不允许（例如任务已结束或已关闭、审批已失效、持久会话正忙）。按响应提示调整后重试。
-- `429`：并发任务达到上限，响应带 `{limit, running, holders}`；退避后重试。
+- `429`：并发任务达到上限，响应带 `{limit, running, holders}`；先看 `holders` 是谁在占，close 掉自己的旧任务再重试。
+- `404` + `availableHosts`：`node` 名字不对。用 `GET /api/agent/hosts` 里那个名字（`local` 是本机），别自己拼。
+- `400` + `node 与 host 冲突`：两个都给了。只给 `node`，`host` 是旧名。
+- `SSL: CERTIFICATE_VERIFY_FAILED` / `curl exit 60`：公网入口是隧道方的自签证书。`curl` 加 `-k`；`deskport.py` 在 `.deskport.json` 写 `"insecure": true` 或 `"cafile"` 指到证书文件。
+- `501`：拿 `http://` 打了隧道端口（隧道只收 TLS）。换 `https://`。
+- `cd: No such file or directory`：路径按错操作系统的写法了。Windows 用 `E:/data`，Linux 用 `/srv/app`；先看 `GET /api/agent/hosts` 的 `os` 字段。
+- `outTruncated: true` / 输出被截断：单次输出上限 2 MiB。缩小输出（`| tail -n 100`）或分块读文件。
 
 ## 约定
 

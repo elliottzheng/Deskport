@@ -540,6 +540,42 @@ def connect(host: str | None = None, url: str | None = None, insecure: bool | No
     return h.cd(cwd) if cwd else h
 
 
+
+def _waitTask(task, seconds, allow, deny):
+    """等到本轮结束并打印最终回复。返回进程退出码。
+
+    卡审批时不傻等到超时：打印 PENDING + 怎么放行，并以 4 结束（无人值守时
+    这是唯一能让调用方看见"它在等人"的方式）。
+    """
+    import sys, time
+    end = time.time() + (seconds or 900)
+    while time.time() < end:
+        try:
+            info = task.wait(poll=3, timeout=max(5, end - time.time()))
+        except TimeoutError:
+            break
+        if info.get("status") == "permission_request":
+            ev = info.get("event") or {}
+            rid = ev.get("requestId") or ev.get("id") or ""
+            what = ev.get("name") or ev.get("title") or ev.get("command") or ""
+            opts = ev.get("options") or []
+            if allow or deny:
+                opt = (opts[0] or {}).get("optionId") if opts else None
+                task.permission(rid, opt, deny=bool(deny))
+                continue
+            print("PENDING 任务 %s 在等审批：%s —— %s（放行加 --allow，拒绝加 --deny）"
+                  % (task.id, rid, str(what)[:120]), file=sys.stderr)
+            return 4
+        text = info.get("finalText") or info.get("lastText") or ""
+        if text:
+            print(text)
+        if info.get("status") not in ("running", "queued"):
+            return 0 if info.get("status") == "waiting" else 1
+    print("TIMEOUT 任务 %s 未在 %ss 内结束（当前状态见 deskport.py tasks）" % (task.id, seconds),
+          file=sys.stderr)
+    return 3
+
+
 if __name__ == "__main__":
     import argparse, sys
 
@@ -559,6 +595,21 @@ if __name__ == "__main__":
     p = sub.add_parser("run"); p.add_argument("command"); p.add_argument("-t", "--timeout", type=int, default=30)
     p = sub.add_parser("ls"); p.add_argument("path", nargs="?", default=".")
     p = sub.add_parser("cat"); p.add_argument("path")
+    p = sub.add_parser("task", help="建任务（把活派给托管的智能体）")
+    p.add_argument("prompt")
+    p.add_argument("-n", "--node", help="执行点（缺省 local）")
+    p.add_argument("-m", "--mode", default="default", help="default=危险操作等审批 / auto=全自动")
+    p.add_argument("--model", help="执行点支持的模型名（缺省用执行点默认）")
+    p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
+                   metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
+    p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
+    p.add_argument("--deny", action="store_true", help="卡在审批时拒绝，继续等")
+    p = sub.add_parser("tasks", help="列出任务（id / 状态 / 执行点 / 提示词首行）")
+    p = sub.add_parser("wait", help="等某个任务结束并打印最终回复")
+    p.add_argument("tid")
+    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--allow", action="store_true")
+    p.add_argument("--deny", action="store_true")
     a = ap.parse_args()
 
     def _unmangle(p):
@@ -589,6 +640,25 @@ if __name__ == "__main__":
             for h in dp.hosts():
                 print(f"{h['name']}\t{h['host']}:{h['port']}\t{h['id']}")
             sys.exit(0)
+        if a.cmd in ("task", "tasks", "wait"):
+            cfg = _load_config()
+            dp = Deskport(a.url or cfg.get("url"),
+                          insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
+                          cafile=cfg.get("cafile"))
+            if a.cmd == "tasks":
+                for t in dp.tasks()[:30]:
+                    line = (t.get("title") or t.get("prompt") or "").splitlines() or [""]
+                    print("%s  %-9s %-12s %s" % (t.get("id"), t.get("status") or "",
+                                                 t.get("node") or "local", line[0][:60]))
+                sys.exit(0)
+            if a.cmd == "task":
+                task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
+                                      cwd=_unmangle(a.cwd), model=a.model)
+                print(task.id)
+            else:
+                task = dp.task(a.tid)
+            sys.exit(_waitTask(task, a.wait if a.cmd == "task" else a.timeout,
+                               a.allow, a.deny))
         h = connect(a.node, a.url, a.insecure, a.cwd)
         if a.cmd == "run":
             r = h.run(a.command, timeout=a.timeout)
