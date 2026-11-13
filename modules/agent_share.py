@@ -12,7 +12,8 @@ exec / SFTP / 改配置的全权交给手机。本模块新增 share scope，只
         file    可重复 0..10（空 prompt 时至少 1 个）
         prompt  ≤4000 字（空且有文件 → 服务端补一句最小说明）
         taskId  可选；给了就是「接到这个任务」（追加一条消息）
-        node    可选；只接受本机（见下）
+        node    可选；缺省 local，其余交给 task_node.normalize
+        cwd     可选；远端执行点必填（该机器上的工作目录）
         model   可选
         mode    可选 default|auto（缺省 default = 逐项审批）
         organize 可选 none（默认）| folder：folder 时文件进新建文件夹，paths 给文件夹
@@ -26,15 +27,15 @@ exec / SFTP / 改配置的全权交给手机。本模块新增 share scope，只
       不许 .. / 绝对路径 / 分隔符），paths 给文件夹路径，prompt 末尾补
       「以上附件在 <folder> 目录下」；文件名冲突自动 (2)，绝不覆盖；
     - taskId 给了 → 走 tasks_api.deliverMessage（回合中排队，不另造通道）；
-    - 没给 → tasks_api.createTaskResponse 建任务（本机执行点，paths 带上）；
+    - 没给 → tasks_api.createTaskResponse 建任务（paths 带上）；
     - 令牌缺 share → 403 {"need":"share"}（full 视为含 share）；
     - 审计 agent.share（target=taskId, detail=文件数+prompt 长度）。
 
-执行点边界（2026-11-13 与主控确认）:
-    非本机执行点的任务在远端机器上跑，本机暂存区（_agent_tasks/_uploads/…）
-    在那边不存在，tasks_api 也会丢弃 paths——附件等于丢失。因此本通道只
-    接受本机执行点（node 缺省或 "local"）；远端投递需要另一条跨机文件通道，
-    不在本批范围，显式 400 而不是假装成功。
+执行点边界（2026-11-13 批次 B）:
+    远端执行点（agent node / 联邦成员）的附件由 task_inputs 投到该机器的
+    `<cwd>/.deskport-inputs/<taskId>/`，暂存区只作中转，投递成功即删；响应
+    paths 换成远端绝对路径。投递失败 → 任务不建/消息不投，不留远端残留。
+    远端需要 cwd；node 归一化交给 task_node。
 """
 import datetime
 import os
@@ -43,7 +44,8 @@ import shutil
 
 from flask import jsonify, request
 
-from modules import events, staging, tasks_api, tasks_store
+import config
+from modules import events, staging, task_inputs, task_node, tasks_api, tasks_store
 from modules.agent_api import SCOPE_SHARE, _agentRequired, blueprint
 
 MAX_FILES = 10
@@ -141,13 +143,30 @@ def _discard(paths, folder=''):
             pass
 
 
+def _deliverRemote(task, paths):
+    """接到远端任务时把本批附件投到该任务执行点；返回 (远端路径, 200) 或 (错误, code)。"""
+    try:
+        info = task_inputs.deliver(task_node.of(task), task_node.cwdOf(task),
+                                   task['id'], paths)
+    except task_inputs.DeliverError as e:
+        return {'error': str(e)}, e.status
+    return info['paths'], 200
+
+
 @blueprint.route('/api/agent/share/nodes')
 def shareNodes():
-    """执行点列表。只列本机：远端拿不到本机暂存区（见模块头注）。"""
+    """执行点列表：本机 + agent node + 联邦成员（附件由服务端投递过去）。"""
     agent, err = _agentRequired(SCOPE_SHARE)
     if agent is None:
         return err
-    return jsonify({'nodes': [_localNodeEntry()], 'default': 'local'})
+    from modules import agent_nodes
+    nodes = [_localNodeEntry()]
+    for item in list(config.getAgentNodes()) + list(config.getRemotes()):
+        models, defaultModel = agent_nodes.nodeModelsFor(item['name'], item)
+        nodes.append({'name': item['name'], 'label': item['name'],
+                      'status': 'unknown', 'models': list(models or []),
+                      'defaultModel': defaultModel or ''})
+    return jsonify({'nodes': nodes, 'default': 'local'})
 
 
 @blueprint.route('/api/agent/share/tasks')
@@ -185,11 +204,11 @@ def shareSubmit():
         _audit('agent.share', '', 'fail', 'mode=%s' % mode[:20])
         return jsonify({'error': 'mode 只能是 default / auto'}), 400
 
-    node = _text(request.form.get('node'))
-    if node and node != 'local':
-        _audit('agent.share', '', 'fail', 'node=%s' % node[:40])
-        return jsonify({'error': '暂不支持远端执行点：转发附件只在本机执行点可用',
-                        'nodes': ['local']}), 400
+    node = task_node.normalize(request.form.get('node'))
+    cwd = _text(request.form.get('cwd'))
+    if len(cwd) > 500:
+        _audit('agent.share', '', 'fail', 'cwd 过长')
+        return jsonify({'error': 'cwd 过长'}), 400
 
     model = _text(request.form.get('model'))
     if len(model) > 100:
@@ -275,9 +294,16 @@ def shareSubmit():
         detail += ' organize=folder'
 
     if task is not None:
+        if not task_node.isLocal(task_node.of(task)) and paths:
+            payload, code = _deliverRemote(task, paths)
+            if code >= 400:
+                _discard(stagedFiles, stagedFolder)
+                _audit('agent.share', taskId, 'fail', 'appended ' + detail)
+                return jsonify(payload), code
+            paths = payload
         basePrompt = prompt
         if stagedFolder:
-            basePrompt = _withFolderNote(prompt, folderName)
+            basePrompt = _withFolderNote(prompt, os.path.basename(paths[0]))
             if len(basePrompt) > MAX_PROMPT:
                 _discard(stagedFiles, stagedFolder)
                 _audit('agent.share', taskId, 'fail', 'prompt 加目录说明超长')
@@ -289,6 +315,8 @@ def shareSubmit():
             _discard(stagedFiles, stagedFolder)
             _audit('agent.share', taskId, 'fail', 'appended ' + detail)
             return jsonify(payload), code
+        if not task_node.isLocal(task_node.of(task)):
+            _discard(stagedFiles, stagedFolder)   # 本机暂存只是投递中转
         _audit('agent.share', taskId, 'ok', 'appended ' + detail)
         return jsonify({'taskId': taskId, 'mode': 'appended',
                         'paths': paths, 'prompt': text}), 200
@@ -301,7 +329,9 @@ def shareSubmit():
         _audit('agent.share', '', 'fail', 'prompt 加目录说明超长')
         return jsonify({'error': 'prompt 过长（加上文件夹说明超过 %d 字符）'
                                  % MAX_PROMPT}), 400
-    data = {'prompt': finalPrompt, 'paths': paths, 'mode': mode}
+    data = {'prompt': finalPrompt, 'paths': paths, 'mode': mode, 'node': node}
+    if cwd:
+        data['cwd'] = cwd
     if model:
         data['model'] = model
     payload, code = tasks_api.createTaskResponse(data)
@@ -310,6 +340,10 @@ def shareSubmit():
         _audit('agent.share', '', 'fail', 'created ' + detail)
         return jsonify(payload), code
     newId = (payload.get('task') or {}).get('id') or ''
+    finalPrompt = (payload.get('task') or {}).get('prompt') or finalPrompt
+    if not task_node.isLocal(node):
+        _discard(stagedFiles, stagedFolder)       # 本机暂存只是投递中转
+        paths = payload.get('paths') or paths
     _audit('agent.share', newId, 'ok', 'created ' + detail)
     return jsonify({'taskId': newId, 'mode': 'created',
                     'paths': paths, 'prompt': finalPrompt}), 200

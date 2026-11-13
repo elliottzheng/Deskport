@@ -110,8 +110,10 @@ Content-Type: multipart/form-data
 ```text
 GET  /api/agent/share/nodes     (scope=share)
 → {"nodes": [{"name": "local", "label": "本机", "status": "online",
-              "models": ["k2"], "defaultModel": "k2"}],
-   "default": "local"}
+              "models": ["k2"], "defaultModel": "k2"},
+             {"name": "ai-xmyz", "label": "ai-xmyz", "status": "unknown",
+              "models": [], "defaultModel": ""}],
+   "default": "local"}           本机 + agent node + 联邦成员
 
 GET  /api/agent/share/tasks     (scope=share)
 → {"tasks": [{"id": "abc123", "title": "把两份讲义合成周测卷",
@@ -122,7 +124,8 @@ POST /api/agent/share           (scope=share, multipart/form-data)
   file     可重复 0..10 个（prompt 为空时至少 1 个）
   prompt   ≤4000 字；空且有文件 → 服务端补一句最小说明
   taskId   可选；给了 = 接到这个任务（追加一条消息）
-  node     可选；只接受本机（缺省 local）
+  node     可选；缺省 local；也可填 agent node 或联邦成员
+  cwd      可选；远端执行点必填（该机器上的工作目录）
   model    可选；建新任务时的模型（须在该执行点的 models 里）
   mode     可选 default|auto（缺省 default = 逐项审批）
   organize 可选 none|folder（缺省 none）；folder = 新建文件夹装附件
@@ -143,14 +146,16 @@ POST /api/agent/share           (scope=share, multipart/form-data)
 - `taskId` 给了 → 追加消息正文 = `prompt` + `附件：\n- <path>`，走
   `/api/tasks/<id>/message` 的既有投递路径：任务在跑就进持久化队列
   （202 语义），空闲立即投递；任务不存在或已 `closed` → **409**；
-- 没给 → 新建任务（本机执行点），`paths` 带上，文件被复制进任务工作区
-  `inputs/`（folder 模式是整个文件夹复制过去），执行方直接可读；
+- 没给 → 新建任务：本机执行点把文件复制进任务工作区 `inputs/`（folder
+  模式是整个文件夹复制过去），执行方直接可读；
+- **远端执行点（批次 B）**：附件先投到该机器的
+  `<cwd>/.deskport-inputs/<taskId>/`，响应的 `paths` 换成远端绝对路径，
+  暂存区只作中转（投递成功后删除）。通道按执行点类型：agent node 经它
+  配置的 SSH 主机走 SFTP；联邦成员经成员的文件写端点（中枢
+  `remotes[].filesWrite` 与成员端 `federationRoots` 都要开）。任一文件
+  投递失败 → 任务不建、已投部分清掉；远端执行点没配 `cwd` → 400；
 - 令牌缺 `share` → `403 {"need": "share"}`（`full` 视为含 share）；
   无令牌 401；`prompt` 超长 / 文件数 >10 / 文件名不合法 / `mode` 非法 → 400；
-- **只支持本机执行点**：非本机执行点的任务在远端机器上跑，本机暂存区
-  在那边不存在，且任务 API 会丢弃本机 `paths`——附件等于丢失。因此
-  `node` 非 `local` 一律 400 `{"error", "nodes": ["local"]}`，不假装成功。
-  远端投递需要另一条跨机文件通道（未实现）；
 - 审计 `agent.share`：target = taskId，detail = 文件数 + prompt 长度。
 
 ## 设备登录（App 用网页密码换设备令牌）
@@ -294,7 +299,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
-| POST | /api/tasks | 建任务 → 202 `{prompt, node, cwd, mode, model, paths, attachments}`；`node` 缺省 `local`，`cwd` 缺省任务目录 |
+| POST | /api/tasks | 建任务 → 202 `{task, paths}`；入参 `{prompt, node, cwd, mode, model, paths, attachments}`，`node` 缺省 `local`，`cwd` 缺省任务目录 |
 | GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`cwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
 | GET | /api/tasks/<id>/events/stream?since=N | SSE 推送 |
@@ -388,6 +393,11 @@ DELETE /api/agent/ssh/sessions/<sid>
   `POST /api/tasks/files {"name": "报告.md", "contentB64": "..."}` →
   `{"path": "E:\\...\\报告.md"}`，把该 path 放进 `paths`；或建任务时直接带
   `attachments: [{name, contentB64}]`（单附件 32MB / 总量 500MB / ≤20 项）；
+- **非本机执行点的输入**：`paths` / `attachments` 不再丢弃，服务端投到
+  执行点机器的 `<cwd>/.deskport-inputs/<taskId>/`，任务 prompt 末尾补一行
+  「附件已投递到 <远端目录>」，响应 `paths` 是远端绝对路径。任一文件失败
+  → 任务不建（已投部分清掉）；投递前按上限先拒（413）；重名自动 `(2)`；
+  同一 taskId 重投不产生第二份目录。通道与开关见「转发文件 → 交给执行方」；
 - `permission_request` 事件带 `callId`、`args`（工具调用的参数原文）与
   `paths`（Edit/Write 的目标路径）；`paths` 来源是 ACP toolCall 的
   `content[].path`（实测 `type=diff` 的块带绝对路径）与 `locations[].path`——

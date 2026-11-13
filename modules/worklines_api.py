@@ -11,6 +11,7 @@ from modules import task_node, task_policy
 from modules import tasks_api
 from modules import tasks_store
 from modules import worklines_store
+from modules.task_wait import _parseWaitSeconds
 
 blueprint = Blueprint('worklines', __name__)
 
@@ -231,7 +232,7 @@ def worklineTask(wid):
         mode = 'steer' if (data.get('mode') or '').lower() == 'steer' else 'queue'
         payload, code = tasks_api.deliverMessage(
             task, prompt, mode,
-            tasks_api._parseWaitSeconds(data.get('wait')))
+            _parseWaitSeconds(data.get('wait')))
         payload['routed'] = 'queued' if route == 'queued' else 'message'
         payload['taskId'] = task['id']
         return jsonify(payload), code

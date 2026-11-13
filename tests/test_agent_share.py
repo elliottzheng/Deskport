@@ -238,13 +238,35 @@ def test_file_over_limit_413_no_partial(env, monkeypatch):
     assert stagedDirs(env) == []
 
 
-def test_remote_node_rejected_400(env):
-    resp = share(env, TOKEN_SHARE, files=[('e.txt', b'x')], prompt='x',
-                 node='ai-xmyz')
-    assert resp.status_code == 400
+def test_remote_node_uses_delivery_channel(env, monkeypatch):
+    """远端执行点不再 400：建任务前先投递，prompt 末尾补远端目录。"""
+    import modules.agent_nodes as nodesMod
+    monkeypatch.setattr(nodesMod, 'findNode',
+                        lambda name: {'name': name, 'via': 'h1'})
+    monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
+    from modules import task_inputs
+    seen = {}
+
+    def fakeDeliver(node, cwd, taskId, paths=(), attachments=()):
+        remote = cwd + '/.deskport-inputs/' + taskId
+        seen.update(node=node, cwd=cwd, paths=list(paths), dir=remote)
+        return {'dir': remote, 'paths': [remote + '/e.txt']}
+
+    monkeypatch.setattr(task_inputs, 'dirFor',
+                        lambda node, cwd, taskId:
+                        cwd + '/.deskport-inputs/' + taskId)
+    monkeypatch.setattr(task_inputs, 'deliver', fakeDeliver)
+    resp = share(env, TOKEN_SHARE, files=[('e.txt', b'x')], prompt='跑一下',
+                 node='ai-xmyz', cwd='/home/u/proj')
     body = resp.get_json()
-    assert body['nodes'] == ['local'] and '远端' in body['error']
-    assert stagedDirs(env) == []
+    assert resp.status_code == 200, body
+    assert seen['node'] == 'ai-xmyz' and seen['cwd'] == '/home/u/proj'
+    assert len(seen['paths']) == 1      # 暂存文件是本机中转
+    assert body['paths'] == [seen['dir'] + '/e.txt']
+    assert body['prompt'].endswith('附件已投递到 ' + seen['dir'])
+    task = env.repo.get(body['taskId'])
+    assert task['prompt'].endswith('附件已投递到 ' + seen['dir'])
+    assert stagedDirs(env) == []        # 投递后本地暂存不保留
 
 
 def test_invalid_mode_400(env):

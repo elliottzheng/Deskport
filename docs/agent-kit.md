@@ -95,7 +95,11 @@ python deskport.py cat /etc/hosts           # 远程取文件到 stdout（二进
 提前拒绝；`read` 整读上限 8 MB，超出自动分块；`create_task` 的 prompt 上限 4000 字符；
 `create_task` 用 `node` 指执行点（缺省 `local`）、`cwd` 指执行目录：本机是本机
 工作目录，非本机是该机器上的目录（必填）；任务目录/输入副本仍由 Deskport 的
-workspace 管。隧道偶尔截断大响应（幂等 GET 自动重试一次）。
+workspace 管。非本机任务的 `paths` / `attachments` 由服务端投到该机器的
+`<cwd>/.deskport-inputs/<taskId>/`（prompt 末尾写明目录），失败则不建任务；
+agent node 走它的 SSH 主机（`agentNodes[].via`），联邦成员要求中枢
+`remotes[].filesWrite` 与成员端 `federationRoots` 都开。隧道偶尔截断大响应
+（幂等 GET 自动重试一次）。
 
 ## 驱动模板：一条命令盯一个执行方
 
