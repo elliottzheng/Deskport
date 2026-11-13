@@ -3,7 +3,7 @@
     import deskport
     h = deskport.connect()                 # 读 .deskport.json 的 url/node/insecure
     print(h.sh("uptime"))                  # 返回 stdout，失败抛 CommandError
-    repo = h.cd("/srv/app")                # 绑定工作目录；相对路径都按它解析
+    repo = h.cd("E:/data")                 # 绑定工作目录（路径按目标机器的 OS：Windows E:/data，Linux /srv/app）；相对路径都按它解析
     print(repo.sh("git log --oneline -5"))
     print(repo.ls("."))
     repo.write("notes.txt", "hello"); print(repo.read_text("notes.txt"))

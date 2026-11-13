@@ -25,23 +25,23 @@
 
 ```bash
 D=<中枢地址>
-curl -s "$D/api/agent/skill.zip" -o deskport-skill.zip
+curl -s -k "$D/api/agent/skill.zip" -o deskport-skill.zip   # 公网入口是隧道方的自签证书：不加 -k 会 exit 60；内网 http 直连不需要 -k
 unzip -oq deskport-skill.zip -d ./deskport-skill/    # → ./deskport-skill/deskport/
 export DESKPORT_TOKEN=<部署者发你的令牌>              # 或写进 ./deskport-skill/deskport/.agent-token
 python ./deskport-skill/deskport/deskport.py hosts
 ```
 
 有令牌时也可走需令牌的整包 `GET /api/agent/skills/deskport/pack.zip`（附件与原文件字节一致）：
-`curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip`。
+`curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/pack.zip" -o pack.zip`。
 
 按文件拉（可选，便于只更新一个文件；`?raw=1` 直接落盘，`X-Skill-Sha256` 校验）：
 
 ```bash
 S=~/.kimi-code/skills/deskport; mkdir -p "$S"
-curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" \
+curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
 for f in deskport.py driver.py COLLABORATION.md; do
-  curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
+  curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
 # 清单与版本：GET /api/agent/skills（含 files / pack / sha256）
 ```
@@ -73,7 +73,7 @@ import deskport
 
 h = deskport.connect()              # 用 .deskport.json 里的 node（例：远端执行机；旧键 host 仍读）
 print(h.sh("uptime"))               # 返回 stdout，非零退出抛 CommandError
-repo = h.cd("/srv/app")             # 绑定工作目录，之后相对路径都按它解析
+repo = h.cd("E:/data")              # 绑定工作目录（路径按目标机器的 OS：Windows E:/data，Linux /srv/app），之后相对路径都按它解析
 print(repo.sh("git log --oneline -5"))
 repo.write("notes.txt", "hello")
 

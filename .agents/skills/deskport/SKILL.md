@@ -10,7 +10,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 
 ## 速查
 
-- API base: `{{BASE}}`（部署 Deskport 的地址；本机部署即 `http://127.0.0.1:6789`，外网走部署者配的 HTTPS 隧道地址）
+- API base: `{{BASE}}`（按本次下载渲染的真实入口：内网 http 直连，或部署者配的 HTTPS 隧道地址）
 - 技能版本: `{{VERSION}}`
 - 认证: `X-Agent-Token: <令牌>`；每个智能体应单独签发令牌（审计按令牌名留痕）
 - 主机: `GET /api/agent/hosts` 列出（SSH 主机 + 本机 `local`，本机带 os/defaultShell/shells）
@@ -36,7 +36,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 
 ```bash
 D={{BASE}}
-curl -s "$D/api/agent/skill.zip" -o deskport-skill.zip
+curl -s -k "$D/api/agent/skill.zip" -o deskport-skill.zip   # 公网入口是隧道方的自签证书：不加 -k 会 exit 60；内网 http 直连不需要 -k
 unzip -oq deskport-skill.zip -d ./deskport-skill/    # → ./deskport-skill/deskport/
 export DESKPORT_TOKEN=<部署者发你的令牌>              # 或写进 ./deskport-skill/deskport/.agent-token
 python ./deskport-skill/deskport/deskport.py hosts   # 验一下
@@ -49,11 +49,17 @@ python ./deskport-skill/deskport/deskport.py hosts   # 验一下
 ```bash
 S=./deskport-skill/deskport; mkdir -p "$S"
 T=<部署者发你的令牌>
-curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
+curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
 for f in deskport.py driver.py COLLABORATION.md; do
-  curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
+  curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
 ```
+
+证书（只影响公网入口）：隧道方用的是自签证书，`curl` 不加 `-k` 会直接 exit 60；
+`deskport.py` 不开校验绕过则会抛 `CERTIFICATE_VERIFY_FAILED`。公网用时把
+`"insecure": true` 写进 `.deskport.json`，或 `connect(cafile=<部署者给你的证书文件>)`
+（只信任这一张，比全局跳过校验更稳；CLI 等价于 `-k`）；内网 http 直连没有这个问题。
+只在确认连的就是自己的 Deskport 时才跳过校验——对别的地址别顺手 `-k`。
 
 客户端与驱动只用标准库（Python ≥ 3.9）。驱动默认读自己目录的 `driver.json`，
 `DRIVER_CONFIG` 可指到别处，别名目录在脚本目录的 `run/<别名>/` 下。
