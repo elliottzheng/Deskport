@@ -84,6 +84,13 @@ Content-Type: multipart/form-data
   `GET /api/agent/upload/targets`（scope=upload）→
   `{targets: [{id, name}], default: "phone"}`，登录响应的 `targets`
   同样只含 id+name；
+- **联邦成员也能调用这两个端点**（批次 E）：中枢把自己的 `remotes[]` 令牌
+  放进 `X-Deskport-Token`，成员端认这个身份只为「只上传到成员机的收件箱」
+  服务——`GET /api/agent/upload/targets` 回成员自己声明的 id/name（同样没有
+  path），`POST /api/agent/upload` 由成员把 target id 映射成目录。调用方
+  没有任何办法指定绝对路径，所以这条通道不额外要求 `federationRoots`；
+  审计 `agent.upload` 的 target 字段记为 `联邦:<来源>`。中枢侧的授权门
+  `upload_remote` 与页面行为见 [m-share.md](m-share.md)；
 - `saved[].path` = 目标名/相对路径（如 `教研资料/11月/a.pdf`），不暴露
   服务器上的绝对路径；
 - 目标目录自动创建；phone 目标的目录自动并入 `inboxDirs`，上传即出现
@@ -108,6 +115,11 @@ Content-Type: multipart/form-data
 手机从任何 App 分享文件过来时，顺手写一句「要怎么处理」，直接开一个新任务，
 或接到正在进行的任务上。手机令牌不需要 `full`——`share` 只放行这一件事。
 网页分享表单（App 打开 `/m/share?ticket=…`）与暂存票据语义见 [m-share.md](m-share.md)。
+
+「只上传」还有第二个轴：**机器 + 该机器的上传目标**（批次 E）。网页入口
+`GET /api/share/targets` 聚合本机与各远端自己声明的目标（只含 id/name），
+`POST /api/share/submit` 的 `way=upload` 带 `node`/`target` 时把文件送到
+那台机器的收件箱；远端仍要求签发该票据的令牌带 `upload_remote`。
 
 ```text
 GET  /api/agent/share/nodes     (scope=share)

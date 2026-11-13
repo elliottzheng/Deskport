@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""网页分享表单 — `/m/share` 的暂存票据与 Cookie 会话提交（批次 D）。
+"""网页分享表单 — `/m/share` 的暂存票据与 Cookie 会话提交（批次 D/E）。
 
 端点:
     POST /api/agent/share/stage     (scope=share, multipart) 原生交文件换 ticket
@@ -8,9 +8,10 @@
     GET  /api/share/stage/<ticket>  (Cookie) 读这批文件元信息（不消费）
     GET  /api/share/nodes           (Cookie) 执行点列表（页面用）
     GET  /api/share/tasks           (Cookie) 可接任务列表（页面用）
+    GET  /api/share/targets         (Cookie) 只上传的「机器 + 目标」列表
     POST /api/share/submit          (Cookie) 三选一提交
-        {ticket, way:"upload"|"new"|"append", prompt, node?, taskId?,
-         model?, mode?, organize?, folderName?, subdir?}
+        {ticket, way:"upload"|"new"|"append", prompt, node?, target?,
+         taskId?, model?, mode?, organize?, folderName?, subdir?}
 
 ticket 语义（规格：内存、TTL 300s、一次性、只绑定这批文件）:
     - 不是凭证：泄漏最坏结果是别人多建一个任务（还要先有 Cookie 会话）；
@@ -21,6 +22,11 @@ ticket 语义（规格：内存、TTL 300s、一次性、只绑定这批文件�
 
 提交逻辑复用 modules/share_core.py（三个去处、organize=folder 语义逐字不变），
 只是入口从 X-Agent-Token 换成 Cookie 会话；原生侧仍用设备令牌调 stage。
+
+批次 E：`way=upload` 多了机器轴。`node=local` 仍是原来的本机落盘（目标可
+选，缺省 phone）；`node=远端` 交给 share_targets 送到成员机，落点由成员
+自己的 uploadTargets 解析。远端上传按**签发这张票据的令牌**判断
+`upload_remote`：设备令牌没勾选就 403，Cookie 本人也绕不过去。
 """
 import os
 import secrets
@@ -31,9 +37,11 @@ import uuid
 
 from flask import jsonify, request
 
-from modules import (agent_upload, events, fsutil, share_core, staging,
-                     tasks_store)
-from modules.agent_api import SCOPE_SHARE, _agentRequired, blueprint
+import config
+from modules import (agent_upload, events, fsutil, share_core, share_targets,
+                     staging, task_node, tasks_store)
+from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD_REMOTE, agentHasScope,
+                               _agentRequired, blueprint)
 
 TICKET_TTL = 300
 WAYS = ('upload', 'new', 'append')
@@ -165,7 +173,8 @@ def shareStage():
     ticket = secrets.token_hex(16)
     expiresAt = time.time() + TICKET_TTL
     rec = {'ticket': ticket, 'batch': batch, 'files': files, 'prompt': prompt,
-           'expiresAt': expiresAt, 'busy': False}
+           'expiresAt': expiresAt, 'busy': False,
+           'remote': agentHasScope(agent, SCOPE_UPLOAD_REMOTE)}
     with _lock:
         _tickets[ticket] = rec
     events.log('share.stage', ticket[:8], 'ok',
@@ -194,6 +203,12 @@ def shareNodesWeb():
 @blueprint.route('/api/share/tasks')
 def shareTasksWeb():
     return jsonify(share_core.tasksPayload())
+
+
+@blueprint.route('/api/share/targets')
+def shareTargetsWeb():
+    """只上传的机器+目标：本机来自 config，远端由那台机器自己声明。"""
+    return jsonify(share_targets.targetsPayload())
 
 
 # ---------------------------------------------------------------- 提交
@@ -229,22 +244,36 @@ def shareWebSubmit():
             _removeDir(rec['batch'])
         return jsonify(payload), code
     _consume(rec)
+    detail = 'way=%s' % way
+    if way == 'upload':
+        detail += ' node=%s target=%s' % (payload.get('node') or 'local',
+                                          payload.get('target') or '')
     events.log('share.submit', (payload.get('taskId') or '')[:16], 'ok',
-               'way=%s' % way, request.remote_addr)
+               detail, request.remote_addr)
     return jsonify(payload), code
 
 
 def _upload(rec, data):
-    """只上传：搬进 uploadTargets（缺省 phone）的 subdir，subdir 复用
-    /api/agent/upload 的校验。"""
+    """只上传：本机落盘或送到远端机器；subdir 复用 /api/agent/upload 校验。"""
     if not rec['files']:
         return {'error': '只上传需要至少一个文件'}, 400
     subdir = agent_upload._safeSubdir(data.get('subdir'))
     if subdir is None:
         return {'error': 'subdir 不合法（需相对路径，不能含 .. / 盘符 /'
                          '非法字符）'}, 400
-    target = agent_upload._resolveTarget('')
-    if target is None or not target.get('path'):
+    node = task_node.normalize(data.get('node'))
+    if task_node.isLocal(node):
+        return _uploadLocal(rec, data, subdir)
+    return _uploadRemote(rec, node, data, subdir)
+
+
+def _uploadLocal(rec, data, subdir):
+    """本机：搬进 uploadTargets（缺省 phone）的 subdir，行为与批次 D 一致。"""
+    target = agent_upload._resolveTarget(data.get('target'))
+    if target is None:
+        return {'error': '上传目标不存在',
+                'targets': agent_upload.publicTargets()}, 400
+    if not target.get('path'):
         return {'error': '上传目标目录未配置（phoneUploadDir / fallbackDir'
                          ' 均缺失）'}, 500
     root = target['path']
@@ -267,10 +296,49 @@ def _upload(rec, data):
         uploaded.append({'path': '/'.join(relParts), 'size': item['size']})
     if not failed:
         _removeDir(rec['batch'])
-    body = {'ok': not failed, 'uploaded': uploaded}
+    body = {'ok': not failed, 'uploaded': uploaded, 'node': 'local',
+            'target': target['id']}
     if failed:
         body['failed'] = failed
     return body, 200 if uploaded else 500
+
+
+def _uploadRemote(rec, node, data, subdir):
+    """远端：成员机自己把 target id 解析成目录；中枢只看得到相对路径。
+
+    `upload_remote` 按**签发票据的令牌**判断（stage 时记下），因此没勾选
+    远端上传的设备令牌即使主人在网页上提交也发不出去。
+    """
+    if not rec.get('remote'):
+        return {'error': '向远端机器上传需要 upload_remote 权限',
+                'need': SCOPE_UPLOAD_REMOTE}, 403
+    target = share_core._text(data.get('target')) \
+        or config.UPLOAD_TARGET_BUILTIN_ID
+    try:
+        rows, online = share_targets.remoteTargets(node)
+        if not online:
+            return {'error': '机器 %s 暂时连不上，文件没有上传' % node}, 502
+        if target not in [row['id'] for row in rows]:
+            return {'error': '成员机 %s 上没有这个上传目标（%s）'
+                             % (node, target)}, 400
+        body = share_targets.sendFiles(node, target, subdir,
+                                       [item['path'] for item in rec['files']])
+    except share_targets.TargetError as e:
+        return {'error': str(e)}, e.status
+
+    uploaded = [{'path': share_targets._scrub(item.get('path')),
+                 'size': int(item.get('size') or 0)}
+                for item in body.get('saved') or [] if isinstance(item, dict)]
+    failed = [{'name': str(item.get('name') or ''),
+               'error': share_targets._scrub(item.get('error'))}
+              for item in body.get('failed') or [] if isinstance(item, dict)]
+    if uploaded:
+        _removeDir(rec['batch'])
+    out = {'ok': not failed and bool(uploaded), 'uploaded': uploaded,
+           'node': node, 'target': target}
+    if failed:
+        out['failed'] = failed
+    return out, 200 if uploaded else 502
 
 
 def _delegate(rec, data, way):
