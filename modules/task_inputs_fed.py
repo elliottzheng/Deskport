@@ -70,6 +70,14 @@ class FedTarget:
     def join(self, *parts):
         return self.pm.join(*[str(p) for p in parts if str(p)])
 
+    def realpath(self, path):
+        """成员侧没有 realpath 端点：只能按成员声明的路径语义词法归一化。
+
+        软链解析只有成员自己的文件系统能做到（它写文件时同样受
+        federationRoots 约束）；这里是根复核的尽力而为版。
+        """
+        return self.pm.normpath(path)
+
     # ---- 远端探测 ----
     def _names(self, directory):
         """目录下一层名字（小写集合）；目录不存在返回 None。按目录缓存。"""

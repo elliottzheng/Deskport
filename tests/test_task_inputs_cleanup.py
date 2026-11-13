@@ -41,6 +41,9 @@ class _StubTarget(object):
     def isdir(self, path):
         return os.path.normcase(path) == os.path.normcase(self.root)
 
+    def realpath(self, path):
+        return os.path.normpath(path)
+
     def ensureDir(self, path):
         return True
 

@@ -61,6 +61,17 @@ class SshTarget:
         except IOError:
             return False
 
+    def realpath(self, path):
+        """对端 fs 上的真实路径（解析软链；SFTP realpath 扩展）。
+
+        服务端不支持该扩展时 paramiko 退化为词法归一化；异常按原值返回，
+        由调用方按目标 OS 的 pm 做词法校验（根复核的最低保证）。
+        """
+        try:
+            return self.sftp.normalize(path)
+        except Exception:
+            return path
+
     def exists(self, path):
         try:
             self.sftp.stat(path)

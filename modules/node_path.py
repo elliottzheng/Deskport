@@ -14,7 +14,9 @@
       保持向后兼容，不替对端猜；
     - os 只是声明，不据此放宽任何权限（投递仍受 federationRoots 等约束）；
     - cwd 只查语法（盘符 / UNC / 根斜杠），不查存在性：远端目录在不在，
-      执行点自己答，hub 探不到对端的盘。
+      执行点自己答，hub 探不到对端的盘；
+    - cwdRoots（批次 B3）= 执行点自报的允许根。非空时 cwd 必须落在某个根
+      之下（按目标 OS 的路径语义比）；空数组 = 未知，沿用只查语法。
 """
 import os
 import platform
@@ -93,6 +95,22 @@ def _localEntry():
     return localHostEntry()
 
 
+def _resolveName(name):
+    """执行点名 → 平台缓存键：联邦成员按 config 条目解析到它的 name。
+
+    调用方可以传成员的 id 或 name（findFederationMember 两种都认），而
+    /health 与成员 nodes 列表的上报按 name 存进缓存——读之前先归一。
+    """
+    from modules import agent_nodes, task_node
+    wanted = str(name or '').strip()
+    if task_node.isLocal(wanted):
+        return wanted
+    member = agent_nodes.findFederationMember(wanted)
+    if member is not None:
+        return member.get('name') or wanted
+    return wanted
+
+
 def nodeOs(name):
     """执行点的 OS 声明；'' = 未知（cwd 不校验的那个向后兼容态）。
 
@@ -100,24 +118,19 @@ def nodeOs(name):
     = 它自己上报（agent_nodes._refreshHealthModels 拉进缓存），没报到就是
     未知——老 node / 老成员照常放行。
     """
-    from modules import agent_nodes, task_node
-    wanted = str(name or '').strip()
-    if task_node.isLocal(wanted):
+    from modules import task_node
+    if task_node.isLocal(name):
         return normOs(_localEntry().get('os'))
-    member = agent_nodes.findFederationMember(wanted)
-    if member is not None:
-        wanted = member.get('name') or wanted
-    return normOs(_cachedPlatform(wanted).get('os'))
+    return normOs(_cachedPlatform(_resolveName(name)).get('os'))
 
 
 def nodeShells(name):
     """执行点声明的 shell 清单（未知 = 空列表）。"""
     from modules import task_node
-    wanted = str(name or '').strip()
-    if task_node.isLocal(wanted):
+    if task_node.isLocal(name):
         entry = _localEntry()
         return [str(s) for s in entry.get('shells') or []]
-    return [str(s) for s in _cachedPlatform(wanted).get('shells') or []]
+    return [str(s) for s in _cachedPlatform(_resolveName(name)).get('shells') or []]
 
 
 def nodeDefaultCwd(name):
@@ -127,38 +140,69 @@ def nodeDefaultCwd(name):
     这些根之下）；远端取它自己的上报。
     """
     from modules import task_node
-    wanted = str(name or '').strip()
-    if task_node.isLocal(wanted):
+    if task_node.isLocal(name):
         import config
         dirs = config.getWorkDirs()
         if dirs:
             return dirs[0]
         return config.getFallbackDir() or ''
-    return str(_cachedPlatform(wanted).get('defaultCwd') or '')
+    return str(_cachedPlatform(_resolveName(name)).get('defaultCwd') or '')
+
+
+def localCwdRoots():
+    """本机执行点声明的允许根（config.workDirs + fallbackDir，去空去重）。
+
+    与 task_cwd.resolve 同一口径（本机 cwd 的越界判定就在这里）；顺序 =
+    声明顺序，重复项只留第一个。
+    """
+    import config
+    roots = []
+    for item in list(config.getWorkDirs()) + [config.getFallbackDir()]:
+        text = str(item or '').strip()
+        if text and text not in roots:
+            roots.append(text)
+    return roots
+
+
+def nodeCwdRoots(name):
+    """执行点声明的允许根（字符串数组）；[] = 未知（不校验，只查语法）。
+
+    local 取本机 config；agent node / 联邦成员取它自己上报（health 缓存，
+    经 platformEntry 归一）。
+    """
+    from modules import task_node
+    if task_node.isLocal(name):
+        return localCwdRoots()
+    return [str(r) for r in _cachedPlatform(_resolveName(name)).get('cwdRoots') or []]
 
 
 def nodePlatform(name):
-    """执行点平台声明 {os, shells, defaultCwd}（defaultCwd 可能为空串）。"""
+    """执行点平台声明 {os, shells, defaultCwd, cwdRoots}（后两者可能为空）。"""
     return {'os': nodeOs(name), 'shells': nodeShells(name),
-            'defaultCwd': nodeDefaultCwd(name)}
+            'defaultCwd': nodeDefaultCwd(name), 'cwdRoots': nodeCwdRoots(name)}
 
 
 def platformEntry(data):
     """node /health 与成员 /api/tasks/nodes 上报 → health 缓存条目。
 
     两边字段同名（models / defaultModel / modelStatus / usableModels），
-    平台三件套（os / shells / defaultCwd）也走同一套键——agent_nodes
-    的刷新线程把两类上报存进同一个缓存，nodeOs/nodeShells 直接读。
+    平台三件套（os / shells / defaultCwd）与允许根 cwdRoots 也走同一套键
+    ——agent_nodes 的刷新线程把两类上报存进同一个缓存，nodeOs/nodeShells/
+    nodeCwdRoots 直接读。
     """
     data = data if isinstance(data, dict) else {}
     cwd = data.get('defaultCwd')
+    roots = data.get('cwdRoots')
     return {'models': data.get('models') or [],
             'default': data.get('defaultModel') or '',
             'modelStatus': data.get('modelStatus') or {},
             'usableModels': data.get('usableModels') or [],
             'os': normOs(data.get('os')),
             'shells': [str(s) for s in data.get('shells') or []],
-            'defaultCwd': cwd if isinstance(cwd, str) else ''}
+            'defaultCwd': cwd if isinstance(cwd, str) else '',
+            'cwdRoots': ([str(r) for r in roots
+                          if r is not None and str(r).strip()]
+                         if isinstance(roots, list) else [])}
 
 
 # ---------------------------------------------------------------- cwd 校验
@@ -185,3 +229,40 @@ def cwdError(nodeName, cwd):
     return ('执行点 %s 是 %s，cwd 必须是以 / 开头的绝对路径'
             '（如 /home/me/project 或 /srv/app），你给的是 %s'
             % (nodeName, osName, text))
+
+
+def _underRoot(pm, path, root):
+    """path 是否在 root 之下（按目标 OS 的 normcase/normpath 比）。
+
+    Windows 大小写不敏感（C:\\WORK\\a 命中 C:\\work）；POSIX 敏感。
+    根自身算命中；前缀必须落在目录边界上（C:\\work 不命中 C:\\workx）。
+    """
+    p = pm.normcase(pm.normpath(str(path)))
+    r = pm.normcase(pm.normpath(str(root)))
+    if p == r:
+        return True
+    prefix = r if r.endswith(pm.sep) else r + pm.sep
+    return p.startswith(prefix)
+
+
+def cwdRootsError(nodeName, cwd, realpath=None):
+    """cwd 是否落在执行点声明的允许根之下；None = 通过。
+
+    cwdRoots 为空（老 node / 老成员没上报）= 未知，不校验——与 cwdError
+    的向后兼容语义一致，两者叠加。本机执行点不走这里（task_cwd.resolve
+    管本机路径的存在性与越界）。
+
+    realpath: 可选的解析函数（投递时由通道给出对端 fs 上的真实路径）——
+    建卡时只做词法比较，投递前再按 realpath 复核一次，防建卡后目录被换成
+    软链的 TOCTOU（hub 探不到对端的盘，软链只有对端能解）。
+    """
+    roots = nodeCwdRoots(nodeName)
+    text = str(cwd or '').strip()
+    if not roots or not text:
+        return None
+    pm = pathModule(nodeOs(nodeName), os.path)
+    resolved = str(realpath(text) if realpath else text) or text
+    if any(_underRoot(pm, resolved, root) for root in roots):
+        return None
+    return ('cwd %s 不在执行点 %s 允许的根下（允许：%s）'
+            % (text, nodeName, ', '.join(roots)))
