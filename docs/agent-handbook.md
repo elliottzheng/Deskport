@@ -15,10 +15,10 @@ Deskport 是一台电脑上的远程执行与任务托管服务：你可以让�
 公网入口（HTTPS 隧道）用的是隧道方的自签名证书，系统信任库里没有它——不处理会报证书错误（`curl` 退出码 60）。三种连法：
 
 - `curl` 加 `-k`：`curl -k https://<入口>/api/agent/handbook`；
-- `deskport.py`：`.deskport.json` 里写 `"insecure": true`，或用 `"cafile"` 指向部署者给你的证书文件（只信任这一张，比全局跳过校验更稳）；
+- `deskport.py`：`.deskport.json` 里写 `"insecure": true`，或用 `"cafile"` 指向部署者给你的证书文件（只信任这一张，比全局跳过校验更稳）；两样都不配会抛 `CERTIFICATE_VERIFY_FAILED`；
 - 局域网直连是纯 HTTP，没有这个问题，也不需要 `-k`。
 
-这只在你确认连的就是自己的 Deskport 时才可接受；对别的地址别顺手 `-k`。
+这只在你确认连的就是自己的 Deskport 时才可接受；对别的地址别顺手 `-k`。下面无需令牌的下载示例都按公网入口写、带 `-k`；带令牌的示例同理，内网 http 直连时 `-k` 可去掉。
 
 ## 最短路径
 
@@ -41,7 +41,7 @@ T=<部署者发你的令牌>
 **想一条命令拿全？** 整包 zip 把技能手册、客户端、驱动模板、协作原则和现成的 `.deskport.json` 打在一起（公开，无需令牌）：
 
 ```bash
-curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip
+curl -s -k $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip   # 公网入口自签证书要 -k；内网 http 不需要
 ```
 
 解开得到 `deskport/` 目录，`SKILL.md` 里的地址按本次下载填入。**包里 `SKILL.md` 与 `COLLABORATION.md` 是必读**（不是"需要时再读"）：前者是完整用法，后者讲主控与执行方怎么分工、派活、验收。要当 Kimi 技能用就解到技能目录：`unzip -oq deskport-skill.zip -d ~/.kimi-code/skills/`。
@@ -55,7 +55,7 @@ curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill
 一个 Python 文件、只用标准库，下载即可用：
 
 ```bash
-curl -s $D/api/agent/tools/deskport.py -o deskport.py
+curl -s -k $D/api/agent/tools/deskport.py -o deskport.py
 ```
 
 最快三行：
@@ -63,7 +63,7 @@ curl -s $D/api/agent/tools/deskport.py -o deskport.py
 ```python
 import deskport
 h = deskport.connect()   # 地址与令牌：同目录 .deskport.json，或 DESKPORT_URL / DESKPORT_NODE / DESKPORT_TOKEN
-print(h.sh("uptime"))    # 失败抛 CommandError；h.cd("/srv/app") 绑定工作目录后再发命令
+print(h.sh("uptime"))    # 失败抛 CommandError；h.cd("E:/data") 绑定工作目录（Linux 换成 "/srv/app"）后再发命令
 ```
 
 也能当 CLI：
@@ -80,7 +80,7 @@ python deskport.py run "uptime"
 适用场景：**持续驱动一个托管智能体干活**——别名目录、边界内自动放行、越界停下等人、本轮忙碌时消息排队（结束后自动补发）。
 
 ```bash
-curl -s $D/api/agent/tools/driver.py -o driver.py
+curl -s -k $D/api/agent/tools/driver.py -o driver.py
 ```
 
 诚实声明：它假定执行方是 **Kimi Code**——`new <kimi会话id>` 接手已有会话、`/compact` 压缩上下文都是 Kimi 侧的能力；执行方不是 Kimi 时请用第 1 或第 2 级。用法一行：`driver.py <别名> [y|n|c|m|new <会话id>|st]`，边界写在 `driver.json`。
@@ -88,15 +88,16 @@ curl -s $D/api/agent/tools/driver.py -o driver.py
 `COLLABORATION.md` 讲主控怎么分工与验收——**必读**（真去指挥别的智能体之前先读一遍）：
 
 ```bash
-curl -s $D/api/agent/tools/COLLABORATION.md -o COLLABORATION.md
+curl -s -k $D/api/agent/tools/COLLABORATION.md -o COLLABORATION.md
 ```
 
 ## 端点
 
 ### 执行点：GET /api/tasks/nodes
 
-返回 `{"nodes": [{"name", "via", "kind", "models", "defaultModel", "modelSelectable"}]}`。
+返回 `{"nodes": [{"name", "via", "kind", "models", "defaultModel", "modelSelectable", "os", "shells", "cwdRoots", "defaultCwd"}]}`。
 `name` 就是建任务时 `node` 的取值；`local` 是本机。`models` 可选模型由执行点上报。
+`os`（`windows` / `linux` / `darwin`，未知时缺省）与 `shells` 同样由执行点自报——**路径和 shell 按它选**（见「执行命令」开头），`cwdRoots` 是执行点声明的允许根。
 
 ```bash
 curl -s -H "X-Agent-Token: $T" "$D/api/tasks/nodes"
@@ -107,12 +108,13 @@ curl -s -H "X-Agent-Token: $T" "$D/api/tasks/nodes"
 ```bash
 curl -s -X POST "$D/api/tasks" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"prompt": "修掉 tests/ 里的 3 个失败用例", "node": "local", "cwd": "/srv/app", "mode": "auto"}'
+  -d '{"prompt": "修掉 tests/ 里的 3 个失败用例", "node": "local", "cwd": "E:/data", "mode": "auto"}'
+# Linux 执行点：cwd 换成 "/srv/app"
 ```
 
 - `prompt` 必填，上限 4000 字符。
 - `node` 是执行点（去哪台机器），缺省 `local`；`cwd` 是执行目录，缺省由服务端分配的任务目录。
-- `cwd` 是执行目录：本机是可写的项目目录（路径按执行点的平台书写，Windows 上用正斜杠，如 `E:/work/project`）；非本机执行点必填，目录须存在于那台机器，且必须在执行点声明的允许根（`GET /api/tasks/nodes` 的 `cwdRoots`，空数组=未知不校验）之内，越界 → 400。
+- `cwd` 是执行目录，**按执行点所在机器的 OS 书写**（Windows 用 `E:/data` 这样的盘符路径、正斜杠就能用；Linux 用 `/srv/app`；判断方法见「执行命令」开头）：本机是可写的项目目录；非本机执行点必填，目录须存在于那台机器，且必须在执行点声明的允许根（`GET /api/tasks/nodes` 的 `cwdRoots`，空数组=未知不校验）之内，越界 → 400。
 - `mode` 不传 = 逐项审批（安全默认）；要自动批准显式传 `"mode": "auto"`。
 - `model` 可选，取值见执行点的 `models`。
 - `paths` 可选：`["/绝对路径/a.pdf"]`，把本机已有文件带进任务；`attachments` 直接内联 `[{name, contentB64}]`。
@@ -174,45 +176,62 @@ curl -s -X POST -H "X-Agent-Token: $T" "$D/api/tasks/<id>/close"
 
 明确结束任务并回收执行进程；幂等，返回 `{"ok": true, "status": "..."}`。
 
+### 主机清单：GET /api/agent/hosts
+
+```bash
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/hosts"
+```
+
+返回 `{"hosts": [...]}`。每条 SSH 主机只有 `{id, name, host, port}`（不含凭据）；`local`（本机）条目额外带 `os` / `shells` / `defaultShell`：`os` 是 `windows` / `linux` / `darwin`，`shells` 列出这台机器支持哪些 shell（Windows 上是 `bash` / `powershell` / `pwsh`），本机 `ssh/exec` 的 `shell` 参数从里面挑（缺省 `defaultShell`）。远端 SSH 主机不带 `os`——路径按那台机器的实际系统写，拿不准先跑一条 `uname -s` 探。
+
 ### 执行命令：POST /api/agent/ssh/exec
 
 单发、无状态（`cd` 不延续）；需要多步状态用任务的 `cwd`，或反复带 `cwd`。
 
+> **路径按目标机器的 OS 写**：先 `GET /api/agent/hosts`（本机条目）或 `GET /api/tasks/nodes`（agent node / 联邦成员）看 `os` 字段——`windows` / `linux` / `darwin`，未知时缺省。Windows 用 `E:/data`（正斜杠就能用），Linux 用 `/srv/app`。写错风格的路径，命令还没执行就死在 `cd: No such file or directory`。
+
 ```bash
+# Windows 本机（E:/data 换成你的目录）
 curl -s -X POST "$D/api/agent/ssh/exec" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"node": "local", "command": "uname -a", "timeoutSec": 30, "cwd": "/srv/app"}'
+  -d '{"node": "local", "command": "uname -a", "timeoutSec": 30, "cwd": "E:/data"}'
+# Linux 执行点：cwd 换成 "/srv/app"，command 按那台机器的 shell 写
 ```
 
 - `node` 取 `local`（本机）或 `GET $D/api/agent/hosts` 里的主机名；缺省 `local`。
 - `node` 与 `host` 同义：`host` 是旧名，仍接受，但请用 `node`；两个都给且不同 → 400。
+- `cwd` 按目标机器的 OS 书写（见上）；目录不存在时命令直接失败，响应原样回显该路径。
+- 本机执行点可带 `shell`：`bash` / `powershell` / `pwsh`，从 `GET /api/agent/hosts` 里 `local` 条目的 `shells` 挑，缺省 `defaultShell`（本机即 `bash`）。
 - `timeoutSec` 1–600；输出上限 2 MiB；命令不允许含 NUL。
-- 响应：`{"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 123, "node": "local", "host": "local"}`。
+- 响应：`{"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 123, "node": "local", "host": "local"}`；本机执行点另回 `shell` 与 `cwd`。
 - 超时返回 `exit: null`、`reason: "timeout"`（被超时杀掉的进程可能仍有 `pid`）。
 
 ### 文件：POST /api/agent/sftp/{list,get,put}
 
+> **路径同样按目标机器的 OS 写**（`os` 怎么查见「主机清单」）：Windows 用 `E:/data`，Linux 用 `/srv/app`；`path` 是文件或目录的绝对路径。
+
 ```bash
-# 列目录
+# 列目录（Windows 本机）
 curl -s -X POST "$D/api/agent/sftp/list" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"node": "local", "path": "/srv/app"}'
+  -d '{"node": "local", "path": "E:/data"}'
+# Linux 执行点：path 换成 "/srv/app"
 
 # 读文件（offset/length 分块；整读上限 8 MB）
 curl -s -X POST "$D/api/agent/sftp/get" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"node": "local", "path": "/srv/app/app.py", "offset": 0, "length": 65536}'
+  -d '{"node": "local", "path": "E:/data/notes.txt", "offset": 0, "length": 65536}'
 
-# 写文件（严格校验 base64；可选 sha256；原子落盘）
+# 写文件（严格校验 base64；原子落盘；mkdirs 自动建父目录）
 curl -s -X POST "$D/api/agent/sftp/put" \
   -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
-  -d '{"node": "local", "path": "/srv/app/notes.txt", "contentB64": "aGVsbG8=", "sha256": "<可选>"}'
+  -d '{"node": "local", "path": "E:/data/notes.txt", "contentB64": "aGVsbG8=", "mkdirs": true}'
 ```
 
 - 指代机器的参数一律用 `node`（缺省 `local`）；`host` 是旧名，仍接受。
 - `list` → `{"path", "entries": [{"name", "path", "size", "mtime", "dir", "type", "mode", "target"}]}`。
 - `get` → `{"contentB64": "...", "total": 12345}`；`total > 已读长度` 时用更大的 `offset` 继续。
-- `put` 的 `contentB64` 是坏编码时 400，原文件不动；目标目录不存在时 404（本机可传 `"mkdirs": true`）。
+- `put` 可选 `sha256`（内容摘要，不符即 400、原文件不动）；`contentB64` 是坏编码时 400；目标目录不存在时 404（本机可传 `"mkdirs": true`）。
 
 ### 交文件换 ticket：POST /api/agent/share/stage
 
@@ -255,7 +274,7 @@ class Deskport:
 
 dp = Deskport('{{BASE}}', '<令牌>')
 task = dp.call('POST', '/api/tasks', {'prompt': '修掉 tests/ 里的 3 个失败用例',
-                                      'node': 'local', 'cwd': '/srv/app',
+                                      'node': 'local', 'cwd': 'E:/data',  # Windows；Linux 用 '/srv/app'
                                       'mode': 'auto'})['task']
 after = 0
 while True:

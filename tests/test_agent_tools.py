@@ -71,14 +71,18 @@ def test_disabled_returns_404(env, monkeypatch):
 
 
 def test_handbook_toolbox_section(env):
-    """手册「工具箱」一节：无占位符残留、无 engine、有可直接粘的下载命令。"""
+    """手册「工具箱」一节：无占位符残留、无 engine、有可直接粘的下载命令。
+
+    下载命令带 `-k`：公网入口是隧道方的自签证书，裸 `curl` 会 exit 60（用户实测），
+    照抄的第一条命令必须能跑。
+    """
     body = env.client.get('/api/agent/handbook').get_data(as_text=True)
     assert not re.search(r'\{\{[A-Z]+\}\}', body)
     assert '{{BASE}}' not in body and '{{VERSION}}' not in body
     assert 'engine' not in body
-    assert 'curl -s $D/api/agent/tools/deskport.py -o deskport.py' in body
+    assert 'curl -s -k $D/api/agent/tools/deskport.py -o deskport.py' in body
     assert '任选其一，不必全用' in body
-    assert 'curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip' in body
+    assert 'curl -s -k $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip' in body
     assert '必读' in body
     toolbox = body.index('## 工具箱')
     assert toolbox < body.index('## 端点') < len(body)
