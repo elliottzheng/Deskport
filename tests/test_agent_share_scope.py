@@ -144,14 +144,24 @@ def test_device_login_issues_share_scope_and_can_submit(env):
     assert resp.status_code == 403 and resp.get_json()['need'] == 'full'
 
 
-def test_nodes_only_local(env, monkeypatch):
+def test_nodes_include_local_and_remote(env, monkeypatch):
     import modules.agent_nodes as nodesMod
-    monkeypatch.setattr(nodesMod, 'nodeModelsFor', lambda name: (['k2'], 'k2'))
+    monkeypatch.setattr(nodesMod, 'nodeModelsFor', lambda name, entry=None: (['k2'], 'k2'))
+    monkeypatch.setattr(configMod, 'getAgentNodes', lambda: [
+        {'name': 'ai-xmyz', 'url': 'http://x', 'token': '', 'via': 'h1',
+         'remote': '', 'models': [], 'model': ''}])
+    monkeypatch.setattr(configMod, 'getRemotes', lambda: [
+        {'id': 'win4710', 'name': 'win4710', 'base': 'http://y', 'token': '',
+         'files': True, 'filesWrite': True}])
     body = env.client.get('/api/agent/share/nodes',
                           headers={'X-Agent-Token': TOKEN_SHARE}).get_json()
     assert body['default'] == 'local'
-    assert body['nodes'] == [{'name': 'local', 'label': '本机', 'status': 'online',
-                              'models': ['k2'], 'defaultModel': 'k2'}]
+    names = [n['name'] for n in body['nodes']]
+    assert names == ['local', 'ai-xmyz', 'win4710']
+    assert body['nodes'][0] == {'name': 'local', 'label': '本机',
+                                'status': 'online', 'models': ['k2'],
+                                'defaultModel': 'k2'}
+    assert body['nodes'][1]['models'] == ['k2']
 
 
 def test_tasks_list_recent_non_closed_sorted_and_limited(env):

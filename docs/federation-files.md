@@ -54,6 +54,11 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
 非法根（相对路径 / `..` / 盘符相对 `C:foo` / 设备路径 `\\.\...`）→ 400，响应
 `error` 里指出是「第 N 项」，且**原有列表不变**；超过 20 个目录同样 400。
 
+这条根白名单不只管手动写文件：任务输入投递（§9）把附件落到远端
+`<cwd>/.deskport-inputs/<taskId>/` 时，最终仍要落在这份列表的根内；中枢转发前
+会先用 `GET /api/files/federation-info` 的 `writeRootsConfigured` 预检一次，
+所以「成员没配根」在任务侧会表现为明确的 403，而不是传到一半失败。
+
 ## 2. 在线编辑的乐观锁（本机与联邦同一套）
 
 `POST /api/files/read` 现在返回：
@@ -112,6 +117,11 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
 }
 ```
 
+设置页「联邦可写目录」写的就是这个键（见 §1.1）；直接改 `config.json` 也生效
+（mtime 热读，不必重启）。`GET /api/files/federation-info` 会把
+`writeRootsConfigured`（本列表是否非空）与 `maxUploadMB` 一起声明给中枢，
+用于转发前预检。
+
 校验规则（`modules/federation_write.py`）：
 
 1. 空数组 = 一律 403，不是"不校验"；
@@ -164,10 +174,23 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
   `/api/files/*` 的服务端路径（设备令牌只能走 `/api/agent/*`），所以手机
   目前无法直接触发联邦写；App 接入时必须新增该 scope 并默认不授。
 - 不做联邦 `pins`、远端压缩/解压、断点续传、多跳联邦（A→B→C）。
-- 跨机附件投递（任务执行点在远端）是下一批；本批只提供 `agent_sftp` 写操作
-  作为通道。
 
-## 9. 测试
+## 9. 任务输入投递（跨机附件）
+
+任务执行点是联邦成员时，`paths` / `attachments` 经本文件这套写端点投到
+`<cwd>/.deskport-inputs/<taskId>/`（实现见 `modules/task_inputs_fed.py`）：
+
+- 中枢没开 `remotes[].filesWrite` → 直接 403，错误信息点名这一层；
+- 成员端 `federationRoots` 为空 → 先按 `/api/files/federation-info` 的
+  `writeRootsConfigured` 拒绝，错误信息点名这一层；根不覆盖目标目录时
+  成员的 403 原文透传；
+- 建目录用 `new-folder`，上传用 `upload`（同名自动 `(2)`），失败清理用
+  `recycle-delete`（联邦没有永久删除），不碰 `.part` 残留；
+- agent node 不走这里：它经执行点配置的 SSH 主机走 SFTP。
+
+测试：`tests/test_task_inputs.py`、`tests/test_task_inputs_api.py`。
+
+## 10. 测试
 
 ```powershell
 python -m pytest -q tests/test_files_write_lock.py tests/test_federation_roots.py `

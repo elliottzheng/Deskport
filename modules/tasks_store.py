@@ -397,7 +397,7 @@ def _promptFor(task, manifest, block=''):
                                         item['source']))
         lines.append('')
     lines.append('产出放当前工作目录；工作目录外只读不写。')
-    note = task_cwd.notice(task)
+    note = task_cwd.notice(task) if task_node.isLocal(task_node.of(task)) else ''
     if note:
         lines.append(note)
     lines.append('关键信息不足、需要用户拍板时，先停下来用一句话问，不要猜。')
