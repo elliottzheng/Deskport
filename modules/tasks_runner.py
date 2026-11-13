@@ -21,17 +21,26 @@ from modules.kimi_acp import KimiAcp, extractText
 log = logging.getLogger('tasks')
 
 def maxRunning():
-    """并发 running 上限（R4-9）：config.taskMaxRunning，缺省 8，0=不限。
-    每次判定现读（config.load 按 mtime 热读），改 config.json 不重启即生效。"""
+    """缺省并发 running 上限（R4-9）：config.taskMaxRunning，缺省 8，0=不限。
+    每次判定现读（config.load 按 mtime 热读），改 config.json 不重启即生效。
+    批次 P 起它只是「未声明执行点的缺省值」，按节点的上限见 limitFor。"""
     return config.getTaskMaxRunning()
 
-def _appendAssistantText(task, text):
-    """回合内的 chunk 只累积缓冲（log 留完整流水），不写事件流。
+def limitFor(node):
+    """该执行点的并发 running 上限（批次 P）：节点声明 maxRunning → 缺省
+    config.taskMaxRunning（8）→ 0=不限。名字经 task_node.normalize() 归一后
+    再比，host/旧别名换写法绕不过上限；声明来源 agentNodes[] / remotes[] /
+    localAgentNodeMaxRunning（config 侧已归一成整数 ≥0 或 None）。"""
+    from modules import agent_nodes
+    name = task_node.normalize(node)
+    entry = agent_nodes.findNode(name) or agent_nodes.findFederationMember(name)
+    declared = (entry or {}).get('maxRunning')
+    return maxRunning() if declared is None else declared
 
-    增量订阅者（SSE/轮询）按 seq 去重，若逐 chunk 合并进同一条事件，
-    订阅者会停在首推时刻的部分文本。回合结束时 _flushAssistant 以单条
-    完整事件落卡，订阅者天然拿到终版；log 流水仍逐 chunk 可追溯。
-    """
+def _appendAssistantText(task, text):
+    """回合内的 chunk 只累积缓冲（log 留完整流水），不写事件流——增量订阅者
+    按 seq 去重，逐 chunk 合并会停在首推时刻的部分文本；回合结束由
+    _flushAssistant 落单条完整事件，订阅者天然拿到终版。"""
     if not text:
         return
     with store.repo.lock:
@@ -58,11 +67,8 @@ def _argsText(args):
 
 
 def _parseArgs(text):
-    """参数文本 → 对象；解析不成 dict/list 返回 None。
-
-    流式参数在 tool_call_update.content 里是逐段 JSON 快照（先 '{'，再半
-    截，最后完整），只有完整那次解析得出来。
-    """
+    """参数文本 → 对象；解析不成 dict/list 返回 None。流式参数在
+    tool_call_update.content 里是逐段 JSON 快照，只有完整那次解析得出来。"""
     text = (text or '').strip()
     if text[:1] not in ('{', '['):
         return None
@@ -76,11 +82,9 @@ def _parseArgs(text):
 def _rememberLateArgs(task, update):
     """参数后到（R5-9）：真实 Kimi 的流式形状是先来不带 rawInput 的
     tool_call，参数随后在 tool_call_update 的 content 文本里补，rawInput
-    对象甚至晚于 request_permission 才到。
-
-    按 callId 记下这两条线索，供审批回查 policy、给已落卡的 tool 事件补参
-    数；返回 (callId, 可落盘的参数文本)，拿不到完整参数时文本为空。
-    """
+    对象甚至晚于 request_permission 才到。按 callId 记下这两条线索，供审批
+    回查 policy、给已落卡的 tool 事件补参数；返回 (callId, 可落盘的参数
+    文本)，拿不到完整参数时文本为空。"""
     callId = update.get('toolCallId') or ''
     if not callId:
         return '', ''
@@ -227,10 +231,8 @@ ORPHAN_DENY_TEXT = ('该审批的 callId 在本任务的工具调用记录里找
 
 
 def _knownToolCall(task, callId):
-    """callId 是否在本任务的 tool 事件里出现过（R5-7 orphan 判定）。
-
-    查两处：_toolArgs（tool_call update 记下的最近 50 个）与任务事件流里
-    的 tool 事件（MAX_EVENTS 窗口内）。两处都没有 = 轮间幽灵审批。"""
+    """callId 是否在本任务的 tool 事件里出现过（R5-7 orphan 判定）：查
+    _toolArgs（最近 50 个）与事件流里的 tool 事件，两处都没有 = 轮间幽灵审批。"""
     if not callId:
         return False
     with store.repo.lock:
@@ -467,9 +469,8 @@ def _promptOnce(task, client, text, first=False):
 def _popQueuedMessage(task):
     """弹出下一条排队消息（队首=steer 插话优先）；无可投递的返回 None。
 
-    两个投递闸门：有 live 挂起审批时不投（R4-3c——旧审批 5 分钟超时拒绝
-    会把刚开的新一轮带死，等审批落定后的唤醒信号再投）；用户已关闭任务
-    不投。"""
+    两个投递闸门：有 live 挂起审批时不投（R4-3c，等审批落定后的唤醒信号
+    再投）；用户已关闭任务不投。"""
     with store.repo.lock:
         if task.get('pendingPermission') or task.get('closedByUser'):
             return None
@@ -480,9 +481,8 @@ def _popQueuedMessage(task):
 
 
 def _drainQueuedMessages(task, client):
-    """把持久化队列 task['messageQueue'] 逐条投递，每条一轮 prompt
-    （与手动续聊同链路）。轮中排队（R5-5）在每轮结束和每次唤醒后清队；
-    steer 插话因在队首而优先投递。"""
+    """把持久化队列逐条投递，每条一轮 prompt（与手动续聊同链路）；轮中排队
+    （R5-5）在每轮结束和每次唤醒后清队，steer 插话因在队首而优先投递。"""
     n = 0
     while True:
         msg = _popQueuedMessage(task)

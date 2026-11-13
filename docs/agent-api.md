@@ -373,7 +373,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
+| GET | /api/tasks | 任务列表 + `running`/`queued` 计数（全局实数）、`limit`（缺省上限）与 `nodes[]`（各执行点 `{name, running, limit}`，按执行点计数） |
 | POST | /api/tasks | 建任务 → 202 `{task, paths}`；入参 `{prompt, node, cwd, mode, model, paths, attachments}`，`node` 缺省 `local`，`cwd` 缺省任务目录 |
 | GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`cwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
@@ -521,6 +521,26 @@ DELETE /api/agent/ssh/sessions/<sid>
   参数与后到的 rawInput，审批判定用完整参数，已落卡的 `tool` 事件会补全
   `args`；
 - `close` 返回的就是终态（已 cancel 的任务保持 `cancelled`，close 幂等）。
+- **并发上限按执行点各自计数（批次 P）**：`POST /api/tasks` 在**目标执行点**
+  的 running 数达到该点上限时返回 **429**——满的只是那一个执行点，别的执行点
+  照常受理（本机活与派到远端执行点的活互不挤占，它们各有自己的 CPU/内存）。
+  上限解析：执行点声明 `maxRunning`（`config.agentNodes[].maxRunning` /
+  `remotes[].maxRunning` / `localAgentNodeMaxRunning`，整数 ≥0，缺省不声明）
+  → 缺省 `config.taskMaxRunning`（8）→ `0` = 不限。**不做排队**：满了退避后
+  重试。payload：
+
+  ```text
+  POST /api/tasks {"prompt": "跑一批数据", "node": "A", "cwd": "/srv/app"}
+  → 429 {"error": "执行点 A 并发任务已达上限 2，请稍后再试", "node": "A",
+         "limit": 2, "running": 2,
+         "holders": [{"id": "ab12cd34ef56", "owner": "测试智能体",
+                      "title": "占用者-标题"}]}
+  ```
+
+  `holders` 只列该执行点上正在跑的任务。`GET /api/tasks` 相应带回
+  `nodes: [{name, running, limit}, ...]`（已声明 + 当前有任务的执行点）与
+  `countScope`（`per-node` 起头的自解释文案；`limit` 保留为缺省上限，向后
+  兼容老客户端），顶层 `running` / `queued` 仍是全局实数。
 
 ### 工作目录 vs 任务目录（`cwd` ≠ `workspace`）
 

@@ -51,7 +51,8 @@ def test_set_remotes_roundtrip(cfgfile):
                                     'token': 'vn1WdB7IAKfd',
                                     'terminal': True, 'apps': [], 'files': False,
                                     'filesWrite': False,
-                                    'models': [], 'model': ''}]   # 策略缺省: 接终端, 不接应用/文件, 模型未声明
+                                    'models': [], 'model': '',
+                                    'maxRunning': None}]   # 策略缺省: 接终端, 不接应用/文件, 模型未声明, 并发上限未声明(继承 taskMaxRunning)
     # 其他配置键保留
     assert json.loads(cfgfile.read_text(encoding='utf-8'))['port'] == 6788
     assert federation.machineOptions() == [

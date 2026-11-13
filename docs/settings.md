@@ -57,7 +57,7 @@
 | POST | `/api/settings/brand` | `{name}` | `{ok: true, name}` |
 | GET | `/api/settings/federation` | — | `{token, remotes[], machines[], fileMachines[], discoveredApps[], roots[], maxRoots}` |
 | POST | `/api/settings/federation/token` | `{token}` | `{ok, token}`；空串即关闭联邦 |
-| POST | `/api/settings/federation/remotes` | `{remotes: [{id, name, base, token?, terminal?, files?, filesWrite?, apps?}]}` | `{ok, remotes[], machines[]}` |
+| POST | `/api/settings/federation/remotes` | `{remotes: [{id, name, base, token?, terminal?, files?, filesWrite?, apps?, maxRunning?}]}` | `{ok, remotes[], machines[]}`；`maxRunning`（批次 P）= 该执行点的并发 running 上限，整数 ≥0，`0`=不限，缺省继承 `taskMaxRunning` |
 | POST | `/api/settings/federation/roots` | `{roots: ["E:\\共享\\给中枢"]}` | `{ok, roots[], maxRoots}`；数组即全量替换，`[]` = 联邦转发写一律 403 |
 | GET | `/api/settings/devices` | — | `{devices: [{id, name, scopes, createdAt, lastUsedAt, lastIp}]}` |
 | POST | `/api/settings/devices/revoke` | `{id}` | `{ok: true, devices[]}`；不存在 404 |
@@ -69,7 +69,7 @@
 
 错误：密码接口 `400` 太短/过长、`403` 当前密码错误、`401` 未登录；收件箱接口目录不存在返回 `400`，最多 20 个目录。
 
-联邦设置的校验：令牌需 8-64 位字母/数字/`-`/`_`；远端最多 20 台；`id` 需 1-20 位小写字母/数字/`-`/`_` 且不重复；名称 1-24 字符；`base` 须以 `http://` 或 `https://` 开头；`token` ≤128 字符；`terminal`/`files`/`filesWrite` 须布尔；`apps` ≤20 个非空短字符串（`["*"]` 表示全收）。
+联邦设置的校验：令牌需 8-64 位字母/数字/`-`/`_`；远端最多 20 台；`id` 需 1-20 位小写字母/数字/`-`/`_` 且不重复；名称 1-24 字符；`base` 须以 `http://` 或 `https://` 开头；`token` ≤128 字符；`terminal`/`files`/`filesWrite` 须布尔；`apps` ≤20 个非空短字符串（`["*"]` 表示全收）；`maxRunning`（批次 P，可省略）须为整数 ≥0（`0`=不限，缺省继承 `taskMaxRunning`），非整数/负数 → 400 且不落盘。
 
 可写目录的校验（`POST /api/settings/federation/roots`）：`roots` 非数组 400；超过 20 项 400（整个请求拒绝，不做部分写入）；每项须为非空字符串且 `normalizePath()` 能归一化出绝对路径，否则 400 并在 `error` 里指出「第 N 项」与原始值；路径存在但不是目录（文件当根）400；路径不存在放行；重复项按归一化结果去重。
 
@@ -82,6 +82,7 @@
 - 密码存放在目标机 `config.json` 的 `password` 字段；`config.setPassword()` 原子写回。
 - 收件箱开关为 `inboxEnabled`（缺省 `false`），目录为 `inboxDirs`；`config.setInboxSettings()` 原子写回并失效配置缓存。
 - 品牌名为 `brandName`（缺省 `Deskport`）；`config.setBrandName()` 原子写回，页面渲染时注入 `<meta name="wp-brand">`，manifest 动态生成。
+- 任务并发上限（批次 P，按执行点各自计数）：`config.taskMaxRunning`（缺省 `8`，`0`=不限）是**未声明执行点的缺省值**；每个执行点可用自己的 `maxRunning` 覆盖——`agentNodes[].maxRunning`（远端 node，手改 `config.json`）、`remotes[].maxRunning`（联邦成员，随远端列表保存时校验：整数 ≥0，非法 400 且不落盘）、本机执行点 `localAgentNodeMaxRunning`（`localAgentNodePort` 启用时生效）。建任务只数目标执行点自己的 running 数：满了返回 429，payload 带 `node`/`limit`/`running`/`holders`（`holders` 只列该执行点）；`GET /api/tasks` 回 `nodes[]`（各执行点 `{name, running, limit}`）与 `countScope`（`per-node` 起头）。手改配置写成非法值时按「未声明」处理（继承缺省），不会把执行点整个禁用；解析入口是 `modules/tasks_runner.py` 的 `limitFor(node)`（名字经 `task_node.normalize()` 归一，`host`/旧别名换写法绕不过上限）。
 - 公开接入手册：`GET /api/agent/handbook`（`modules/agent_handbook.py`）**不在鉴权守卫内**，正文来自 `docs/agent-handbook.md`，运行时替换 `{{BASE}}`（`baseUrl()`：`scheme://host`，`trustProxyProto` 打开时按受信的 `X-Forwarded-Proto` 修正 scheme，Host 头一律不采信）、`{{VERSION}}`（构建号）与 `{{LAN_LINE}}`（配了 `lanAddress` 才有的「局域网直连」行）；`?format=json` 返回 `{version, base, markdown}`。开关 `handbookEnabled` 缺省 `true`（`config.isHandbookEnabled()`），显式 `false` 时 404。公开正文里不放令牌、指纹字段、主机名或本机路径。
 - 公开工具箱：`GET /api/agent/tools`、`GET /api/agent/tools/<name>` 与整包 `GET /api/agent/skill.zip`（`modules/agent_tools.py`）同样**不在鉴权守卫内**，单文件白名单三个文件（`deskport.py` / `driver.py` / `COLLABORATION.md`，源在 `.agents/skills/deskport/`，不复制）；整包五个条目实时组装（三个工具 + 按请求替换占位符的 `SKILL.md` + 生成的 `.deskport.json`，不含令牌），技能名写死 `deskport`。与手册**共用** `handbookEnabled` 开关——工具箱入口写在手册里，独立开关只会造出「手册关了、工具还公开」的半开状态。凭据安全由 `tests/test_agent_tools.py` 与 `tests/test_agent_skill_zip.py` 正则扫描公开内容把关。
 - 登录设备在 `modules/device_auth.py`：令牌只存 SHA-256，落在 `%APPDATA%\<stateDir>\devices.json`（**不进** `config.json`），mtime 缓存热读 + 原子写；与 `agentTokens` 同走 `agentFromRequest` 一个鉴权入口，设备令牌默认只有 `upload` scope。同设备名重登 = 换新令牌、旧令牌即刻失效；设备上限 20 台。`lastUsedAt`/`lastIp` 同秒节流回写，不逐次写盘。签发、自吊销、管理面吊销都落审计（`device.login` / `device.logout` / `device.revoke`）。

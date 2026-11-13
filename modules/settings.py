@@ -141,10 +141,19 @@ def setRemotes():
         if not isinstance(apps, list) or len(apps) > 20 or \
                 any(not isinstance(a, str) or not a.strip() or len(a) > 40 for a in apps):
             return jsonify({'error': 'apps 需为 ≤20 个非空短字符串的白名单'}), 400
+        # 批次 P：该执行点的并发 running 上限；缺省/不写 = 继承 config.taskMaxRunning
+        maxRunning = item.get('maxRunning')
+        if maxRunning is not None and (isinstance(maxRunning, bool)
+                                       or not isinstance(maxRunning, int)
+                                       or maxRunning < 0):
+            return jsonify({'error': 'remotes 的 maxRunning 需为整数 ≥0'
+                                      '（0=不限；缺省继承 taskMaxRunning）: %r'
+                                      % (maxRunning,)}), 400
         cleaned.append({'id': rid, 'name': name, 'base': base, 'token': token,
                         'terminal': terminal, 'files': files,
                         'filesWrite': filesWrite,
-                        'apps': [a.strip() for a in apps]})
+                        'apps': [a.strip() for a in apps],
+                        'maxRunning': maxRunning})
         seen.add(rid)
     config.setRemotes(cleaned)
     return jsonify({'ok': True, 'remotes': cleaned,

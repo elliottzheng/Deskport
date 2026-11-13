@@ -15,6 +15,7 @@
   "sessiondUrl": "",
   "sshSessiondUrl": "",
   "brandName": "Deskport",
+  "taskMaxRunning": 8,
   "trustProxyProto": false,
   "lanAddress": "",
   "externalApps": {},
