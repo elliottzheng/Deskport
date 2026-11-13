@@ -12,6 +12,7 @@
 | `COLLABORATION.md` | 主控 | 协作原则：分工、派活规格、审批边界、验收、省上下文 |
 | `deskport.py` | 两边 | Python 客户端（605 行、零依赖），也能当 CLI |
 | `driver.py` | 主控 | 驱动模板：别名目录、边界判定、自动放行、409 排队 |
+| `driver.example.json` | 主控 | `driver.json` 最小样例（必填 root/danger/safe，带 `_说明`） |
 
 客户端与驱动只用标准库（Python ≥ 3.9），拷一个文件到任何机器就能跑，不需要 pip。
 整包下载时还会多一份生成的 `.deskport.json`（`url` + `node`，不含令牌；`host`
@@ -40,7 +41,7 @@ python ./deskport-skill/deskport/deskport.py hosts
 S=~/.kimi-code/skills/deskport; mkdir -p "$S"
 curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
-for f in deskport.py driver.py COLLABORATION.md; do
+for f in deskport.py driver.py driver.example.json COLLABORATION.md; do
   curl -s -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
 # 清单与版本：GET /api/agent/skills（含 files / pack / sha256）
@@ -54,14 +55,14 @@ done
 
 ## 没有令牌先拿工具（公开端点）
 
-三个工具文件（`deskport.py` / `driver.py` / `COLLABORATION.md`）不含凭据，可**不带令牌**
-直接下载；整包 `skill.zip` 还额外带上按请求渲染的 `SKILL.md`：
+四个工具文件（`deskport.py` / `driver.py` / `driver.example.json` / `COLLABORATION.md`）
+不含凭据，可**不带令牌**直接下载；整包 `skill.zip` 还额外带上按请求渲染的 `SKILL.md`：
 
 ```bash
 D=<中枢地址>
 curl -s $D/api/agent/tools -o -            # 清单 {name, bytes, sha256}
 curl -s $D/api/agent/tools/deskport.py -o deskport.py    # 响应头 X-Tools-Sha256 可校验
-curl -s $D/api/agent/skill.zip -o deskport-skill.zip     # 整包：5 个条目
+curl -s $D/api/agent/skill.zip -o deskport-skill.zip     # 整包：6 个条目
 ```
 
 开关与手册共用 `handbookEnabled`（`false` 时 404）。详见 `docs/agent-api.md`「工具箱」。
@@ -125,7 +126,8 @@ agent node 走它的 SSH 主机（`agentNodes[].via`），联邦成员要求中�
 
 ## 驱动模板：一条命令盯一个执行方
 
-`driver.py` 把「派活—审批—收结论」压成两个字符一条命令，边界写在 `driver.json`：
+`driver.py` 把「派活—审批—收结论」压成两个字符一条命令，边界写在 `driver.json`
+（必填 root/danger/safe，字段与最小样例见技能包里的 `driver.example.json`）：
 
 ```json
 {
@@ -157,8 +159,10 @@ driver.py <别名>               （无参数）接着跑，等这一轮结束
 - **run 目录**：默认在技能包内 `run/`；技能包目录可能只读、或会被本机清理进程动，
   可用环境变量 `DRIVER_RUN_DIR` 指到别处（例如主控自己的工作区），别名目录
   （`msg.txt` / `last.txt` / `log` / `state.json`）随之迁移。
-- **退出码**：0 本轮结束、1 出错（含中枢不支持 `/wait`）、2 超时、3 停下待判断、
-  4 审批已失效（回放污染）、5 消息未更新、6 同一别名已有驱动在跑。
+- **首次可用**：`-h` 看用法（不碰状态）；`driver.json` 缺失/缺键、`state.json` 损坏、
+  证书错误都只打印一句人话 + 非零退出码，**不吐栈**（要栈用 `DRIVER_DEBUG=1`）。
+- **退出码**：0 本轮结束、1 出错（含中枢不支持 `/wait`）、2 超时/配置与状态文件问题/内部错误、
+  3 停下待判断、4 审批已失效（回放污染）、5 消息未更新、6 同一别名已有驱动在跑。
 - 一轮内长时间无事件且无工具在跑（上下文膨胀）会判停并提示换新会话接棒。
 
 ## 放进一个项目里

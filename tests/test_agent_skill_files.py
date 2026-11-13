@@ -46,12 +46,12 @@ def test_requires_token(env):
 
 
 def test_list_reports_bundle_files(env):
-    """技能清单带 files：手册之外还有客户端、驱动、协作原则。"""
+    """技能清单带 files：手册之外还有客户端、驱动、配置样例、协作原则。"""
     resp = env.client.get('/api/agent/skills', headers=HEADERS)
     assert resp.status_code == 200
     skill = next(s for s in resp.get_json()['skills'] if s['name'] == 'deskport')
     assert 'SKILL.md' not in skill['files']
-    for name in ('deskport.py', 'driver.py', 'COLLABORATION.md'):
+    for name in ('deskport.py', 'driver.py', 'driver.example.json', 'COLLABORATION.md'):
         assert name in skill['files'], skill['files']
 
 
@@ -62,7 +62,7 @@ def test_skill_md_still_served_at_old_path(env):
     assert resp.get_json()['content'] == readPackText('SKILL.md')
 
 
-@pytest.mark.parametrize('name', ['deskport.py', 'driver.py', 'COLLABORATION.md'])
+@pytest.mark.parametrize('name', ['deskport.py', 'driver.py', 'driver.example.json', 'COLLABORATION.md'])
 def test_file_json_and_raw(env, name):
     """JSON 与 raw=1 都是原文；raw 用于 curl -o 直接落盘。"""
     resp = env.client.get('/api/agent/skills/deskport/%s' % name, headers=HEADERS)

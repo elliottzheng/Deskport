@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""公开整包 /api/agent/skill.zip：无令牌可下、五条目、占位符按请求替换、
+"""公开整包 /api/agent/skill.zip：无令牌可下、六条目、占位符按请求替换、
 包内无凭据、白名单外 404、共用手册开关。"""
 import hashlib
 import io
@@ -18,7 +18,8 @@ SKILL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
                          '.agents', 'skills', 'deskport')
 PACK = '/api/agent/skill.zip'
 ENTRIES = ['deskport/.deskport.json', 'deskport/COLLABORATION.md',
-           'deskport/SKILL.md', 'deskport/deskport.py', 'deskport/driver.py']
+           'deskport/SKILL.md', 'deskport/deskport.py', 'deskport/driver.example.json',
+           'deskport/driver.py']
 # 公开内容里出现这些模式即失败（tests/test_agent_tools.py 的三个 + 路径泄露两个）
 CREDENTIAL_PATTERNS = [r'token\s*=\s*[\'"][A-Za-z0-9_-]{16,}',
                        r'password', r'agentTokens', r'C:\\', r'/mnt/']
@@ -36,12 +37,12 @@ def openPack(resp):
 
 
 def test_zip_public_without_token(env):
-    """无令牌 200：application/zip，五个条目，全在 deskport/ 前缀下。"""
+    """无令牌 200：application/zip，六个条目，全在 deskport/ 前缀下。"""
     resp = env.client.get(PACK)
     assert resp.status_code == 200
     assert resp.mimetype == 'application/zip'
     assert 'deskport-skill.zip' in resp.headers['Content-Disposition']
-    assert int(resp.headers['X-Skill-Files']) == 5
+    assert int(resp.headers['X-Skill-Files']) == 6
     z = openPack(resp)
     assert sorted(z.namelist()) == ENTRIES
     for name in z.namelist():
@@ -75,10 +76,18 @@ def test_config_ready_but_tokenless(env):
     assert '不要写进这个文件' in cfg['_说明']
 
 
-def test_attachments_are_byte_identical(env):
-    """三个工具就是仓库里的原文件；SKILL.md 只多占位符替换。"""
+def test_example_config_is_valid(env):
+    """driver.example.json 合法且带齐必填三键——驱动缺配置时就靠它抄。"""
     z = openPack(env.client.get(PACK))
-    for name in ('deskport.py', 'driver.py', 'COLLABORATION.md'):
+    cfg = json.loads(z.read('deskport/driver.example.json').decode('utf-8'))
+    assert all(cfg.get(k) for k in ('root', 'danger', 'safe'))
+    assert '_说明' in cfg
+
+
+def test_attachments_are_byte_identical(env):
+    """四个工具就是仓库里的原文件；SKILL.md 只多占位符替换。"""
+    z = openPack(env.client.get(PACK))
+    for name in ('deskport.py', 'driver.py', 'driver.example.json', 'COLLABORATION.md'):
         with open(os.path.join(SKILL_DIR, name), 'rb') as f:
             assert z.read('deskport/' + name) == f.read(), name
     with open(os.path.join(SKILL_DIR, 'SKILL.md'), encoding='utf-8') as f:
@@ -132,7 +141,7 @@ def test_pack_url_follows_forwarded_proto(env, tmp_path, monkeypatch):
 
 
 def test_tools_endpoints_unaffected(env):
-    """同一开关下单文件工具箱照旧：清单三个、原文 200、sha256 一致。"""
+    """同一开关下单文件工具箱照旧：清单四个、原文 200、sha256 一致。"""
     listed = {t['name']: t for t in env.client.get('/api/agent/tools').get_json()['tools']}
     assert list(listed) == list(agent_tools.TOOLS)
     resp = env.client.get('/api/agent/tools/deskport.py')

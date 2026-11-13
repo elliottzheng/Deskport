@@ -38,7 +38,7 @@ T=<部署者发你的令牌>
 
 上面的裸 HTTP 是底座：任何语言都能照做。不想自己写轮询/审批/任务管理，就用现成工具——三级递进，**任选其一，不必全用**。
 
-**想一条命令拿全？** 整包 zip 把技能手册、客户端、驱动模板、协作原则和现成的 `.deskport.json` 打在一起（公开，无需令牌）：
+**想一条命令拿全？** 整包 zip 把技能手册、客户端、驱动模板、`driver.json` 样例、协作原则和现成的 `.deskport.json` 打在一起（公开，无需令牌）：
 
 ```bash
 curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip
@@ -83,7 +83,7 @@ python deskport.py run "uptime"
 curl -s $D/api/agent/tools/driver.py -o driver.py
 ```
 
-诚实声明：它假定执行方是 **Kimi Code**——`new <kimi会话id>` 接手已有会话、`/compact` 压缩上下文都是 Kimi 侧的能力；执行方不是 Kimi 时请用第 1 或第 2 级。用法一行：`driver.py <别名> [y|n|c|m|new <会话id>|st]`，边界写在 `driver.json`。
+诚实声明：它假定执行方是 **Kimi Code**——`new <kimi会话id>` 接手已有会话、`/compact` 压缩上下文都是 Kimi 侧的能力；执行方不是 Kimi 时请用第 1 或第 2 级。用法一行：`driver.py <别名> [y|n|c|m|new <会话id>|st]`，边界写在 `driver.json`（必填 root/danger/safe，字段见随包的 `driver.example.json`，首次运行照它抄一份）；先 `new` 建任务，之后才能 y/n/c/m/st。
 
 `COLLABORATION.md` 讲主控怎么分工与验收——**必读**（真去指挥别的智能体之前先读一遍）：
 

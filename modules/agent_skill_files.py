@@ -32,7 +32,9 @@ from modules.agent_api import requireAgentScope, blueprint
 from modules.agent_skills import _skillsDir
 
 _SKILL_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
-_FILE_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}\.(md|py|json|txt)$')
+# 附件名：<名>.<ext>；另放行 <名>.example.<ext> 形式的样例文件（driver.example.json，
+# 驱动首次运行照它抄一份 driver.json）。a.b.py 这类双扩展仍拒绝（有测试锁着）。
+_FILE_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}\.(?:example\.)?(?:md|py|json|txt)$')
 MAX_BYTES = 2 * 1024 * 1024
 _EXCLUDED = {'SKILL.md'}          # 手册走 /api/agent/skills/<技能>，这里只发附件
 
