@@ -35,6 +35,17 @@ window.WPFeedbackPanel = (function () {
     function placeFab() {
         var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), .term-vkeys:not([hidden]), .ctl-fab');
         document.body.classList.toggle('fb-raise', !!raise);
+        // 全屏浮层（移动端 SFTP 面板铺满整屏）打开时直接收起：那时抬起来也会压在
+        // 浮层底部的操作行（新建/上传/删除）上，用户报过"挡住到底部的按钮"
+        var covered = false;
+        ['sftp-panel'].forEach(function (id) {
+            var node = document.getElementById(id);
+            if (node && node.offsetParent !== null && getComputedStyle(node).display !== 'none') {
+                covered = true;
+            }
+        });
+        if (document.querySelector('.more-sheet:not([hidden])')) { covered = true; }
+        document.body.classList.toggle('fb-hide', covered);
     }
 
     function buildFab() {
@@ -407,6 +418,7 @@ window.WPFeedbackPanel = (function () {
         document.body.appendChild(root);
         // 点一下就可能切换出底部工具条（多选模式等）：跟着重排，不做轮询
         document.addEventListener('pointerdown', function () { setTimeout(placeFab, 0); }, true);
+        document.addEventListener('click', function () { setTimeout(placeFab, 0); }, true);
         window.addEventListener('resize', placeFab);
         window.addEventListener('orientationchange', placeFab);
         setTimeout(placeFab, 400);

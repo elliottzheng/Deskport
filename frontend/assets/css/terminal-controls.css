@@ -202,6 +202,8 @@
 .sftp-actions .btn { height: 34px; padding: 0 10px; font-size: 12px; }
 @media (hover: none) and (pointer: coarse) {
     #sftp-panel { inset: 0; width: 100vw; height: 100vh; border-left: none; }   /* 移动端全屏 (FM-17) */
+    /* 底部操作行(新建/上传/删除)让开 iOS 手势条，否则最下面那排按钮点不到 */
+    .sftp-actions { padding-bottom: calc(var(--sp-2) + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* ====== SSH 认证/编辑 ====== */

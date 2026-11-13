@@ -189,3 +189,6 @@
 }
 
 body.fb-raise .fb-fab { bottom: calc(var(--fb-bottom) + 72px); }
+
+/* 全屏浮层（移动端 SFTP 面板等）打开时直接收起：那时"抬起来"也压到别人的操作行 */
+body.fb-hide .fb-fab { display: none !important; }
