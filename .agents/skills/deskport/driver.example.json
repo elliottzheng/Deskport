@@ -1,0 +1,12 @@
+{
+  "_说明": "driver.py 的边界配置样例（JSON 没有注释，说明写在这个键里，driver.py 不读它）。必填三项：root = 执行方的可写根目录；danger = 命中就停下等人（正则，按真正会执行的部分匹配，引号/heredoc 正文不算）；safe = 只读/测试命令，整条命令每段都命中才自动放行。可选：profiles = 规格预授权档位（档名: 正则，m <档位> 时切换）；extraWritable = root 之外额外可写的目录；defaultProfile = 缺省档位；serverPolicy = 是否同时给服务端 policy 兜一层（缺省 true）。用法：把本文件复制成同目录 driver.json 后按你的环境改；driver.json 不进技能包，每处部署自己写。",
+  "root": "E:/proj/app",
+  "danger": "rm\\s+-rf|\\bkill\\b|deploy",
+  "safe": "^\\s*(ls|cat|grep|git (status|diff|log))\\b",
+  "profiles": {
+    "dev": "^\\s*(pytest|ruff|mypy)\\b"
+  },
+  "extraWritable": ["/tmp/build/"],
+  "defaultProfile": "dev",
+  "serverPolicy": true
+}

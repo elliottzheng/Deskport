@@ -23,10 +23,10 @@ BUDGET = {'.py': 400, '.js': 500, '.css': 500}
 # 之后这些文件只能变短; 未列在本表的新文件仍必须直接符合预算。
 LEGACY = {
     'config.py': 516,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义
-    # .agents/skills/deskport/deskport.py 是发给外部智能体的「拷一个文件就能跑」客户端
-    # （零依赖，也能直接当 CLI 用），拆分会破坏这个约定；与 agent_node/acp_session.py
-    # 同理按单文件设计登记，只许变短。
+    # .agents/skills/deskport/{deskport,driver}.py 是发给外部智能体的「拷一个文件就能跑」
+    # 客户端/驱动（零依赖、也能当 CLI），拆分会破坏这个约定——按单文件登记，只许变短。
     '.agents/skills/deskport/deskport.py': 605,   # 外部智能体单文件客户端（见上注）
+    '.agents/skills/deskport/driver.py': 468,     # 单文件驱动模板（见上注；首批报错翻译也长在里头）
     'agent_node/acp_session.py': 454,             # ACP 会话单文件实现（见上注）
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
     'frontend/assets/css/files.css': 522,         # 文件页样式一体，选择器跨文件耦合，拆分暂缓

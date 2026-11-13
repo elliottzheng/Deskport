@@ -674,7 +674,7 @@ Deskport 升级后重新拉取即更新（`files` / `sha256` 判断要不要换�
 
 ## 工具箱（公开端点，无需令牌）
 
-手册只教裸 HTTP，读者还没令牌；工具箱把技能包里三个**不含凭据**的文件公开出来，
+手册只教裸 HTTP，读者还没令牌；工具箱把技能包里四个**不含凭据**的文件公开出来，
 一条 URL 即取（`modules/agent_tools.py`，app.py 显式登记）：
 
 ```text
@@ -682,12 +682,13 @@ GET /api/agent/tools            → {"tools": [{"name", "bytes", "sha256"}]}
 GET /api/agent/tools/<name>     → 原文件（.md → text/markdown，.py → text/plain）
                                   响应头 X-Tools-Sha256 与清单一致
 GET /api/agent/skill.zip        → 整包 zip：deskport/{SKILL.md, deskport.py, driver.py,
-                                  COLLABORATION.md, .deskport.json} 共 5 个条目
+                                  driver.example.json, COLLABORATION.md, .deskport.json} 共 6 个条目
 ```
 
-- 单文件白名单三个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活模板）、
-  `COLLABORATION.md`（主控与执行方的分工/验收）。**SKILL.md 不走单文件端点**——它含
-  `{{BASE}}`/`{{VERSION}}` 占位符、要按请求渲染，只从整包出，和三个工具一起发；
+- 单文件白名单四个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活模板）、
+  `driver.example.json`（`driver.json` 最小样例，边界字段说明）、`COLLABORATION.md`
+  （主控与执行方的分工/验收）。**SKILL.md 不走单文件端点**——它含
+  `{{BASE}}`/`{{VERSION}}` 占位符、要按请求渲染，只从整包出，和四个工具一起发；
 - 整包从 `.agents/skills/deskport/` **实时组装**（`agent_skill_files.buildSkillZip`，
   与需令牌的 pack.zip 同一处逻辑，单一来源不复制）；技能名白名单写死只有 `deskport`，
   其它名字没有路由，子路径/`..`/隐藏文件一律 404；
@@ -737,5 +738,6 @@ detail 带 `[令牌名]` 前缀，`agent.task.*` / `agent.upload` 的 target 即
 
 仓库内 `.agents/skills/deskport/` 是本 API + 任务 API 的智能体技能包：
 `SKILL.md`（接口速查）、`COLLABORATION.md`（主控与执行方的协作规矩）、
-`deskport.py`（单文件客户端）、`driver.py`（驱动模板）。整包自举见上一节，
+`deskport.py`（单文件客户端）、`driver.py`（驱动模板）、
+`driver.example.json`（`driver.json` 最小样例）。整包自举见上一节，
 用法见 `agent-kit.md`。

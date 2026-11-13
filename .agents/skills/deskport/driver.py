@@ -1,25 +1,20 @@
 """通用驱动：把同目录的 deskport.py 当方向盘，指挥一个托管智能体干活。
 
-    driver.py <别名> [y|n|c|m [档位]|new <会话id|w:工作线id> [档位]|st]
+    driver.py -h | --help                                 打印本用法（不碰任何状态）
+    driver.py <别名> new <会话id|w:工作线id|-> [档位]      先 new 建任务，之后才能 y/n/c/m/st
+    driver.py <别名> [y|n|c|m [档位]|st]
 
-    (无参数)   接着跑，等这一轮结束（结论写 run/<别名>/last.txt 一行）
+    new <目标>  用 msg.txt 建任务：`new <kimi会话id>` 接手已有会话（fork 副本），
+               `new w:<工作线id>` 在工作线上派活，`new -` 直接新开任务
+    (别名后无命令)  接着跑，等这一轮结束（结论写 run/<别名>/last.txt 一行）
     y | n      批准 / 拒绝卡住的审批，然后接着跑
     c          压缩执行方上下文（/compact，一批活之间用）
     m [档位]   把 run/<别名>/msg.txt 发出去；换档位时同时切换预授权
-    new <目标> 用 msg.txt 建任务：`new <kimi会话id>` 接手已有会话（fork 副本），
-               `new w:<工作线id>` 在工作线上派活，`new -` 直接新开任务
     st         只打印状态（任务号、档位、上下文用量、有没有挂着的审批）
 
-边界全在 driver.json（脚本同目录，或 `DRIVER_CONFIG` 指过去）：
-
-    {
-      "root": "E:/proj/app",                  // 可写根目录（执行方的边界）
-      "danger": "rm\\s+-rf|\\\\bkill\\\\b|deploy",      // 命中即停下等人
-      "safe": "^\\\\s*(ls|cat|grep|git (status|diff|log))\\\\b",  // 只读/测试，自动放行
-      "profiles": {"dev": "<正则>", "commit": "<正则>"},   // 规格预授权档位（§8c）
-      "extraWritable": ["/tmp/build/"], "defaultProfile": "dev",
-      "serverPolicy": true                    // 同时给服务端 policy 兜一层
-    }
+边界全在 driver.json（脚本同目录，或 DRIVER_CONFIG 指过去）：必填 root/danger/safe，
+可选 profiles/extraWritable/defaultProfile/serverPolicy——字段与最小样例见同目录
+driver.example.json；缺文件、缺键都会一句话报错并指向它。
 
 「响应即上下文」的落实：stdout 只出一行结论（DONE / STOP / TIMEOUT），全量流水进
 run/<别名>/log；命令本身短到两个字符（`driver.py a y`）。
@@ -29,8 +24,11 @@ import http.client
 import json
 import os
 import re
+import ssl
 import sys
 import time
+import traceback
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,6 +37,32 @@ import deskport  # noqa: E402  同目录的单文件客户端
 HERE = Path(__file__).resolve().parent
 RUN_ROOT = Path(os.environ.get("DRIVER_RUN_DIR") or (HERE / "run"))
 TIMEOUT, MAX_TEXT, STALL_SEC = 900, 3000, 600   # 一轮等待上限 / 结论正文上限 / 无事件判停
+EXAMPLE = HERE / "driver.example.json"          # 最小样例：driver.json 缺什么照它补
+REQUIRED_KEYS = ("root", "danger", "safe")      # 边界三件套：去哪写、什么停、什么放
+
+
+class DriverError(Exception):
+    """可预期的失败：一句人话 + 退出码 2，不吐栈（要栈用 DRIVER_DEBUG=1）。"""
+
+
+# 证书错误口径与 deskport.py 的 CLI 一致（批次 M）：同一句话术，不造第二套
+CERT_HINT = """driver: 对端证书校验失败（自签证书：常见于反向代理 / frp 隧道的 HTTPS 入口）
+  三种处理，按可信度从高到低：
+   1) 把对端证书存成文件，用 connect(cafile="/path/to/cert.pem") 或 .deskport.json 的 "cafile" 键
+   2) 确认对端就是你要连的那台 Deskport 时，在 .deskport.json 加 "insecure": true
+   3) 同一网段可改用内网明文地址（http://<host>:6789，不需要证书）
+  注意：只有在你确认连的是自己的 Deskport 时才可用 2) 或 3)。"""
+
+
+def _fail(run, msg, code=2, err=None):
+    """一句人话收尾（run 建好了进 last.txt/log）；DRIVER_DEBUG=1 才打栈到 stderr。"""
+    if run is None:
+        print(msg, flush=True)
+    else:
+        run.say(msg)
+    if err is not None and os.environ.get("DRIVER_DEBUG"):
+        traceback.print_exc()
+    return code
 
 
 # ---------------------------------------------------------------- 边界判定
@@ -167,9 +191,14 @@ class Run:
 
     def load(self) -> dict:
         try:
-            return json.loads(self.state.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw = self.state.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
+        try:
+            return json.loads(raw)
+        except ValueError as err:
+            raise DriverError("%s 损坏（%s）；删掉它即可重置这个别名"
+                              % (self.state, err)) from None
 
     def save(self, st: dict) -> None:
         self.state.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
@@ -290,35 +319,59 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
 # ---------------------------------------------------------------- 入口
 
 def loadConfig() -> dict:
+    """边界配置：缺失/损坏/缺键/坏正则都是 DriverError——一句话说清缺什么，指向 example。"""
     path = Path(os.environ.get("DRIVER_CONFIG") or HERE / "driver.json")
-    cfg = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    cfg.setdefault("root", os.getcwd())
+    if not path.exists():
+        raise DriverError("找不到边界配置 %s；照同目录 %s 抄一份 "
+                          "（或设 DRIVER_CONFIG 指过去）" % (path, EXAMPLE.name))
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as err:
+        raise DriverError("边界配置 %s 损坏（%s）；照同目录 %s 重写"
+                          % (path, err, EXAMPLE.name)) from None
+    if not isinstance(cfg, dict):
+        raise DriverError("边界配置 %s 不是 JSON 对象；照同目录 %s 重写"
+                          % (path, EXAMPLE.name))
+    missing = [k for k in REQUIRED_KEYS if not cfg.get(k)]
+    if missing:
+        raise DriverError("边界配置 %s 缺键 %s；字段见同目录 %s"
+                          % (path, "、".join(missing), EXAMPLE.name))
+    try:
+        re.compile(cfg["danger"])
+        re.compile(cfg["safe"])
+    except re.error as err:
+        raise DriverError("边界配置 %s 的 danger/safe 不是合法正则（%s）；"
+                          "改法见同目录 %s" % (path, err, EXAMPLE.name)) from None
     return cfg
 
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv:
-        print(__doc__.strip().splitlines()[0])
-        print("用法: driver.py <别名> [y|n|c|m [档位]|new <会话id|w:工作线id> [档位]|st]", flush=True)
-        return 1
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip(), flush=True)
+        return 0
     alias, rest = argv[0], argv[1:]
     cmd = rest[0] if rest else ""
-    cfg = loadConfig()
-    policy = Policy(cfg)
-    run = Run(alias)
-    if run.busy():
-        print("BUSY 别名已有驱动在运行，未启动第二个", flush=True)
-        return 6
-    run.lock.write_text(str(os.getpid()), encoding="utf-8")
-    run.last.write_text("", encoding="utf-8")
-    st = run.load()
-    queued = st.pop("queued", []) or []
-    if st.get("root"):
-        cfg["root"] = st["root"]
-        policy = Policy(cfg)
-    profile = st.get("profile") or cfg.get("defaultProfile") or "dev"
+    run = None
     try:
+        cfg = loadConfig()
+        policy = Policy(cfg)
+        run = Run(alias)
+        if run.busy():
+            print("BUSY 别名已有驱动在运行，未启动第二个", flush=True)
+            return 6
+        run.lock.write_text(str(os.getpid()), encoding="utf-8")
+        run.last.write_text("", encoding="utf-8")
+        st = run.load()
+        queued = st.pop("queued", []) or []
+        if st.get("root"):
+            cfg["root"] = st["root"]
+            policy = Policy(cfg)
+        profile = st.get("profile") or cfg.get("defaultProfile") or "dev"
+        if cmd != "new" and not st.get("task"):     # 判空前置：新别名不走任何网络
+            run.say("STOP 别名 %s 还没有任务，先 driver.py %s new <会话id|w:工作线id|->"
+                    % (alias, alias))
+            return 3
         dp = deskport.connect().dp
         text = None
         if cmd == "new":
@@ -337,9 +390,6 @@ def main(argv=None) -> int:
             run.say("NEW %s" % task.id)
         else:
             task = dp.task(st["task"])
-            if not st.get("task"):
-                run.say("STOP 别名 %s 还没有任务，先 driver.py %s new <会话id|w:工作线id|->" % (alias, alias))
-                return 3
             if cmd == "st":
                 info = _retry(task.info, run)
                 q = "有挂起审批" if info.get("pendingPermission") or run.pending.exists() else "无挂起审批"
@@ -386,14 +436,32 @@ def main(argv=None) -> int:
         st["queued"] = list(queued)                 # 没补发出去的落盘，下次接着补
         run.save(st)
         return rc
+    except DriverError as err:                 # 可预期失败：一句人话 + exit 2，无栈
+        return _fail(run, "driver: %s" % err, 2, err)
+    except urllib.error.URLError as err:       # 首次连接最常见：证书 / 连不上
+        reason = getattr(err, "reason", err)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return _fail(run, CERT_HINT, 2, err)
+        if isinstance(reason, ssl.SSLError):
+            return _fail(run, "driver: 与对端的 TLS 连接失败（%s）；证书不受信任的处理"
+                          "同证书校验失败，见 %s 的 _说明" % (reason, EXAMPLE.name), 2, err)
+        if isinstance(reason, ConnectionError):
+            return _fail(run, "driver: 连不上对端（%s）；查地址、网络与服务是否在跑" % reason,
+                         2, err)
+        return _fail(run, "ERROR URLError: %s" % str(err)[:300], 1, err)
     except (OSError, http.client.HTTPException, deskport.DeskportError) as err:
-        run.say("ERROR %s: %s" % (type(err).__name__, str(err)[:300]))
-        return 1
+        return _fail(run, "ERROR %s: %s" % (type(err).__name__, str(err)[:300]), 1, err)
+    except ValueError as err:                  # 缺令牌/缺地址/prompt 超长：deskport 已说清
+        return _fail(run, "driver: %s" % err, 2, err)
+    except Exception as err:                   # 顶层兜底：一句人话，栈只在 DRIVER_DEBUG=1
+        head = (str(err).strip().splitlines() or ["无描述"])[0]
+        return _fail(run, "driver: 内部错误 %s: %s" % (type(err).__name__, head[:300]), 2, err)
     finally:
-        try:
-            run.lock.unlink()
-        except OSError:
-            pass
+        if run is not None:
+            try:
+                run.lock.unlink()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

@@ -9,10 +9,11 @@
                                       响应头 X-Tools-Sha256 与清单一致
     GET /api/agent/skill.zip        → 整包 zip：解开就是一个技能目录（见下）
 
-单文件白名单只有三个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活
-模板）、`COLLABORATION.md`（主控与执行方的分工/验收）。**SKILL.md 不走单文件端点**：
-它含 `{{BASE}}`/`{{VERSION}}` 占位符、要按请求渲染，所以只从整包出——整包五个条目
-（SKILL.md + 三个工具 + 现成的 `.deskport.json`），占位符按本次请求替换，`.deskport.json`
+单文件白名单只有四个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活
+模板）、`driver.example.json`（`driver.json` 最小样例，驱动首次运行照它抄）、
+`COLLABORATION.md`（主控与执行方的分工/验收）。**SKILL.md 不走单文件端点**：
+它含 `{{BASE}}`/`{{VERSION}}` 占位符、要按请求渲染，所以只从整包出——整包六个条目
+（SKILL.md + 四个工具 + 现成的 `.deskport.json`），占位符按本次请求替换，`.deskport.json`
 带本次地址、不含令牌。
 
 整包与单文件都从 `.agents/skills/deskport/` **实时组装**（agent_skill_files.buildSkillZip，
@@ -39,7 +40,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS_DIR = os.path.join(BASE_DIR, '.agents', 'skills', 'deskport')
 # 公开白名单（顺序即清单顺序）。新增公开工具先过 tests/test_agent_tools.py
 # 的凭据正则：token=<长随机串> / password / agentTokens 命中即失败。
-TOOLS = ('deskport.py', 'driver.py', 'COLLABORATION.md')
+TOOLS = ('deskport.py', 'driver.py', 'driver.example.json', 'COLLABORATION.md')
 # 公开整包的技能名：写死一个，别的名字不给路由（404 不解释）。
 PUBLIC_SKILL = 'deskport'
 
@@ -88,11 +89,11 @@ def agentToolGet(name):
 
 @blueprint.route('/api/agent/skill.zip')
 def agentSkillZip():
-    """整包下载（无令牌）：解开就是一个技能目录，五个条目都在 `deskport/` 前缀下。
+    """整包下载（无令牌）：解开就是一个技能目录，六个条目都在 `deskport/` 前缀下。
 
         curl -s $D/api/agent/skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip
 
-    SKILL.md + 三个工具 + 现成的 `.deskport.json`（带本次地址、不含令牌）；
+    SKILL.md + 四个工具 + 现成的 `.deskport.json`（带本次地址、不含令牌）；
     SKILL.md 里的 `{{BASE}}`/`{{VERSION}}` 按本次请求替换（与 handbook 一致），
     解开即可照做。与 tools 共用手册开关，关掉时 404。
     """

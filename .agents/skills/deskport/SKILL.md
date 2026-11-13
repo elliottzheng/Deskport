@@ -25,7 +25,8 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 | 文件 | 用途 |
 |---|---|
 | `deskport.py` | Python 客户端（单文件、零依赖），也能当 CLI：`python deskport.py run "uptime"` |
-| `driver.py` | 驱动模板：别名目录、边界判定、审批自动放行、409 排队；边界写在 `driver.json` |
+| `driver.py` | 驱动模板：别名目录、边界判定、审批自动放行、409 排队；边界写在 `driver.json`（字段见同目录 `driver.example.json`） |
+| `driver.example.json` | `driver.json` 的最小样例（带 `_说明`）：驱动首次运行前照它抄一份 |
 | `COLLABORATION.md` | 协作原则：主控与执行方怎么分工、派活、验收（真去指挥别的智能体前读一遍） |
 
 > **必读**：`COLLABORATION.md`（主控与执行方怎么分工、怎么验收、什么时候停下问人）。
@@ -50,7 +51,7 @@ python ./deskport-skill/deskport/deskport.py hosts   # 验一下
 S=./deskport-skill/deskport; mkdir -p "$S"
 T=<部署者发你的令牌>
 curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport" | python3 -c "import json,sys; print(json.load(sys.stdin)['content'])" > "$S/SKILL.md"
-for f in deskport.py driver.py COLLABORATION.md; do
+for f in deskport.py driver.py driver.example.json COLLABORATION.md; do
   curl -s -k -H "X-Agent-Token: $T" "$D/api/agent/skills/deskport/$f?raw=1" -o "$S/$f"
 done
 ```
@@ -61,7 +62,8 @@ done
 （只信任这一张，比全局跳过校验更稳；CLI 等价于 `-k`）；内网 http 直连没有这个问题。
 只在确认连的就是自己的 Deskport 时才跳过校验——对别的地址别顺手 `-k`。
 
-客户端与驱动只用标准库（Python ≥ 3.9）。驱动默认读自己目录的 `driver.json`，
+客户端与驱动只用标准库（Python ≥ 3.9）。驱动默认读自己目录的 `driver.json`（必填
+root/danger/safe，缺文件或缺键会一句话报错并指向同目录 `driver.example.json`），
 `DRIVER_CONFIG` 可指到别处，别名目录在脚本目录的 `run/<别名>/` 下。
 
 ## 快命令（无状态，单发）
