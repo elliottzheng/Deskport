@@ -12,14 +12,24 @@
 
 ## 签发令牌
 
-1. 生成随机令牌并计算哈希：
+在设置页「智能体令牌」卡片里签发：填名称、选权限档位，提交后**明文只显示
+一次**（服务端只存 SHA-256，任何接口都不再回显），列出与吊销也在同一张
+卡片。写完即热生效，无需重启。
 
-```bash
-TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
-python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()).hexdigest())"
+```text
+GET    /api/settings/agent-tokens        # 列表（无哈希、无明文）
+POST   /api/settings/agent-tokens        {name, scopes?} → {id, token, name, scopes}
+DELETE /api/settings/agent-tokens/<id>   # 吊销
 ```
 
-2. 把 `tokenHash` 写进 `config.json`（令牌明文自己保存，仓库与日志里都不落）：
+- 三档权限：省略 `scopes` = 全权；`["upload","share"]` = 上传与派活；`["share"]` = 仅派活；其它组合 400；
+- 名称 1-24 字符、不可重名；上限 10 条；
+- **不能吊销最后一条全权令牌**（否则可能把自己锁在门外）→ 400；
+- 吊销即时生效：持该令牌的程序下一个请求就 401。
+
+仍可手改 `config.json` 的 `agentTokens[]`（先生成随机串、再算 SHA-256、再粘
+进 JSON，字段与旧版一致）——但手滑一次就全 401，且网页上看不到有哪些令牌、
+没法吊销，推荐走设置页：
 
 ```json
 "agentTokens": [
@@ -27,8 +37,6 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
   { "id": "kimi",   "name": "Kimi Code", "tokenHash": "<SHA-256>" }
 ]
 ```
-
-3. 重启 Deskport 生效；撤销 = 删除对应条目再重启。
 
 **每个智能体单独签发一个令牌**：审计按令牌名留痕，混用一个令牌会让
 "谁干了什么"查不清（反馈 §8.1）。任务、会话对所有令牌可见——这是单用户

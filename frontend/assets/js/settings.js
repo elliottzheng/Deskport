@@ -45,6 +45,14 @@ createApp({
             utBusy: false,
             handbookUrl: '',
             handbookOk: '',
+            agentTokens: [],
+            agentTokenError: '',
+            agentTokenOk: '',
+            agentTokenBusy: false,
+            newTokenName: '',
+            newTokenScope: '',
+            plainToken: null,
+            plainCopied: '',
         };
     },
     mounted() {
@@ -54,6 +62,7 @@ createApp({
         this.loadFederation();
         this.loadDevices();
         this.loadUploadTargets();
+        this.loadAgentTokens();
     },
     methods: {
         async loadBrand() {
@@ -385,6 +394,80 @@ createApp({
                 this.utError = err.message;
             } finally {
                 this.utBusy = false;
+            }
+        },
+        scopeText(t) {
+            // 缺省 scopes = 全权（agent_api.agentHasScope 的同款语义）
+            const scopes = (t && t.scopes) || [];
+            if (!scopes.length || scopes.includes('full')) { return '全权'; }
+            if (scopes.includes('upload') && scopes.includes('share') && scopes.length === 2) { return '上传 + 派活'; }
+            if (scopes.length === 1 && scopes[0] === 'share') { return '仅派活'; }
+            return scopes.join(' + ');
+        },
+        async loadAgentTokens() {
+            try {
+                const r = await fetch('/api/settings/agent-tokens');
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.agentTokens = data.tokens || [];
+            } catch (err) {
+                this.agentTokenError = '加载智能体令牌失败: ' + err.message;
+            }
+        },
+        async createAgentToken() {
+            if (this.agentTokenBusy) { return; }
+            this.agentTokenError = '';
+            this.agentTokenOk = '';
+            const name = this.newTokenName.trim();
+            if (!name) { this.agentTokenError = '请填写令牌名称'; return; }
+            if (name.length > 24) { this.agentTokenError = '名称最多 24 个字符'; return; }
+            this.agentTokenBusy = true;
+            try {
+                const body = { name: name };
+                if (this.newTokenScope) { body.scopes = this.newTokenScope.split('+'); }
+                const r = await fetch('/api/settings/agent-tokens', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.plainToken = { token: data.token, name: data.name, scopes: data.scopes };
+                this.plainCopied = '';
+                this.newTokenName = '';
+                this.newTokenScope = '';
+                await this.loadAgentTokens();
+            } catch (err) {
+                this.agentTokenError = err.message;
+            } finally {
+                this.agentTokenBusy = false;
+            }
+        },
+        async revokeAgentToken(t) {
+            if (this.agentTokenBusy) { return; }
+            this.agentTokenError = '';
+            this.agentTokenOk = '';
+            this.agentTokenBusy = true;
+            try {
+                const r = await fetch('/api/settings/agent-tokens/' + t.id, { method: 'DELETE' });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.agentTokens = this.agentTokens.filter(x => x.id !== t.id);
+                this.agentTokenOk = '已吊销「' + t.name + '」，持该令牌的程序会立刻失效';
+                setTimeout(() => { this.agentTokenOk = ''; }, 2500);
+            } catch (err) {
+                this.agentTokenError = err.message;
+            } finally {
+                this.agentTokenBusy = false;
+            }
+        },
+        async copyPlainToken() {
+            try {
+                await navigator.clipboard.writeText(this.plainToken.token);
+                this.plainCopied = '已复制';
+                setTimeout(() => { this.plainCopied = ''; }, 2000);
+            } catch (err) {
+                this.plainCopied = '复制失败，请手动选中复制';
             }
         },
         async submit() {

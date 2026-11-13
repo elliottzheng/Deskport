@@ -62,3 +62,21 @@
     margin-top: var(--sp-2); padding: 10px 12px; border-radius: var(--radius-s);
     background: var(--bg-2); border-left: 3px solid var(--warn); color: var(--text-2);
 }
+
+/* 智能体令牌 */
+.agent-token-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 10px; margin-bottom: 6px; border-radius: var(--radius-s);
+    background: var(--bg-2); font-size: 12px;
+}
+.agent-token-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text-1); overflow-wrap: anywhere; }
+.agent-token-scope {
+    flex: 0 0 auto; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+    white-space: nowrap; background: var(--surface); color: var(--text-3);
+}
+.agent-token-scope.agent-token-full { color: var(--warn); font-weight: 600; }
+.agent-token-meta { flex: 0 0 auto; color: var(--text-3); }
+.agent-token-plain { margin-top: var(--sp-3); }
+.agent-token-plain-title { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-1); line-height: 1.6; }
+.agent-token-plain .input { font-family: var(--mono); }
+.agent-token-plain .settings-submit { margin-top: var(--sp-3); }
