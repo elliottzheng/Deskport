@@ -84,6 +84,53 @@ def test_unc_root_matches_its_share(cfg):
     assert not fw.checkPaths([r'\\server\other\evil.txt'])[0]
 
 
+def _countRealpath(monkeypatch):
+    """给 os.path.realpath 套计数器（fw 里用的是同一个 os 模块）。"""
+    calls = []
+    realRealpath = os.path.realpath
+
+    def counting(path, *args, **kwargs):
+        calls.append(path)
+        return realRealpath(path, *args, **kwargs)
+
+    monkeypatch.setattr(fw.os.path, 'realpath', counting)
+    return calls
+
+
+def test_unc_roots_never_touch_realpath(cfg, monkeypatch):
+    """UNC 根只做文本归一：重复 roots() 不得对共享走 realpath（离线一次 41 秒）。"""
+    cfg['roots'] = [r'\\nas\team', '\\\\nas\\team\\']
+    calls = _countRealpath(monkeypatch)
+    for _ in range(5):
+        assert fw.roots() == [r'\\nas\team']
+    assert calls == []
+
+
+def test_unc_check_paths_never_touch_realpath(cfg, monkeypatch):
+    """联邦写请求判定也不能对 UNC 走 realpath —— 否则每个请求都卡网络超时。"""
+    cfg['roots'] = [r'\\nas\team']
+    calls = _countRealpath(monkeypatch)
+    assert fw.checkPaths([r'\\nas\team\a\b.txt'])[0] is True
+    assert fw.checkPaths([r'\\nas\other\b.txt'])[0] is False
+    assert calls == []
+
+
+def test_unc_is_text_normalized(cfg):
+    cfg['roots'] = [r'\\nas\team']
+    assert fw.normalizePath('\\\\nas\\team\\') == r'\\nas\team'
+    assert fw.normalizePath('\\\\nas\\team\\sub\\.\\x.txt') == r'\\nas\team\sub\x.txt'
+    assert fw.normalizePath('\\\\nas') == ''          # 缺共享名
+    assert not fw.checkPaths([r'\\nas\team2\x.txt'])[0]   # 共享名前缀不算在根内
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='正斜杠 UNC 只在 Windows 上成立')
+def test_forward_slash_unc_is_text_normalized(cfg):
+    cfg['roots'] = ['//nas/team']
+    assert fw.roots() == [r'\\nas\team']
+    assert fw.checkPaths(['//nas/team/a.txt'])[0] is True
+    assert fw.normalizePath('//./PhysicalDrive0') == ''
+
+
 def test_symlink_escape_rejected(cfg, tmp_path, monkeypatch):
     """用 realpath 替身模拟软链：根内链接解析到根外，必须 403。"""
     root = tmp_path / 'root'

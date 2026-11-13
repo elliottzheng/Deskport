@@ -56,7 +56,7 @@ def getRemotes():
                     'terminal': item.get('terminal', True) is not False,
                     'apps': apps,
                     'files': item.get('files', False) is True,
-                    'filesWrite': item.get('filesWrite', False) is True,
+                    'filesWrite': item.get('files', False) is True and item.get('filesWrite', False) is True,
                     'models': models,
                     'model': str(item.get('model') or '').strip()})
     return out

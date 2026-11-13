@@ -14,8 +14,9 @@
 
     成员  收到带 X-Deskport-From 的文件请求（被中枢转发过来）
           - 只放行 READ_ONLY_PATHS + WRITE_PATHS 的并集；
-          - 写操作要求 path/最终目标 realpath 落在 config.federationRoots 内
-            （空数组 = 联邦一律 403 写）；
+          - 写操作要求 path/最终目标落点在 config.federationRoots 内
+            （本地路径 realpath 后比较，UNC 只做文本归一；空数组 =
+            带 X-Deskport-From 的联邦写一律 403）；
           - 记一条审计 from=<中枢> actor=<谁> 后放行本机路由；
           - 收到带 machine 的联邦请求也只在本机处理，绝不二次转发（单跳）。
 

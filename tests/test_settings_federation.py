@@ -132,6 +132,32 @@ def test_remotes_api_files_write_roundtrip(client, cfgfile):
     assert json.loads(cfgfile.read_text(encoding='utf-8'))['remotes'][0]['filesWrite'] is True
 
 
+def test_remotes_api_files_write_requires_files(client, cfgfile):
+    """files=false + filesWrite=true 落盘前归一为 false：页面不会出现矛盾态。"""
+    resp = client.post('/api/settings/federation/remotes', json={'remotes': [
+        {'id': 'r1', 'name': 'a', 'base': 'http://a:1', 'token': '',
+         'files': False, 'filesWrite': True},
+    ]})
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    assert resp.get_json()['remotes'][0]['filesWrite'] is False
+    assert config.getRemotes()[0]['filesWrite'] is False
+    stored = json.loads(cfgfile.read_text(encoding='utf-8'))['remotes'][0]
+    assert stored['files'] is False and stored['filesWrite'] is False
+    # 设置页 GET 拿到的也是 false —— 勾选框不会再「勾着但灰掉」
+    got = client.get('/api/settings/federation').get_json()['remotes'][0]
+    assert got['filesWrite'] is False
+
+
+def test_hand_edited_contradiction_is_normalized(cfgfile):
+    """手改 config.json 写出 files=false, filesWrite=true 时，读侧同样归一。"""
+    cfgfile.write_text(json.dumps({'remotes': [
+        {'id': 'r1', 'name': 'a', 'base': 'http://a:1', 'token': '',
+         'files': False, 'filesWrite': True},
+    ]}), encoding='utf-8')
+    config._cache.update(mtime=None, data=None)
+    assert config.getRemotes()[0]['filesWrite'] is False
+
+
 def test_remotes_api_rejects_non_bool_files_write(client, cfgfile):
     resp = client.post('/api/settings/federation/remotes', json={'remotes': [
         {'id': 'r1', 'name': 'a', 'base': 'http://a:1', 'token': '',

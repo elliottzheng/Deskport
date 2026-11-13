@@ -29,6 +29,7 @@ createApp({
             fedOk: '',
             fedBusy: false,
             fedRoots: [],
+            fedRootsState: 'loading',   // loading | ok | error: 空列表只有 ok 时才等于"确实为空"
             newFedRoot: '',
             rootsError: '',
             rootsOk: '',
@@ -149,7 +150,9 @@ createApp({
             return { id: x.id, name: x.name, base: x.base, token: x.token || '',
                      terminal: x.terminal !== false,
                      files: x.files === true,
-                     filesWrite: x.filesWrite === true,
+                     // 写依赖读：老配置/手改 config.json 里可能出现 files=false
+                     // 但 filesWrite=true，这里一并归一，别让勾选框「勾着但灰掉」
+                     filesWrite: x.files === true && x.filesWrite === true,
                      appsText: (x.apps || []).join(', ') };
         },
         async loadFederation() {
@@ -160,6 +163,7 @@ createApp({
                 this.fedToken = data.token || '';
                 this.fedRemotes = (data.remotes || []).map(x => this.toRemoteRow(x));
                 this.fedRoots = data.roots || [];
+                this.fedRootsState = 'ok';
                 const seen = {};
                 (data.discoveredApps || []).forEach(function (a) {
                     const key = a.remoteId;
@@ -168,6 +172,8 @@ createApp({
                 });
                 this.fedDiscovered = seen;
             } catch (err) {
+                // 加载失败时 fedRoots 是 []，但那是"不知道"，不是"确实为空"
+                this.fedRootsState = 'error';
                 this.fedError = '加载联邦设置失败: ' + err.message;
             }
         },
@@ -281,9 +287,10 @@ createApp({
                 const data = await r.json().catch(() => ({}));
                 if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                 this.fedRoots = data.roots || [];
+                this.fedRootsState = 'ok';
                 this.rootsOk = this.fedRoots.length
                     ? ('已保存 ' + this.fedRoots.length + ' 个可写目录，立即生效（无需重启）')
-                    : '已清空：联邦写现在一律拒绝';
+                    : '已清空：带 X-Deskport-From 的联邦转发写现在一律 403（本机自己的文件操作不受影响）';
                 setTimeout(() => { this.rootsOk = ''; }, 3000);
             } catch (err) {
                 this.rootsError = err.message;

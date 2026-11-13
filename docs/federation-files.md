@@ -8,8 +8,8 @@
 
 | 层 | 开关 | 缺省 | 作用 |
 | --- | --- | --- | --- |
-| 成员端 | `config.federationRoots` | `[]` | 联邦写请求的路径必须 realpath 落在这些根下；空数组 = 联邦一律 403 写 |
-| 中枢端 | `remotes[].filesWrite` | `false` | 是否把写端点转发给该成员；`files: true` 仍然只是只读 |
+| 成员端 | `config.federationRoots` | `[]` | 联邦写请求的路径必须落在这根系下（本地路径 realpath，UNC 只做文本归一）；空数组 = 带 `X-Deskport-From` 的联邦转发写一律 403 |
+| 中枢端 | `remotes[].filesWrite` | `false` | 是否把写端点转发给该成员；`files: true` 仍然只是只读；`files=false` 时恒为 `false` |
 | App | 设备令牌 scope `upload_remote` | 未授 | 手机上传到远端需要；设备登录 `allowRemoteUpload: true` 才追加（见 §8） |
 
 `files: true` 控制只读浏览，`filesWrite: true` 控制写；两者都要求 `files: true`
@@ -38,7 +38,7 @@
 等价 API（都立即生效，无需重启）：
 
 ```bash
-# 成员端：设置可写目录（全量替换；[] = 联邦写一律拒绝）
+# 成员端：设置可写目录（全量替换；[] = 联邦转发写一律 403）
 curl -s -b cookie.txt -H 'Content-Type: application/json' \
   -d '{"roots":["E:\\共享\\给中枢"]}' \
   http://B:6789/api/settings/federation/roots
@@ -125,9 +125,11 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
 
 校验规则（`modules/federation_write.py`）：
 
-1. 空数组 = 一律 403，不是"不校验"；
-2. 先剥 `\\?\` / `\\?\UNC\` 长路径前缀，再 `realpath`；
-3. `realpath` 解析软链与 `..`，逃逸出根的路径拒绝；
+1. 空数组 = 带 `X-Deskport-From` 的联邦转发写一律 403，不是"不校验"；
+2. 先剥 `\\?\` / `\\?\UNC\` 长路径前缀；本地路径再 `realpath`（解析软链与 `..`）；
+3. **UNC 只做文本归一**（`normpath` 折叠 `..`），不调 `realpath`：离线共享上一次
+   `realpath` 实测 41 秒，而 `roots()` 每个设置页请求、每个联邦写请求都要跑一遍。
+   代价是 UNC 共享内部的软链/junction 不解析，判界靠文本前缀 + 共享名边界；
 4. 比较用 `normcase` + `normpath`：Windows 盘符、UNC 共享名大小写不敏感；
 5. 拒绝相对路径、盘符相对路径（`C:foo`）、设备路径（`\\.\...`）；
 6. 每个写端点按"最终会落盘的路径"校验：`rename` 同时校验旧路径与新名，

@@ -181,17 +181,21 @@
 
     <div class="card settings-card" id="fed-roots-card">
         <div class="card-title">联邦可写目录</div>
-        <p class="settings-note">本机作为成员时，别的电脑通过「多机联邦」写本机文件，落点必须真实落在这里的某个目录内（先归一化再比较，软链与 <code>..</code> 逃逸都算越界）。<strong>空列表 = 当前联邦写一律拒绝</strong>；只读浏览不受这里限制。保存后立即生效，无需重启。</p>
+        <p class="settings-note">本机作为成员时，别的电脑通过「多机联邦」写本机文件，落点必须真实落在这里的某个目录内（本地路径先 <code>realpath</code> 再比较，软链与 <code>..</code> 逃逸都算越界；UNC 只做文本归一，不触网）。<strong>空列表 = 带 <code>X-Deskport-From</code> 的联邦转发写一律 403</strong>；本机自己的文件操作和只读浏览都不受这里限制。保存后立即生效，无需重启。</p>
 
         <div class="settings-dir" v-for="(p, i) in fedRoots" :key="p">
             <code>{{ prettyPath(p) }}</code>
             <button type="button" class="btn btn-ghost settings-dir-remove" @click="removeFedRoot(i)">移除</button>
         </div>
 
-        <p class="settings-hint settings-warn" id="fed-roots-empty" v-if="!fedRoots.length">
-            当前可写目录为空：联邦写一律拒绝——任何远端对本机的写请求都会 403（这不是配错了）。要允许写，请添加目录并保存。
+        <p class="settings-hint" id="fed-roots-loading" v-if="fedRootsState === 'loading'">正在加载可写目录…</p>
+        <p class="settings-hint settings-warn" id="fed-roots-error" v-else-if="fedRootsState === 'error'">
+            可写目录没加载出来，暂时无法判断是空还是非空——不要据此认为联邦写已经全拒或已经开启。此时保存会用空列表覆盖现有配置，所以保存按钮先禁用；请刷新页面重试。
         </p>
-        <p class="settings-hint" id="fed-roots-count" v-else>已配置 {{ fedRoots.length }} 个可写目录；目录之外的写请求一律 403。</p>
+        <p class="settings-hint settings-warn" id="fed-roots-empty" v-else-if="!fedRoots.length">
+            当前可写目录为空：带 <code>X-Deskport-From</code> 的联邦转发写请求一律 403（这不是配错了）。本机自己的文件操作、不带该头的请求、以及只读浏览都不受影响。要允许别的机器写入，请添加目录并保存。
+        </p>
+        <p class="settings-hint" id="fed-roots-count" v-else>已配置 {{ fedRoots.length }} 个可写目录；落点不在这些目录内的联邦转发写请求一律 403。</p>
 
         <div class="settings-dir-add">
             <input class="input" id="fed-root-input" v-model.trim="newFedRoot"
@@ -201,7 +205,8 @@
 
         <p v-if="rootsError" class="load-error" style="margin-top:12px">{{ rootsError }}</p>
         <p v-if="rootsOk" class="settings-ok">{{ rootsOk }}</p>
-        <button class="btn btn-primary settings-submit" id="fed-roots-save" @click="saveRoots" :disabled="rootsBusy">
+        <button class="btn btn-primary settings-submit" id="fed-roots-save" @click="saveRoots"
+                :disabled="rootsBusy || fedRootsState !== 'ok'">
             {{ rootsBusy ? '保存中…' : '保存可写目录' }}
         </button>
     </div>

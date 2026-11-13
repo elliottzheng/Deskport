@@ -134,6 +134,9 @@ def setRemotes():
         filesWrite = item.get('filesWrite', False)
         if not isinstance(filesWrite, bool):
             return jsonify({'error': 'filesWrite 需为布尔'}), 400
+        # filesWrite 依赖 files：未接文件就不可能有写权限，落盘前归一，
+        # 免得页面出现「勾着但灰掉 + 徽标说未接文件」的矛盾态。
+        filesWrite = files and filesWrite
         apps = item.get('apps', [])
         if not isinstance(apps, list) or len(apps) > 20 or \
                 any(not isinstance(a, str) or not a.strip() or len(a) > 40 for a in apps):
@@ -166,6 +169,9 @@ def setFederationRoots():
             return jsonify({'error': '第 %d 项不是合法的绝对路径（相对路径 / .. / '
                                      '盘符相对 / 设备路径一律拒绝）: %s'
                                      % (idx, item.strip()[:200])}), 400
+        if federation_write.isExistingFile(root):
+            return jsonify({'error': '第 %d 项是文件，不是目录（可写目录必须指向目录）: %s'
+                                     % (idx, root[:200])}), 400
         if root not in cleaned:
             cleaned.append(root)
     config.setFederationRoots(cleaned)
