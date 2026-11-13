@@ -105,15 +105,20 @@ def getPassword():
     return load().get('password') or ''
 
 
-def setPassword(newPassword):
-    """原子写回 config.json (保留其他键)。"""
+def _save(cfg):
+    """原子写回 config.json 并失效缓存（mtime 精度不够时也能即时生效）。"""
     from modules import state
-    cfg = load()
-    cfg['password'] = newPassword
     state.atomicWriteJson(CONFIG_PATH, cfg)
     with _cacheLock:
         _cache['mtime'] = None
         _cache['data'] = None
+
+
+def setPassword(newPassword):
+    """原子写回 config.json (保留其他键)。"""
+    cfg = load()
+    cfg['password'] = newPassword
+    _save(cfg)
 
 
 def getAgentTokens():
@@ -132,13 +137,9 @@ def getBrandName():
 
 def setBrandName(name):
     """写回品牌名（保留其他配置键）。"""
-    from modules import state
     cfg = load()
     cfg['brandName'] = name
-    state.atomicWriteJson(CONFIG_PATH, cfg)
-    with _cacheLock:
-        _cache['mtime'] = None
-        _cache['data'] = None
+    _save(cfg)
 
 
 def getIdleTimeoutSeconds():
@@ -383,14 +384,10 @@ def getUploadTargets():
 
 def setUploadTargets(targets):
     """写回自定义上传目标（保留其他配置键）。phone 是内置目标, 不入配置。"""
-    from modules import state
     cfg = load()
     cfg['uploadTargets'] = [t for t in targets
                             if str(t.get('id') or '') != UPLOAD_TARGET_BUILTIN_ID]
-    state.atomicWriteJson(CONFIG_PATH, cfg)
-    with _cacheLock:
-        _cache['mtime'] = None
-        _cache['data'] = None
+    _save(cfg)
 
 
 def isInboxEnabled():
@@ -432,36 +429,24 @@ def getInboxDirs():
 
 def setInboxSettings(enabled, dirs):
     """写回收件箱开关与目录（保留其他配置键）。"""
-    from modules import state
     cfg = load()
     cfg['inboxEnabled'] = bool(enabled)
     cfg['inboxDirs'] = list(dirs)
-    state.atomicWriteJson(CONFIG_PATH, cfg)
-    with _cacheLock:
-        _cache['mtime'] = None
-        _cache['data'] = None
+    _save(cfg)
 
 
 def setFederationToken(token):
     """写回本机联邦令牌; 空串 = 不允许被其他 Deskport 联邦接入。"""
-    from modules import state
     cfg = load()
     cfg['federationToken'] = (token or '').strip()
-    state.atomicWriteJson(CONFIG_PATH, cfg)
-    with _cacheLock:
-        _cache['mtime'] = None
-        _cache['data'] = None
+    _save(cfg)
 
 
 def setRemotes(remotes):
     """写回远端机器列表（保留其他配置键）; remotes 为 [{id,name,base,token}]。"""
-    from modules import state
     cfg = load()
     cfg['remotes'] = list(remotes)
-    state.atomicWriteJson(CONFIG_PATH, cfg)
-    with _cacheLock:
-        _cache['mtime'] = None
-        _cache['data'] = None
+    _save(cfg)
 
 
 def stateDir():
