@@ -325,7 +325,8 @@ DELETE /api/agent/ssh/sessions/<sid>
   存在、是目录且在 `config.workDirs` / `fallbackDir` 之下；非本机是该机器
   上已存在的目录（必填，由对端校验）。网页任务表单（`/app?view=tasks`）在
   执行点选「本机」时也有「工作目录」输入框，留空即任务目录（此时请求不带
-  `cwd` 键）。两者的细节见下节；
+  `cwd` 键）；输入框的占位符与候选取自 `GET /api/ai/config` 的 `workDirs`，
+  提示里列出这些根目录。两者的细节见下节；
 - `engine` 字段已移除：传了直接 **400**，不会被忽略或映射；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；

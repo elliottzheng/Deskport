@@ -12,6 +12,7 @@
                 nodes: [],
                 remoteCwd: '',
                 localCwd: '',
+                cwdRoots: [],
                 paths: [],
                 pathInput: '',
                 pathMenuOpen: false,
@@ -100,9 +101,19 @@
             logUrl() {
                 return '/api/tasks/' + encodeURIComponent(this.selectedId || '') + '/log?download=1';
             },
+            cwdLine() {
+                const d = this.detail;
+                if (!d) { return ''; }
+                const node = d.node || 'local';
+                if (node !== 'local') { return '执行点 ' + node + (d.cwd ? ' · ' + d.cwd : ''); }
+                if (!d.cwd || !d.workspace) { return ''; }
+                const norm = (p) => String(p).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+                return norm(d.cwd) === norm(d.workspace) ? '' : '本机 · ' + d.cwd;
+            },
         },
         mounted() {
             this.loadRecent();
+            this.loadCwdRoots();
             this.refresh();
             this.loadNodes();
             this.listTimer = setInterval(this.refresh, 2000);
@@ -209,10 +220,11 @@
                 this.error = '';
                 try {
                     const body = { prompt: prompt, mode: this.mode, node: this.runWhere };
+                    const isLocal = this.isLocalRun;   // await 前捕获，避免请求途中切执行点
                     const cwd = (this.localCwd || '').trim();
-                    if (this.isLocalRun) {
+                    if (isLocal) {
                         body.paths = this.paths;
-                        // 留空不发 cwd：空串会被服务端 400，缺省语义是任务目录
+                        // 留空就不发 cwd 键，让服务端用任务目录（空串也按未指定处理，但不必发）
                         if (cwd) { body.cwd = cwd; }
                     } else {
                         body.cwd = this.remoteCwd;
@@ -228,7 +240,7 @@
                     this.prompt = '';
                     this.paths = [];
                     this.pathMenuOpen = false;
-                    if (this.isLocalRun) { this.rememberCwd(cwd); }
+                    if (isLocal) { this.rememberCwd(cwd); }
                     await this.select(data.task);
                 } catch (err) {
                     this.error = err.message;
@@ -238,6 +250,13 @@
             },
             rememberCwd(p) {
                 try { localStorage.setItem('wp.taskCwd', p); } catch (err) { /* ignore */ }
+            },
+            async loadCwdRoots() {
+                try {
+                    const r = await fetch('/api/ai/config');
+                    const d = await r.json();
+                    this.cwdRoots = d.workDirs || [];
+                } catch (err) { /* 拉不到就只留通用提示 */ }
             },
             async loadNodes() {
                 try {
