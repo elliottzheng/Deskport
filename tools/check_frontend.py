@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""前端静态检查：资源存在性、HTML/JS id 引用、JS 调用目标、API 端点一致性。
+"""前端静态检查：资源存在性、HTML/JS id 引用、JS 调用目标、API 端点一致性、
+tests/js/ 的前端纯逻辑单测（node --test）。
 
 与 tools/check_structure.py（Python 侧门禁）配套，覆盖纯正则/语法检查抓不到的
 前后端漂移问题。用法:
@@ -8,8 +9,10 @@
     python tools/check_frontend.py --strict   # warning 也失败
 """
 import argparse
+import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -112,6 +115,8 @@ def html_inline_scripts():
 # ---------------------------------------------------------------- 检查项
 
 def check_js_syntax(errors, warnings):
+    if not shutil.which('node'):
+        return '[skip] node 未安装，跳过 JS 语法检查'
     for path in js_files():
         rel = os.path.relpath(path, ROOT).replace('\\', '/')
         proc = subprocess.run(['node', '--check', path], capture_output=True, text=True)
@@ -285,6 +290,30 @@ def check_api_endpoints(errors, warnings):
             warnings.append('JS 请求未登记的后端端点 %s (%s)' % (base, ', '.join(sorted(files))))
 
 
+def check_js_unit_tests(errors, warnings):
+    """tests/js/ 的前端纯逻辑单测（node --test）。红 = 门禁失败。
+
+    不直接传目录：Node 24 把 --test 的位置参数当 glob 模式，裸目录会被当成
+    模块加载（MODULE_NOT_FOUND、退出码 1），门禁会假红——这里自己收
+    *.test.mjs 显式传文件。找不到 node 或没有用例只打印跳过，不算失败。
+    """
+    if not shutil.which('node'):
+        return '[skip] node 未安装，跳过 JS 测试'
+    pattern = os.path.join(ROOT, 'tests', 'js', '**', '*.test.mjs')
+    files = sorted(glob.glob(pattern, recursive=True))
+    if not files:
+        return '跳过（tests/js/ 没有 .test.mjs）'
+    proc = subprocess.run(['node', '--test', *files], cwd=ROOT,
+                          capture_output=True, text=True)
+    for line in (proc.stdout or '').splitlines()[-8:]:
+        print('[js] ' + line)
+    if proc.returncode != 0:
+        detail = '\n'.join((proc.stdout or '').splitlines()[-30:])
+        errors.append('JS 单测失败（node --test tests/js/）:\n' + detail)
+        return '失败'
+    return 'OK（%d 个文件）' % len(files)
+
+
 CHECKS = [
     ('JS 语法', check_js_syntax),
     ('CSS 括号', check_css_braces),
@@ -292,6 +321,7 @@ CHECKS = [
     ('id 引用', check_id_refs),
     ('调用目标', check_call_targets),
     ('API 端点', check_api_endpoints),
+    ('JS 单测', check_js_unit_tests),
 ]
 
 
@@ -302,9 +332,12 @@ def main():
     errors, warnings = [], []
     for label, fn in CHECKS:
         before = len(errors) + len(warnings)
-        fn(errors, warnings)
+        note = fn(errors, warnings)
         found = len(errors) + len(warnings) - before
-        print('[check] %-8s %s' % (label, 'OK' if found == 0 else '%d 项' % found))
+        if note:
+            print('[check] %-8s %s' % (label, note))
+        else:
+            print('[check] %-8s %s' % (label, 'OK' if found == 0 else '%d 项' % found))
     print()
     for w in warnings:
         print('[warn] ' + w)

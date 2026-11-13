@@ -60,7 +60,9 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   'TermClient', 'TermFeatures', 'toggleMultiExec', 'WPCommon',
                   'FilesMethodsCore', 'FilesMethodsOps', 'FilesMethodsUi', 'FilesMethodsAi',
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
-                  'TermEnv', 'TermSessionUI', 'TermControls'}
+                  'TermEnv', 'TermSessionUI', 'TermControls',
+                  # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
+                  'WPShareForm'}
 
 
 def read_lines(path):

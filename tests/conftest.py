@@ -1,6 +1,9 @@
 import json
 import os
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -38,15 +41,41 @@ def _resetConfigCache():
     config._cache.update(mtime=None, data=None)
 
 
+def pytest_configure(config):
+    """--basetemp 指向不存在的父目录也照跑。
+
+    pytest 拿到 --basetemp 后自己只做一次不带 parents 的 mkdir，父目录缺失
+    会 FileNotFoundError（WinError 3）——跑个测试还要先手工建父目录，没道理。
+    这里在任何 fixture/用例之前先建好；basetemp 缺省时不插手。
+    """
+    given = getattr(config.option, 'basetemp', None)
+    if given:
+        Path(given).mkdir(parents=True, exist_ok=True)
+
+
+def _freshConfigRoot():
+    """每次会话一个全新的空配置目录（%TEMP% 下 mkdtemp，天然不撞名）。
+
+    旧实现用 tmp_path_factory.mktemp('wp-test-config')，它依赖 .pytest-tmp
+    的状态：上次跑挂留下的残留目录会让 mkdir 抛 FileExistsError
+    （WinError 183），整套测试 20 个 ERROR，看起来像代码坏了，其实只是
+    脏目录。mkdtemp 每次都是新目录，basetemp 被占用/脏了都伤不到它；
+    会话结束由 fixture 整棵删掉，不在 %TEMP% 留垃圾。
+    "占用也自动换新目录、不静默失败"由 tests/test_isolated_config.py 自检。
+    """
+    return Path(tempfile.mkdtemp(prefix='wp-test-config-'))
+
+
 @pytest.fixture(scope='session', autouse=True)
-def isolatedConfig(tmp_path_factory):
+def isolatedConfig():
     """所有测试统一读 tmp 里的最小 config.json，状态目录也指过去。
 
     session 级：create_app 有些在模块级 fixture 里装配（test_route_params），
     必须在任何 app 装配之前生效。个别用例要自定义配置时仍可函数级
     monkeypatch CONFIG_PATH 覆盖（现有 test_config/test_branding 等即如此）。
+    根目录每次会话新建（_freshConfigRoot），不复用任何已有目录。
     """
-    root = tmp_path_factory.mktemp('wp-test-config')
+    root = _freshConfigRoot()
     cfgfile = root / 'config.json'
     cfgfile.write_text(json.dumps(_TEST_CONFIG), encoding='utf-8')
     mp = pytest.MonkeyPatch()
@@ -56,6 +85,7 @@ def isolatedConfig(tmp_path_factory):
     yield
     mp.undo()
     _resetConfigCache()
+    shutil.rmtree(root, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

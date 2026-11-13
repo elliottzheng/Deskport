@@ -101,6 +101,7 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 ## 四、共享与去重
 
 - 前端格式化与 DOM 工具只允许一份：`frontend/assets/js/common.js`（`fmtSize`、`fmtTime`、`escapeHtml`、`toast`、`fetchJson`）。
+- 前端纯逻辑（构造请求体、判断分支）抽成可 import 的纯函数模块：挂 `window.X` 供页面调用，同时 `module.exports` 供 Node 引入；测试放 `tests/js/` 用 `node --test` 跑（`tools/check_frontend.py` 门禁含这一步，红即失败）。
 - 后端状态读写只允许一份：`modules/state.py`（原子写）与 `modules/events.py`（审计）。
 - 禁止复制动作表、格式化函数（`principles.md` 已否决）。
 - 禁止新增 `window.*` 跨页契约；已有契约登记在 `frontend/assets/js/common.js` 顶部注释，新增需评审。
@@ -131,7 +132,8 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 - HTML 引用的 `/assets/...` 是否真实存在；
 - JS 里 `getElementById` / `querySelector('#x')` 的 id 是否在 HTML 或 JS 里定义；
 - JS 调用的函数名是否有声明（共享顶层作用域，含 HTML 内联脚本）；
-- JS 请求的 `/api/...` 是否在后端登记了路由。
+- JS 请求的 `/api/...` 是否在后端登记了路由；
+- `tests/js/` 的前端纯逻辑单测（`node --test`，找不到 node 时打印跳过、不算失败）。
 
 `deploy.ps1` 的预检会调用结构门禁；本地提交前两个都应运行。
 
