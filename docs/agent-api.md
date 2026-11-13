@@ -107,6 +107,7 @@ Content-Type: multipart/form-data
 
 手机从任何 App 分享文件过来时，顺手写一句「要怎么处理」，直接开一个新任务，
 或接到正在进行的任务上。手机令牌不需要 `full`——`share` 只放行这一件事。
+网页分享表单（App 打开 `/m/share?ticket=…`）与暂存票据语义见 [m-share.md](m-share.md)。
 
 ```text
 GET  /api/agent/share/nodes     (scope=share)

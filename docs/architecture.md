@@ -74,6 +74,8 @@ for module in BLUEPRINT_MODULES:
 | `modules/feedback.py` | `blueprint` | 用户反馈七个端点；存储/幂等/频控/状态机在 `feedback_store`（`<stateDir>/feedback.json` + `feedback/attachments/`） |
 | `modules/plugins.py` | `blueprint`（`plugins_base`）+ `load(app)` | 蓝图给 `/api/plugins`；`load()` 由 `_registerModules` 末尾调用，扫插件目录 |
 | `modules/agent_api.py` | `blueprint` | 智能体 API 主体；`agent_sessions` / `agent_sftp` / `agent_upload` / `device_auth` / `agent_local` 把路由挂到同一蓝图，随它一次注册 |
+| `modules/share_web.py` | `blueprint`（同上，import 即注册） | 网页分享表单：`/api/agent/share/stage`（设备令牌）与 `/api/share/*`（Cookie）；票据、页面与验收见 [m-share.md](m-share.md) |
+| `modules/share_core.py` | 无路由 | 分享交付内核：字段规则、三个去处、执行点/任务列表；`agent_share` 与 `share_web` 共用 |
 | `modules/agent_nodes.py` | `blueprint`（当前无路由） | 远端节点 HTTP 客户端、执行点分派注册（local/agent/federation）、节点模型/健康探测；端点本身挂在 `agent_api` 与 `tasks_federation` |
 | `modules/tasks_federation.py` | `blueprint` | `/api/tasks/nodes*`（执行点呈现、探测、健康） |
 | `modules/federation.py` | 无路由 | `bindApp(app)` 交给刷新线程做成员广播与导航注入 |
@@ -107,6 +109,7 @@ for module in BLUEPRINT_MODULES:
 |---|---|---|
 | `/app` | `frontend/app.html` | 单壳入口，多视图 iframe 常驻（`shell.js`） |
 | `/tasks` | `frontend/tasks.html` | 任务页直出（也可在壳内以 iframe 打开） |
+| `/m/share` | `frontend/m-share.html` | 手机分享表单：`?ticket=` 读暂存文件，三选一提交（见 [m-share.md](m-share.md)） |
 | `/`、`/terminal`、`/ssh`、`/files`、`/screen`、`/command`、`/settings` | 旧页面 | 302 到 `/app?view=...`（`/ssh` → `view=session&kind=ssh`） |
 | `/inbox` | — | 302 到 `/app?view=files&loc=inbox` |
 | `/manifest.webmanifest` | `frontend/manifest.webmanifest` | PWA 清单，运行时替换品牌名（`name` / `short_name`） |
@@ -184,8 +187,9 @@ for module in BLUEPRINT_MODULES:
 ```
 frontend/
 ├── app.html                 壳（唯一入口，加载 shell.js）
-├── index/terminal/ssh/files/screen/command/settings/inbox/tasks/login.html
-│                            各视图页；login.html 免认证，占位符由 auth.py 填充
+├── index/terminal/ssh/files/screen/command/settings/inbox/tasks/m-share/login.html
+│                            各视图页；m-share.html 是手机分享表单（无框架），
+│                            login.html 免认证，占位符由 auth.py 填充
 ├── manifest.webmanifest     PWA 清单（服务端替换品牌名）
 ├── sw.js                    Service Worker（scope=/，仅安全上下文注册）
 └── assets/

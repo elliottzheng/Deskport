@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#F4F7FB">
+<link rel="icon" href="data:,">
+<title>分享 — Deskport</title>
+<link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/m-share.css?v=__BUILD__">
+</head>
+<body class="share-body">
+<main class="share-page" id="share-page">
+    <header class="share-head">
+        <span class="share-brand">分享到 Deskport</span>
+        <span class="share-expire" id="share-expire"></span>
+    </header>
+
+    <p class="load-error" id="share-fatal" hidden></p>
+
+    <section class="card" id="share-files-card">
+        <div class="card-title">收到的文件<span class="title-side" id="share-count"></span></div>
+        <ul class="share-files" id="share-files"></ul>
+        <p class="share-hint" id="share-no-files" hidden>没有附件，只有一句话。</p>
+    </section>
+
+    <section class="card">
+        <label class="field-label" for="share-prompt">想怎么处理</label>
+        <textarea class="input share-prompt" id="share-prompt" rows="3"
+                  placeholder="例如：把这两张卷子合成一份周测卷"></textarea>
+    </section>
+
+    <section class="share-ways" id="share-ways" role="radiogroup" aria-label="选去处">
+        <button type="button" class="share-way is-active" id="way-new" data-way="new"
+                role="radio" aria-checked="true">
+            <span class="share-way-name">交给 AI · 新任务</span>
+            <span class="share-way-desc">选执行点，回来看结果</span>
+        </button>
+        <button type="button" class="share-way" id="way-append" data-way="append"
+                role="radio" aria-checked="false">
+            <span class="share-way-name">接到任务</span>
+            <span class="share-way-desc">追加到正在进行的任务</span>
+        </button>
+        <button type="button" class="share-way" id="way-upload" data-way="upload"
+                role="radio" aria-checked="false">
+            <span class="share-way-name">只上传</span>
+            <span class="share-way-desc">放进收件箱，不建任务</span>
+        </button>
+    </section>
+
+    <section class="card share-panel" id="panel-new">
+        <div class="field">
+            <label class="field-label" for="share-node">执行点</label>
+            <select class="select" id="share-node"></select>
+        </div>
+        <div class="field" id="share-cwd-field" hidden>
+            <label class="field-label" for="share-cwd">远端工作目录</label>
+            <input class="input" id="share-cwd" spellcheck="false" autocomplete="off"
+                   placeholder="/home/me/project">
+        </div>
+        <div class="field">
+            <label class="field-label" for="share-mode">批准模式</label>
+            <select class="select" id="share-mode">
+                <option value="auto">自动批准（推荐）</option>
+                <option value="default">逐项批准</option>
+            </select>
+        </div>
+        <div class="field" id="share-model-field" hidden>
+            <label class="field-label" for="share-model">模型</label>
+            <select class="select" id="share-model"></select>
+        </div>
+        <label class="share-check" for="share-organize">
+            <input type="checkbox" id="share-organize"> 装进新文件夹
+        </label>
+        <div class="field" id="share-folder-field" hidden>
+            <label class="field-label" for="share-folder">文件夹名</label>
+            <input class="input" id="share-folder" spellcheck="false" autocomplete="off"
+                   placeholder="留空 = share-日期-时间">
+        </div>
+    </section>
+
+    <section class="card share-panel" id="panel-append" hidden>
+        <div class="field">
+            <label class="field-label" for="share-task">接到哪个任务</label>
+            <select class="select" id="share-task"></select>
+        </div>
+        <p class="share-hint" id="share-task-empty" hidden>没有进行中的任务，先新建一个。</p>
+    </section>
+
+    <section class="card share-panel" id="panel-upload" hidden>
+        <div class="field">
+            <label class="field-label" for="share-subdir">文件夹名（可选）</label>
+            <input class="input" id="share-subdir" spellcheck="false" autocomplete="off"
+                   placeholder="如 周测卷；留空 = 收件箱根目录">
+        </div>
+        <p class="share-hint">文件进手机上传目录，收件箱里能直接看到。</p>
+    </section>
+
+    <p class="load-error" id="share-error" hidden></p>
+
+    <button type="button" class="btn btn-primary share-submit" id="share-submit">提交</button>
+
+    <section class="card share-result" id="share-result" hidden>
+        <div class="card-title" id="share-result-title">已提交</div>
+        <p class="share-result-text" id="share-result-text"></p>
+        <a class="btn btn-secondary share-task-link" id="share-task-link"
+           href="/app?view=tasks">看任务</a>
+    </section>
+</main>
+
+<script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/m-share.js?v=__BUILD__"></script>
+</body>
+</html>

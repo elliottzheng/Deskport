@@ -30,6 +30,7 @@
 | 文档 | 内容 |
 |---|---|
 | [ai-handoff.md](ai-handoff.md) | 收件箱与「交给 AI」：扫描去重、落点判断、案例目录、配置 |
+| [m-share.md](m-share.md) | 网页分享表单 `/m/share`：stage 暂存票据、Cookie 会话提交、页面行为与验收 |
 | [control.md](control.md) | 控制台：电源/进程/窗口/应用/文本/审计 |
 | [settings.md](settings.md) | 设置页：访问密码、收件箱扫描、品牌名称、登录设备、上传目标 |
 | [feedback.md](feedback.md) | 用户反馈：悬浮入口与浮层、信封契约、提交/检索/状态接口、脱敏规则、存储与偏差 |
