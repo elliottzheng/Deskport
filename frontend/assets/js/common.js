@@ -211,6 +211,17 @@
         });
     }
 
+    // 远端 cwd 占位符（批次 NODE-OS）：跟着所选执行点自报的平台变——
+    // windows → C:\work，linux/darwin → /home/me/project，未知 → /path；
+    // 执行点给了 defaultCwd（它自己的建议目录）时优先用真的
+    function cwdExample(node) {
+        if (node && node.defaultCwd) { return node.defaultCwd; }
+        var os = (node && node.os) || '';
+        if (os === 'windows') { return 'C:\\work'; }
+        if (os === 'linux' || os === 'darwin') { return '/home/me/project'; }
+        return '/path';
+    }
+
     window.WPCommon = {
         fmtSize: fmtSize,
         fmtTime: fmtTime,
@@ -218,6 +229,7 @@
         escapeHtml: escapeHtml,
         confirm: confirmDialog,
         fullscreenToggle: fullscreenToggle,
+        cwdExample: cwdExample,
         uploadBox: {
             open: uploadOpen,
             progress: uploadProgress,

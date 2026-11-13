@@ -21,7 +21,7 @@ import paramiko
 from flask import Blueprint, jsonify
 
 import config
-from modules import task_engines, task_node
+from modules import node_path, task_engines, task_node
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 blueprint = Blueprint('agent_nodes', __name__)
@@ -55,8 +55,10 @@ _healthModelsLock = threading.Lock()
 def _refreshHealthModels(rounds=8, interval=5):
     """拉取各 node /health 的 models 字段（新版 node 自动上报 kimi 模型清单）。
 
-    联邦成员额外查它自己的 /api/tasks/nodes——成员的 local 节点模型即
-    成员可提供的模型（第三轮反馈：i7-4710MQ 之前一直 selectable=false）。
+    同时收平台声明（os/shells/defaultCwd，批次 NODE-OS）：派活前按 os 校验
+    cwd 语法、投附件按 os 选路径分隔符、UI 占位符跟着变。联邦成员额外查它
+    自己的 /api/tasks/nodes——成员的 local 节点（模型 + 平台）即成员可提供
+    的一切（第三轮反馈：i7-4710MQ 之前一直 selectable=false）。
 
     node 重启/隧道瞬断会让个别探测失败——整体持续重试直到全部应答或
     轮数用尽，不再一轮失败就把空缓存钉死 60 秒（第三批上线实测踩坑：
@@ -74,10 +76,7 @@ def _refreshHealthModels(rounds=8, interval=5):
             except Exception:
                 continue
             if status == 200 and isinstance(data, dict):
-                result[node['name']] = {'models': data.get('models') or [],
-                                        'default': data.get('defaultModel') or '',
-                                        'modelStatus': data.get('modelStatus') or {},
-                                        'usableModels': data.get('usableModels') or []}
+                result[node['name']] = node_path.platformEntry(data)
         for member in members:
             try:
                 from modules.tasks_federation import _memberCall
@@ -88,11 +87,9 @@ def _refreshHealthModels(rounds=8, interval=5):
             if status == 200 and isinstance(data, dict):
                 own = next((n for n in data.get('nodes') or []
                             if n.get('name') == 'local'), None)
-                if own and (own.get('models') or own.get('defaultModel')):
-                    result[member['name']] = {'models': own.get('models') or [],
-                                              'default': own.get('defaultModel') or '',
-                                              'modelStatus': own.get('modelStatus') or {},
-                                              'usableModels': own.get('usableModels') or []}
+                if own and (own.get('models') or own.get('defaultModel')
+                            or own.get('os')):
+                    result[member['name']] = node_path.platformEntry(own)
         with _healthModelsLock:
             _healthModels['data'] = result
             _healthModels['at'] = time.monotonic()

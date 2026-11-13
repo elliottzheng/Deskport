@@ -349,7 +349,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
-| GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`modelStatus`/`usableModels` |
+| GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`os`/`shells`/`defaultCwd`/`modelStatus`/`usableModels` |
 | POST | /api/tasks/nodes/<node>/probe | 手动触发模型可用性探测 `{models?: [...]}`（缺省=全部声明模型），立即入队后台探测 |
 | POST | /api/tasks/files | 上传文件 → 返回本机路径（塞进 paths 用） |
 | GET | /api/tasks/kimi-sessions?cwd= | 已存在的 Kimi CLI 会话（接手候选，按最近更新排序） |
@@ -368,11 +368,30 @@ DELETE /api/agent/ssh/sessions/<sid>
   （agent node 或联邦成员，不存在 → 400 并附 `nodes` 提示）；
 - `cwd`（执行目录，缺省 = Deskport 分配的任务目录）：本机必须是绝对路径、
   存在、是目录且在 `config.workDirs` / `fallbackDir` 之下；非本机是该机器
-  上已存在的目录（必填，由对端校验）。网页任务表单（`/app?view=tasks`）在
-  执行点选「本机」时也有「工作目录」输入框，留空即任务目录（此时请求不带
-  `cwd` 键）；输入框的占位符与候选取自 `GET /api/ai/config` 的 `workDirs`，
-  提示里列出这些根目录。两者的细节见下节；
+  上已存在的目录（必填，由对端校验）。**非本机还要过平台语法关**（见下条）。
+  网页任务表单（`/app?view=tasks`）在执行点选「本机」时也有「工作目录」输入框，
+  留空即任务目录（此时请求不带 `cwd` 键）；输入框的占位符与候选取自
+  `GET /api/ai/config` 的 `workDirs`，提示里列出这些根目录。两者的细节见下节；
+- **cwd 的平台语法（批次 NODE-OS）**：派活前按执行点自报的 `os` 校验 cwd
+  语法——`os == "windows"` 时 cwd 必须是盘符绝对路径（`C:\work`）或 UNC
+  （`\\server\share\work`）；`os` 为 `linux` / `darwin` 时必须以 `/` 开头；
+  `os` 为空（老 node / 老成员没上报平台）**不校验**，保持向后兼容。只查
+  语法不查存在性（目录在不在由执行点自己答，hub 探不到对端的盘）；不匹配
+  → **400**，文案指明执行点、平台与示例（如「执行点 i7-4710MQ 是 windows，
+  cwd 必须是盘符路径（如 C:\work）或 UNC（如 \\server\share\work），你给的
+  是 /tmp」）。本机执行点不走这条，仍走 `task_cwd.resolve`（存在性 + 越界）；
 - `engine` 字段已移除：传了直接 **400**，不会被忽略或映射；
+- **执行点平台（`GET /api/tasks/nodes`，批次 NODE-OS）**：每项带
+  `os`（`"windows"` / `"linux"` / `"darwin"`；agent node 由节点 `/health`
+  自报、联邦成员取它自己 `/api/tasks/nodes` 的 local 条目、本机取本机声明；
+  取不到 = `""` 未知）、`shells`（该平台可用 shell，第一项为默认；如本机
+  Windows `["bash","powershell","pwsh"]`、Linux `["bash","sh"]`）、
+  `defaultCwd`（可选，该节点的建议目录，拿不到就不给；UI 占位符用）。
+  `os` 只是**声明**，不据此放宽任何权限——用途有三：派活前校验 cwd
+  平台语法、往该点投附件时按目标 OS 选路径分隔符（hub 是 Windows、
+  成员是 Linux 时不再拼出 `/home/me/project\.deskport-inputs\<id>`）、
+  前端 cwd 占位符跟着变。网页任务页与 `/m/share` 的远端 cwd 占位符
+  即按它切换；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；
 - `model`（可选）：给执行点选模型（§7）。`GET /api/tasks/nodes` 里每个执行点

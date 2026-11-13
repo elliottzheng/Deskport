@@ -5,11 +5,15 @@
 那台机器），这里用与 agent_sftp 相同的客户端（`ssh_sftp_base._openSftp`）
 把文件放到该机器的远端目录。没有 `via` 就没有可靠的文件通道，显式报错，
 不猜路径、不假装成功。
+
+路径语义（批次 NODE-OS）按节点自报的 os 选：Linux/darwin 走 posix（原有
+行为），Windows 节点（SSH 到 Windows）按 ntpath 拼；os 未知保持 posix。
 """
 import posixpath
+import re
 import stat as statMod
 
-from modules import federation_write, fsutil
+from modules import federation_write, fsutil, node_path
 from modules import ssh_hosts as hosts
 from modules.ssh_sftp_base import _openSftp
 from modules.task_inputs_base import DeliverError
@@ -45,10 +49,11 @@ class SshTarget:
         except Exception as e:
             raise DeliverError('连接执行点 %s 的 SSH 主机失败: %s'
                                % (name, str(e)[:200]), 502)
+        self.pm = node_path.pathModule(node_path.nodeOs(name), posixpath)
         self.created = []      # [(path, isDir)] 本次落的条目（只记顶层）
 
     def join(self, *parts):
-        return posixpath.join(*[str(p) for p in parts if str(p)])
+        return self.pm.join(*[str(p) for p in parts if str(p)])
 
     def isdir(self, path):
         try:
@@ -64,13 +69,15 @@ class SshTarget:
             return False
 
     def ensureDir(self, path):
-        path = posixpath.normpath(path)
-        if path in ('', '.', '/'):
+        path = self.pm.normpath(path)
+        if path in ('', '.', '/', '\\'):
             return False
         created = False
-        acc = '/' if path.startswith('/') else ''
-        for part in [p for p in path.split('/') if p]:
-            acc = (acc.rstrip('/') + '/' + part) if acc else part
+        drive, rest = self.pm.splitdrive(path)
+        acc = drive + self.pm.sep if drive else (
+            self.pm.sep if path.startswith(('/', '\\')) else '')
+        for part in [p for p in re.split(r'[\\/]+', rest) if p]:
+            acc = self.pm.join(acc, part) if acc else part
             if self.exists(acc):
                 continue
             self.sftp.mkdir(acc)
@@ -79,7 +86,7 @@ class SshTarget:
 
     def _unique(self, directory, name, isDir):
         return fsutil.uniquePath(directory, name, isDir=isDir, start=2, sep='',
-                                 pathmod=posixpath, exists=self.exists)
+                                 pathmod=self.pm, exists=self.exists)
 
     def mkdirUnique(self, name, directory, track=True):
         target = self._unique(directory, name, True)
@@ -141,7 +148,7 @@ class SshTarget:
             return self._remove(path)
         left = []
         for attr in attrs:
-            child = path.rstrip('/') + '/' + attr.filename
+            child = self.pm.join(path, attr.filename)
             if statMod.S_ISDIR(attr.st_mode):
                 left += self._rmtree(child)
             else:
@@ -166,7 +173,7 @@ class SshTarget:
         if made.get('task'):
             left = self._rmtree(base)
             if made.get('inputs') and not left:
-                left = self._tryRmdir(posixpath.dirname(base))
+                left = self._tryRmdir(self.pm.dirname(base))
             return left
         left = []
         for path, isDir in reversed(self.created):

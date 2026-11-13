@@ -13,6 +13,12 @@
       文本前缀（normpath 折叠 ``..``，折叠后越过共享边界的路径自然出界）；
     - 比较用 normcase + normpath，盘符与 UNC 共享名大小写归一；
     - 盘符相对路径（``C:foo``）、设备路径（``\\\\.\\``）、相对路径一律非法。
+
+    normcase/normpath 是**成员自己**的路径语义：本模块只跑在成员进程里
+    （``X-Deskport-From`` 存在时的本机请求），按成员自己的 OS 折叠——
+    hub 是 Windows、成员是 Linux 时不按 hub 的规则归一。中枢侧不 import
+    本模块判断对端路径（往成员投附件按节点自报 os 选分隔符，见
+    modules/node_path.py）。
 """
 import os
 import re

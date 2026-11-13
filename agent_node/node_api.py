@@ -14,9 +14,9 @@ from urllib.parse import urlparse, parse_qs
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
     discoverModels, forkKimiSession, kimiSessionWorkDir, listKimiSessions
 from model_probe import MAX_QUEUE_MODELS, PROBE_TIMEOUT_SEC
+from node_platform import defaultCwd, nodeOs, nodeShells
 
-CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限；超时杀掉卡住的
-                               # kimi 子进程并报错（防止无限等会话锁）
+CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限：超时杀卡住的 kimi 并报错
 
 _MANAGER = None
 _PROBER = None     # R4-10 模型可用性探测（缓存 + 后台 worker）
@@ -154,7 +154,6 @@ class SessionManager:
 
     def deleteByAny(self, sidOrKimiId):
         """按 node sid 或 kimiSessionId 删除并终止进程。
-
         web 重启后任务卡上只剩 kimiSessionId（agent 内存态已清）——close
         释放会话锁必须能用它找到会话（R4-5 余项 A）。stop 在 mgr 锁外执行。"""
         with self._lock:
@@ -236,20 +235,21 @@ class Handler(BaseHTTPRequestHandler):
             alive = sum(1 for s in sessions if isinstance(s.get('dead'), bool) and not s['dead'])
             models = discoverModels()
             modelStatus = _PROBER.status(models['models']) if _PROBER else {}
-            # R5-4：只回传已探测的（usable≠null），全量清单由声明 models 与
-            # null 语义合成，省得 54/104 个 null 条目挤占带宽
+            # R5-4：只回传已探测的（usable≠null），省得 54/104 个 null 条目挤占带宽
             modelStatus = {m: v for m, v in modelStatus.items()
                            if v['usable'] is not None}
+            usable = sorted(m for m, v in modelStatus.items()
+                            if v['usable'] is True)
             return self._json(200, {'ok': True, 'service': 'deskport-agent-node',
                                     'protocolVersion': PROTOCOL_VERSION,
                                     'sessions': len(sessions), 'alive': alive,
                                     'uptime': nowMs() - _STARTED,
                                     'models': models['models'],
                                     'defaultModel': models['default'],
+                                    'os': nodeOs(), 'shells': nodeShells(),
+                                    'defaultCwd': defaultCwd(),
                                     'modelStatus': modelStatus,
-                                    'usableModels': sorted(
-                                        m for m, v in modelStatus.items()
-                                        if v['usable'] is True)})
+                                    'usableModels': usable})
         if not self._authed():
             return self._json(401, {'error': '认证失败'})
         if path == '/api/kimi-sessions':

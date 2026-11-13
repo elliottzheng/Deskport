@@ -144,7 +144,7 @@ prompt   可选，≤4000 字
 | `#share-prompt` | 处理要求（stage 带的 prompt 预填） |
 | `#way-new`、`#way-append`、`#way-upload`（`.share-way`，选中加 `.is-active`） | 三张去处卡片 |
 | `#panel-new`、`#panel-append`、`#panel-upload` | 对应参数面板 |
-| `#share-node`、`#share-cwd-field` / `#share-cwd` | 执行点；非 local 时显示远端工作目录 |
+| `#share-node`、`#share-cwd-field` / `#share-cwd` | 执行点；非 local 时显示远端工作目录（占位符跟着执行点平台变：windows → `C:\work`，linux → `/home/me/project`，未知 → `/path`；执行点报了 `defaultCwd` 时优先用真的） |
 | `#share-mode`、`#share-model-field` / `#share-model` | 批准模式、模型（执行点声明了模型才显示） |
 | `#share-organize`、`#share-folder-field` / `#share-folder` | 装进新文件夹 |
 | `#share-task`、`#share-task-empty` | 接到哪个任务 |
@@ -163,7 +163,11 @@ prompt   可选，≤4000 字
 3. **只有「只上传」有机器轴**：出「机器 + 目标 + 子目录」三个控件；换机器时
    目标下拉只列那台机器声明的目标。「交给 AI」不出现机器下拉——附件必须落在
    执行点那台机器上，由执行点决定（设计文档 §6 的硬约束）；
-4. 提交成功后按钮收起、同页展示结果；失败把后端 `error` 原样显示，票据保留可重试。
+4. **远端 cwd 占位符按平台变**（批次 NODE-OS）：`/api/share/nodes` 每项带执行点
+   自报的 `os` 与 `defaultCwd`，换执行点时 `#share-cwd` 的 placeholder 跟着切
+   （windows → `C:\work`、linux/darwin → `/home/me/project`、未知 → `/path`），
+   只改占位符不改提交逻辑——提交后由服务端按平台校验 cwd 语法；
+5. 提交成功后按钮收起、同页展示结果；失败把后端 `error` 原样显示，票据保留可重试。
 
 ## 手动验收（curl）
 

@@ -59,9 +59,9 @@ def isLocalHost(nameOrId):
 
 
 def _resolveShell(data):
-    """shell 参数校验：缺省 bash；不支持的返回 (None, 错误响应体)。"""
-    shells = ('bash', 'powershell', 'pwsh')
-    shell = str(data.get('shell') or 'bash').strip().lower()
+    """shell 参数校验：缺省取本机 shells 第一项（Windows = bash，不硬编码）。"""
+    shells = localHostEntry()['shells']
+    shell = str(data.get('shell') or shells[0]).strip().lower()
     if shell not in shells:
         return None, {'error': '本机不支持 shell: %s' % shell,
                       'shells': list(shells)}
