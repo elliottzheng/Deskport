@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """用户反馈接口：信封校验、幂等、附件、频控、状态机、检索、删除。"""
 import base64
+import hashlib
 import io
 import json
 import pathlib
@@ -192,3 +193,69 @@ def test_envelope_is_stored_verbatim_including_unknown_fields(env):
     stored = next(i for i in raw['items'] if i['feedback_id'] == fid)
     assert stored['message'] == env_raw['message']            # 正文原样，不打码不改写
     assert stored['envelope']['extra_field'] == {'a': 1}      # 未知字段也不丢
+
+
+# ---------------------------------------------------------------- 智能体通道
+
+AGENT_TOKEN = 'fb-agent-' + 'b' * 20
+AGENT_HASH = hashlib.sha256(AGENT_TOKEN.encode()).hexdigest()
+
+
+@pytest.fixture
+def agentEnv(tmp_path, monkeypatch):
+    """令牌通道: 配好智能体令牌, 无会话登录。"""
+    monkeypatch.setattr(configMod, 'stateDir', lambda: str(tmp_path / 'state'))
+    (tmp_path / 'state').mkdir()
+    monkeypatch.setattr(events, 'log', lambda *a, **k: None)
+    store.resetRate()
+    monkeypatch.setattr(configMod, 'getAgentTokens',
+                        lambda: [{'id': 'a1', 'name': '验收智能体', 'tokenHash': AGENT_HASH}])
+    from app import create_app
+    app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
+    return SimpleNamespace(client=app.test_client())
+
+
+def test_agent_token_can_submit_feedback(agentEnv):
+    resp = agentEnv.client.post('/api/feedback', headers={'X-Agent-Token': AGENT_TOKEN},
+                                json=envelope(idempotency_key='agent-1'))
+    assert resp.status_code == 200
+    assert resp.get_json()['status'] == 'submitted'
+    # 读接口是主人权限（下一条测试）, 这里直接查存储确认身份与正文
+    fid = resp.get_json()['feedback_id']
+    stored = store.get(fid)
+    assert stored['user_id'] == '验收智能体'
+    assert stored['message'] == '点保存没反应，转圈之后又弹回来了'
+    raw = json.loads(pathlib.Path(configMod.statePath('feedback.json')).read_text(encoding='utf-8'))
+    item = next(i for i in raw['items'] if i['feedback_id'] == fid)
+    assert item['role'] == 'agent'                       # 服务端定身份，不用信封自报的
+    assert item['envelope']['user']['id'] == '验收智能体'
+
+
+def test_agent_feedback_rejects_spoofed_identity(agentEnv):
+    """信封里自报的 user.id / anonymous 都不采信, 一律按令牌名实名。"""
+    resp = agentEnv.client.post('/api/feedback', headers={'X-Agent-Token': AGENT_TOKEN},
+                                json=envelope(idempotency_key='agent-2',
+                                              user={'id': 'owner', 'role': 'owner',
+                                                    'anonymous': True}))
+    assert resp.status_code == 200
+    stored = store.get(resp.get_json()['feedback_id'])
+    assert stored['user_id'] == '验收智能体'
+
+
+def test_agent_feedback_bad_token(agentEnv):
+    for headers in ({}, {'X-Agent-Token': 'wrong'}):
+        resp = agentEnv.client.post('/api/feedback', headers=headers,
+                                    json=envelope(idempotency_key='agent-bad'))
+        assert resp.status_code == 401, headers
+
+
+def test_agent_token_cannot_read_feedback(agentEnv):
+    """POST 放行, GET/PATCH/DELETE 仍是主人会话独有。"""
+    assert agentEnv.client.get('/api/feedback',
+                               headers={'X-Agent-Token': AGENT_TOKEN}).status_code == 401
+    assert agentEnv.client.get('/api/feedback/stats',
+                               headers={'X-Agent-Token': AGENT_TOKEN}).status_code == 401
+    assert agentEnv.client.patch('/api/feedback/x/status', headers={'X-Agent-Token': AGENT_TOKEN},
+                                 json={'status': 'processing'}).status_code == 401
+    assert agentEnv.client.delete('/api/feedback/x',
+                                  headers={'X-Agent-Token': AGENT_TOKEN}).status_code == 401

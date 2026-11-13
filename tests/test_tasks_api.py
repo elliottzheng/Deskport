@@ -80,6 +80,27 @@ def test_default_mode_is_default_not_auto(env):
     assert resp.get_json()['task']['mode'] == 'auto'
 
 
+def test_auto_mode_with_deny_commands_is_400(env):
+    """P0-1（外部智能体反馈 2026-11-14，已实测复现）：mode=auto/yolo 时 hub 让
+    节点侧自行批准一切，policy 漏斗收不到调用，denyCommands 被静默作废——
+    实测同一份 denyCommands:["echo"] 下 default 弹审批、auto 直接放行。
+    建卡时显式拒绝这对矛盾组合，别让"外推前停下来审批"的承诺落空。"""
+    policy = {'allowPaths': [], 'allowCommands': [], 'denyCommands': ['git\\s+push'],
+              'default': 'ask', 'timeoutSec': 0}
+    for mode in ('auto', 'yolo'):
+        resp = create(env, {'prompt': 'x', 'mode': mode, 'policy': policy})
+        assert resp.status_code == 400, mode
+        error = resp.get_json()['error']
+        assert 'denyCommands' in error and 'default' in error
+    # 只配 allowCommands/allowPaths 不拦：auto 的语义就是全自动，没有安全惊喜
+    resp = create(env, {'prompt': 'x', 'mode': 'auto',
+                        'policy': {'allowPaths': ['/srv'], 'allowCommands': ['.']}})
+    assert resp.status_code == 202
+    # default + denyCommands 正常（闸门在 hub 侧生效）
+    resp = create(env, {'prompt': 'x', 'policy': policy})
+    assert resp.status_code == 202
+
+
 def test_prompt_limit_in_error_message(env):
     resp = create(env, {'prompt': 'x' * 4001})
     assert resp.status_code == 400

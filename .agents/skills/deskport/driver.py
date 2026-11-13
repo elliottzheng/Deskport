@@ -248,9 +248,10 @@ def _retry(fn, run, tries=3):
 
 def drive(dp, task, run: Run, policy: Policy, profile: str,
           queued: list, timeout=TIMEOUT) -> int:
-    """跑到本轮结束 / 需要人判断 / 超时。返回退出码：0 DONE、2 超时、3 停下、4 失效审批。"""
+    """跑到本轮结束 / 需要人判断 / 超时。返回退出码：0 DONE、2 超时、3 停下。"""
     end = time.time() + timeout
     auto = ghost = 0
+    lastStale = None
     while time.time() < end:
         r = _retry(lambda: task.until(min(60, max(1, int(end - time.time()) + 1))), run)
         if r is None:                                    # 老中枢没有阻塞 wait：不降级轮询
@@ -264,11 +265,29 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
                 try:
                     task.permission(event.get("requestId"), policy.pick(event, True))
                 except deskport.DeskportError as err:
-                    if err.status == 409:                # 回放出来的旧审批，不能当新请求
-                        run.say("STALE 审批已失效（多半是回放污染），停下待查：%s" % err)
-                        return 4
+                    if err.status == 409:
+                        # 审批已失效（2026-11-14 外部智能体反馈：误报 STALE 打死
+                        # 6+ 个驱动窗口）。两种因：竞态（刚被解掉/回放）或会话已死。
+                        # 同一 requestId 反复 409 = 盘上留着死标记，必须停；
+                        # 否则跳过这条，继续等下一个决策点，不误杀窗口
+                        rid = event.get("requestId")
+                        if rid and rid == lastStale:
+                            run.say("STOP 审批 %s 反复失效：任务盘上留着死标记，"
+                                    "先 driver.py <别名> st 查状态，发消息唤醒或重建" % rid)
+                            return 3
+                        lastStale = rid
+                        info = _retry(task.info, run)
+                        if info.get("status") in ("paused", "interrupted", "failed",
+                                                  "closed", "cancelled"):
+                            run.say("STOP 审批 %s 已失效，任务%s：先 st 查状态，"
+                                    "发消息唤醒或重建" % (rid, info.get("status")))
+                            return 3
+                        run.log("  [skip] 审批 %s 已失效（竞态/回放），继续等下一决策点" % rid)
+                        task.seq = r.get("lastSeq") or task.seq
+                        continue
                     raise
                 auto += 1
+                lastStale = None
                 run.log("  [auto-allow:%s] %s" % (why, _brief(event)))
                 continue
             run.pending.write_text(json.dumps(event, ensure_ascii=False, indent=1), encoding="utf-8")

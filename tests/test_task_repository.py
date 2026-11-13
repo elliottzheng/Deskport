@@ -40,6 +40,19 @@ def test_load_marks_no_session_as_interrupted(tmp_path):
     assert repo.tasks['t1']['error']
 
 
+def test_load_clears_stale_pending_permission(tmp_path):
+    """P0-3（外部智能体反馈 2026-11-14，已复现）：审批记录只在内存，进程一死
+    盘上的 pendingPermission 就是死标记——/wait 会把它当活的回报，driver 一
+    POST 就 409 再误判 STALE 退出。重启加载时一律清掉。"""
+    store = tmp_path / 'tasks.json'
+    store.write_text('{"t1":{"id":"t1","status":"paused","sessionId":"s1",'
+                     '"pendingPermission":"0","events":[]}}', encoding='utf-8')
+    repo = TaskRepository(str(store), str(tmp_path / 'logs'))
+    repo.load()
+    assert repo.tasks['t1']['pendingPermission'] == ''
+    assert repo.tasks['t1']['status'] == 'paused'      # 只清标记，不动状态机
+
+
 def test_save_stable_while_writers_add_keys(tmp_path):
     """序列化必须在锁内快照：历史上无锁 json.dump 会撞 changed size。"""
     import threading

@@ -153,6 +153,16 @@ def register(app):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
+        # 智能体反馈通道: 持任何有效令牌（含设备/联邦令牌）都能 POST 反馈/附件，
+        # 身份按令牌名留痕；读/改/删（GET/PATCH/DELETE）不进这条，仍是主人会话独有
+        if path.startswith('/api/feedback') and request.method == 'POST':
+            from modules import agent_api as agentModule
+            agent = agentModule.agentFromRequest()
+            if agent is not None:
+                g.agentTokenName = agent.get('name') or ''
+                g.agentOnBehalfOf = str(agent.get('onBehalfOf') or '')
+                return None
+            # 没令牌 → 落到下方 /api/ 统一 401（与网页未登录一致）
         if path.startswith('/api/agent/') or path.startswith('/api/tasks') \
                 or path.startswith('/api/worklines') \
                 or path.startswith('/api/capability/'):

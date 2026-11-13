@@ -56,6 +56,35 @@ GET    /api/feedback/stats              运维视图：条数 / 状态分布 / �
 - 每次提交/状态变更/删除都写审计事件：`feedback.submit` / `feedback.attachment` /
   `feedback.status` / `feedback.delete`，`detail` 里只有路由与短指纹，不含正文。
 
+### 智能体通道（持令牌提反馈）
+
+网页端之外，**执行方/验收方/联邦持智能体令牌就能直接提反馈**（`auth.py` 的
+`authGuard` 对 `POST /api/feedback` 与 `POST /api/feedback/attachments` 放行任何
+有效令牌，含设备/联邦令牌）。派活途中撞上平台自身的 bug 时，执行方不等任务结束，
+直接提，落进同一队列：
+
+```bash
+curl -s -X POST "$BASE/api/feedback" -H "X-Agent-Token: $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+  "idempotency_key": "<uuid>",
+  "client": {"platform": "web", "app_version": "agent"},
+  "context": {"route": "/tasks/<任务id>", "page_id": "TasksPage"},
+  "message": "现象 + 任务id + 复现步骤"
+}'
+```
+
+与网页端的差别只有三点：
+
+1. **身份按令牌名**：`user.id` = 令牌名、`role` = `agent`（联邦令牌记「联邦:<来源>」）；
+   信封里自报的 `user` 不采信，`anonymous` 对令牌通道无效——提意见一律实名留痕。
+2. **只能提**：`GET`/`PATCH`/`DELETE` 不放行（401），检索与状态回写仍是主人会话独有；
+   智能体问进度靠主控转达。
+3. 频控、信封校验、幂等、附件、状态机与网页端**完全同一套**（`feedback_store` 不区分
+   入口），审计事件照记。
+
+这条通道已写进技能包（`SKILL.md` 专节 + `COLLABORATION.md` §8d）与
+`docs/agent-handbook.md`，外部智能体拿到 skill.zip 就知道怎么用。
+
 ## 四、存储
 
 ```text

@@ -153,6 +153,19 @@
 做法：派活时把这些命令模式加进放行规则（服务端 policy 的 `allowCommands`，或驱动
 `driver.json` 的 `profiles` 档位），而不是靠通用白名单去猜。
 
+## 8d. 撞见平台的 bug：提反馈，别只在报告里带一句
+
+派活途中撞上 Deskport 自身的缺陷（审批失灵、会话暴死、driver 抽风、接口行为和手册
+不符……），执行方/验收方可以直接提反馈——它落进平台的反馈队列，处理进度可回查：
+
+```text
+POST /api/feedback   {"idempotency_key": "<uuid>", "client": {"platform": "web", "app_version": "agent"},
+                      "context": {"route": "/tasks/<任务id>"}, "message": "现象 + 任务id + 复现步骤"}
+```
+
+带 `X-Agent-Token` 头即可（任何 scope），身份按令牌名留痕。频率限制同网页端。撞 bug 时
+先提反馈再继续干活——报告结尾的一句话，主控不一定翻得到。
+
 ## 9. 衡量协作好坏
 
 - 每批活主控的介入点 ≤ 3 次（派活、审批越界、验收）。

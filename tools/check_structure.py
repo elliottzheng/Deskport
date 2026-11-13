@@ -26,7 +26,7 @@ LEGACY = {
     # .agents/skills/deskport/{deskport,driver}.py 是发给外部智能体的「拷一个文件就能跑」
     # 客户端/驱动（零依赖、也能当 CLI），拆分会破坏这个约定——按单文件登记，只许变短。
     '.agents/skills/deskport/deskport.py': 675,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait
-    '.agents/skills/deskport/driver.py': 468,     # 单文件驱动模板（见上注；首批报错翻译也长在里头）
+    '.agents/skills/deskport/driver.py': 487,     # 单文件驱动模板（见上注）；2026-11-14 +19=审批 409 分类处理（P0-3）
     'agent_node/acp_session.py': 454,             # ACP 会话单文件实现（见上注）
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
     'frontend/assets/css/files.css': 522,         # 文件页样式一体，选择器跨文件耦合，拆分暂缓
@@ -38,11 +38,11 @@ LEGACY = {
     'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
     'modules/tasks_api.py': 961,                  # 任务 API 面最大，拆分需配回归
-    'modules/tasks_runner.py': 706,               # 任务执行编排；+17=lastTurn 空转标记（2026-11-13）
-    'modules/tasks_store.py': 433,                # 任务存储（暂存区已拆去 staging，仍偏长）
+    'modules/tasks_runner.py': 711,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）
+    'modules/tasks_store.py': 440,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
-    'tests/test_tasks_api.py': 1539,              # 任务 API 回归集（面最大）
+    'tests/test_tasks_api.py': 1554,              # 任务 API 回归集（面最大）；2026-11-14 +15=P0-1 建卡闸门测试
 }
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run'}

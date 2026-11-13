@@ -613,6 +613,11 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
         with store.repo.lock:
             store.repo.dropRunning(taskId)
             store.repo.dropAgent(taskId)
+            # P0-3：会话线程结束 = 没有活的审批发起方，盘上残留的
+            # pendingPermission 是死标记（/wait 会把它当活的回报，driver
+            # 一 POST 就 409 再误判 STALE）。幂等清理，堵住线程异常退出
+            # 漏清标记的路径（进程重启由 tasks_store.load 兜底）
+            task['pendingPermission'] = ''
             if task.get('closedByUser'):
                 task_state.transition(task, task_state.TaskState.CLOSED)
                 task['endedAt'] = task.get('endedAt') or store._now()

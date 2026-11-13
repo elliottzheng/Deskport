@@ -140,6 +140,14 @@ def createTaskResponse(data):
             taskCwd = task_cwd.resolve(data.get('cwd'))
     except ValueError as e:
         return ({'error': str(e)}), 400
+    # P0-1（外部智能体反馈 2026-11-14，已实测复现）：mode=auto/yolo 时 hub 让
+    # 节点侧 kimi 自行批准一切（session/set_mode），policy 漏斗收不到调用——
+    # denyCommands 被静默作废，"外推前停下来审批"的承诺落空。显式拒绝这对组合。
+    if mode in ('auto', 'yolo') and (policy.get('denyCommands') or []):
+        return ({'error': 'mode=%s 与 denyCommands 矛盾：该模式下执行方自行批准'
+                          '所有调用，denyCommands 不会生效（已复现：echo 直接被'
+                          '放行）。要强制人工审批请用 mode=default；要全自动就'
+                          '不要配 denyCommands' % mode}), 400
     if not local:
         if agent_nodes.findNode(node) is None \
                 and agent_nodes.findFederationMember(node) is None:

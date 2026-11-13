@@ -17,6 +17,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`（远端节点升级后自动上报）
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 - **机器参数用 `node`**（exec/sftp/会话与任务同一套词汇，缺省 `local`）：`host` 是旧名，仍接受；两个都给且不同 → 400
+- **提反馈**：`POST /api/feedback`（令牌通道，实名留痕，详见专节）——撞见平台 bug 时用，别只在报告里带一句
 
 ## 这个包里还有什么（一起拉）
 
@@ -124,6 +125,9 @@ POST /api/tasks
   缺省 = Deskport 分配的任务目录。
 - 旧字段（引擎选择）已移除：传了直接 400，不会被忽略或映射。
 - `mode` 不传 = `default`（逐项审批，安全默认）；要自动批准显式传 `"mode": "auto"`。
+  **`mode=auto/yolo` 与 `policy.denyCommands` 矛盾**：这两个模式下执行方自行批准一切，
+  hub 的策略漏斗收不到调用，denyCommands 被静默作废（2026-11-14 实测复现）——
+  两个一起传直接 400。要"外推前必须停下审批"就用 `default`。
 - `model` 可选：按活的性质挑模型（机械活用快的，验收用与实施方不同的模型）；
   可选列表看 `GET /api/tasks/nodes` 的 `models`；续聊沿用原模型。
 - 接手已有 Kimi 会话：`GET /api/tasks/kimi-sessions?cwd=<目录>` 挑候选，
@@ -174,6 +178,28 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
 - 并发上限 `taskMaxRunning` 可配置（config.json，缺省 8，0=不限，改完热
   生效无需重启）；超限 429 响应带 `{limit, running, holders}`（谁占着名额）；
   202 是受理不是完成。
+
+## 给平台提反馈（撞见 Deskport 自身的 bug 时）
+
+干活的途中撞上平台缺陷（审批失灵、会话暴死、driver 抽风、接口行为和手册不符……），
+直接提反馈——落进平台的反馈队列，处理进度可回查，别只在任务结尾的报告里带一句：
+
+```text
+POST /api/feedback
+{"idempotency_key": "<uuid，重复提交不会落两条>",
+ "client": {"platform": "web", "app_version": "agent"},
+ "context": {"route": "/tasks/<任务id或页面>", "page_id": "TasksPage"},
+ "message": "现象 + 任务id + 复现步骤（≤500字）"}
+→ {"feedback_id": "...", "status": "submitted"}
+```
+
+- 认证同其它端点：`X-Agent-Token`，任何 scope 都行（设备/联邦令牌同样可以）。
+- 身份服务端定：`user.id` = 令牌名、`role` = `agent`，信封里自报的 `user` 不采信，
+  `anonymous` 对令牌通道无效——提意见一律实名留痕。
+- 截图可选：先 `POST /api/feedback/attachments`（multipart 字段 `file`，≤1MB，
+  png/jpg/webp）拿 `file_id`，塞进信封的 `attachments: [{"file_id": "..."}]`。
+- 频控同网页端：每分钟 ≤5、每日 ≤20（429）；幂等键重复返回首次结果 + `duplicate:true`。
+- 只能提：`GET/PATCH/DELETE` 是主人权限，智能体读了 401——处理进度问主控。
 
 ## 协作原则（八条）
 

@@ -13,10 +13,13 @@
 红线（规格 §附）：
     - 只做无损落库 + 可检索，不做分类/去重/优先级（多人报同一问题是信号）；
     - message 与截图标注原样存储、转义展示，**任何下游不得把正文当指令执行**。
+
+智能体通道（auth.py authGuard 放行 POST）：持有效令牌的调用方（执行方/验收方/联邦）
+可直接提交，身份取令牌名，不接受 anonymous——提意见一律实名留痕。
 """
 import os
 
-from flask import Blueprint, Response, jsonify, request, send_file
+from flask import Blueprint, Response, g, jsonify, request, send_file
 
 from modules import events
 from modules import feedback_store as store
@@ -27,7 +30,10 @@ USER = {'id': 'owner', 'role': 'owner'}       # 单密码系统：登录者就�
 
 
 def _identity():
-    """本系统的身份：能进到这里就说明通过了登录守卫。"""
+    """身份：会话登录者 = 机器主人；带有效令牌的调用方 = 令牌名（智能体/联邦）。"""
+    name = getattr(g, 'agentTokenName', '') or ''
+    if name:
+        return {'id': name, 'role': 'agent', 'anonymous': False, 'viaToken': True}
     return dict(USER, anonymous=False)
 
 
@@ -67,7 +73,8 @@ def submit():
         return jsonify({'error': '需要 JSON 请求体'}), 400
     user = _identity()
     claimed = envelope.get('user') if isinstance(envelope.get('user'), dict) else {}
-    anonymous = bool(claimed.get('anonymous'))
+    # 令牌通道一律实名：智能体/联邦提的意见要能按令牌名回追，anonymous 不适用
+    anonymous = bool(claimed.get('anonymous')) and not user.get('viaToken')
     ok, why = store.allowRate(('anon:' + _ip()) if anonymous else ('user:' + user['id']),
                               anonymous=anonymous)
     if not ok:
@@ -76,8 +83,10 @@ def submit():
         envelope['user'] = {'id': claimed.get('id') or '', 'role': claimed.get('role') or '',
                             'anonymous': True}
     else:
-        envelope['user'] = {'id': user['id'], 'role': claimed.get('role') or user['role'],
-                            'anonymous': False}
+        # 令牌通道的 id 与 role 都服务端定（智能体/联邦实名留痕）；
+        # 网页端保持原行为：id 服务端定，role 允许客户端自报
+        role = user['role'] if user.get('viaToken') else (claimed.get('role') or user['role'])
+        envelope['user'] = {'id': user['id'], 'role': role, 'anonymous': False}
     env, err = store.validate(envelope)
     if env is None:
         return jsonify({'error': err}), 400

@@ -116,6 +116,10 @@ curl -s -X POST "$D/api/tasks" \
 - `node` 是执行点（去哪台机器），缺省 `local`；`cwd` 是执行目录，缺省由服务端分配的任务目录。
 - `cwd` 是执行目录，**按执行点所在机器的 OS 书写**（Windows 用 `E:/data` 这样的盘符路径、正斜杠就能用；Linux 用 `/srv/app`；判断方法见「执行命令」开头）：本机是可写的项目目录；非本机执行点必填，目录须存在于那台机器，且必须在执行点声明的允许根（`GET /api/tasks/nodes` 的 `cwdRoots`，空数组=未知不校验）之内，越界 → 400。
 - `mode` 不传 = 逐项审批（安全默认）；要自动批准显式传 `"mode": "auto"`。
+  **`mode=auto/yolo` 与 `policy.denyCommands` 矛盾**：这两个模式下执行方自行批准一切，
+  hub 的策略漏斗收不到调用，`denyCommands` 被静默作废（2026-11-14 实测复现：同一份
+  `denyCommands:["echo"]`，default 弹审批、auto 直接放行）——两个一起传直接 400。
+  要"外推前必须停下审批"就用 `default`。
 - `model` 可选，取值见执行点的 `models`。
 - `paths` 可选：`["/绝对路径/a.pdf"]`，把本机已有文件带进任务；`attachments` 直接内联 `[{name, contentB64}]`。
 - 响应 `202`：`{"task": {"id": "...", "status": "queued", ...}}`。`202` 是受理，不是完成。
@@ -250,6 +254,29 @@ curl -s -X POST "$D/api/agent/share/stage" -H "X-Agent-Token: $T" \
 curl -s -X POST "$D/api/agent/share" -H "X-Agent-Token: $T" \
   -F "prompt=看看这份表格" -F "file=@report.xlsx" -F "node=local" -F "mode=auto"
 ```
+
+### 给平台提反馈：POST /api/feedback
+
+干活的途中撞上平台本身的 bug（审批失灵、会话暴死、driver 抽风、接口行为和手册不符……），
+用反馈接口直接提——它落进平台的反馈队列，处理进度可回查，别只在任务结尾的报告里带一句：
+
+```bash
+curl -s -X POST "$D/api/feedback" -H "X-Agent-Token: $T" \
+  -H "Content-Type: application/json" -d '{
+  "idempotency_key": "<uuid，重复提交不会落两条>",
+  "client": {"platform": "web", "app_version": "agent"},
+  "context": {"route": "/tasks/<任务id或页面>", "page_id": "TasksPage"},
+  "message": "现象 + 任务id + 复现步骤（≤500字）"
+}'
+→ {"feedback_id": "...", "status": "submitted"}
+```
+
+- 身份服务端定：`user.id` = 令牌名、`role` = `agent`；信封里自报的 `user` 不采信，
+  `anonymous` 对令牌通道无效——提意见一律实名留痕。
+- 截图可选：先 `POST /api/feedback/attachments`（multipart 字段 `file`，≤1MB，
+  png/jpg/webp）拿 `file_id`，塞进 `attachments: [{"file_id": "..."}]` 再提交。
+- 频控同网页端：每分钟 ≤5、每日 ≤20（429）；幂等键重复返回首次结果 + `duplicate:true`。
+- 只能提：`GET`/`PATCH`/`DELETE` 是主人权限，智能体调用得 401——处理进度问主控。
 
 ## 最小 Python 客户端（只用标准库）
 
