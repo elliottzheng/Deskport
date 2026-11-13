@@ -147,3 +147,11 @@ def test_tools_endpoints_unaffected(env):
     resp = env.client.get('/api/agent/tools/deskport.py')
     assert resp.status_code == 200
     assert hashlib.sha256(resp.get_data()).hexdigest() == listed['deskport.py']['sha256']
+
+
+def test_two_entries_serve_the_same_client(env):
+    """批次 M：单文件入口与整包入口的 deskport.py 必须同一份字节（实时组装，不复制文件）。"""
+    tools = env.client.get('/api/agent/tools/deskport.py')
+    packed = openPack(env.client.get(PACK)).read('deskport/deskport.py')
+    assert tools.get_data() == packed
+    assert tools.headers['X-Tools-Sha256'] == hashlib.sha256(packed).hexdigest()
