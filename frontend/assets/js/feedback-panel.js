@@ -31,9 +31,16 @@ window.WPFeedbackPanel = (function () {
         return node;
     }
 
-    // 底部有工具条（文件多选、收件箱操作栏、终端虚拟键、控制台 FAB）时把按钮抬上去，别压住别人的按钮
+    // 底部有工具条（文件多选、收件箱操作栏、终端控制键、控制台 FAB）时把按钮抬上去，别压住别人的按钮
     function placeFab() {
-        var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), .term-vkeys:not([hidden]), .ctl-fab');
+        // 控制键条的容器是 #control-keys（旧选择器 .term-vkeys 根本不存在，等于没抬过——
+        // 手机反馈「反馈按钮挡住了到底部的按钮」就是它压在控制键条上）
+        var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), #control-keys:not(.hidden), .ctl-fab');
+        // 壳（/app）里终端与 SSH 是 iframe：控制键条在 iframe 里面，外层选择器看不见它，
+        // 但浮按钮画在壳文档上、永远盖在 iframe 之上，所以按"当前视图"判断
+        var frame = document.querySelector('iframe');
+        var src = frame ? (frame.getAttribute('src') || '') : '';
+        if (/\/terminal|\/ssh/.test(src)) { raise = raise || document.body; }
         document.body.classList.toggle('fb-raise', !!raise);
         // 全屏浮层（移动端 SFTP 面板铺满整屏）打开时直接收起：那时抬起来也会压在
         // 浮层底部的操作行（新建/上传/删除）上，用户报过"挡住到底部的按钮"
