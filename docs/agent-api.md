@@ -263,6 +263,8 @@ POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "
   `sha256` 校验；写临时文件后原子 rename，覆盖时保留原文件权限；响应回显
   `sha256`。
 
+> 联邦文件读写与新的 agent_sftp 写操作（delete/mkdir/rename）见 [federation-files.md](federation-files.md)。
+
 ## 持久会话（cd / export / venv 激活都延续）
 
 ```text

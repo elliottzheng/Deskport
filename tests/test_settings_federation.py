@@ -50,6 +50,7 @@ def test_set_remotes_roundtrip(cfgfile):
                                     'base': 'http://10.126.126.3:6789',
                                     'token': 'vn1WdB7IAKfd',
                                     'terminal': True, 'apps': [], 'files': False,
+                                    'filesWrite': False,
                                     'models': [], 'model': ''}]   # 策略缺省: 接终端, 不接应用/文件, 模型未声明
     # 其他配置键保留
     assert json.loads(cfgfile.read_text(encoding='utf-8'))['port'] == 6788
@@ -117,6 +118,26 @@ def test_remotes_api_rejects_bad_entry(client, cfgfile, bad):
         assert config.getRemotes()[0]['id'] == 'bad'
         return
     assert resp.status_code == 400, bad
+    assert config.getRemotes() == []
+
+
+def test_remotes_api_files_write_roundtrip(client, cfgfile):
+    payload = {'remotes': [
+        {'id': 'r-1', 'name': '办公室台式机', 'base': 'http://10.0.0.2:6789',
+         'token': 'aaaaaaaa', 'files': True, 'filesWrite': True},
+    ]}
+    resp = client.post('/api/settings/federation/remotes', json=payload)
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    assert config.getRemotes()[0]['filesWrite'] is True
+    assert json.loads(cfgfile.read_text(encoding='utf-8'))['remotes'][0]['filesWrite'] is True
+
+
+def test_remotes_api_rejects_non_bool_files_write(client, cfgfile):
+    resp = client.post('/api/settings/federation/remotes', json={'remotes': [
+        {'id': 'r1', 'name': 'a', 'base': 'http://a:1', 'token': '',
+         'filesWrite': 'yes'},
+    ]})
+    assert resp.status_code == 400
     assert config.getRemotes() == []
 
 

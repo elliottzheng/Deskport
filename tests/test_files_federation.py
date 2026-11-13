@@ -5,6 +5,7 @@
 并且每个请求都校验 X-Deskport-Token —— 各转发用例由此隐式断言中枢带了
 成员令牌。断网成员用死端口, 不依赖任何真实 B 机在线。
 """
+import io
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +47,8 @@ class MemberHandler(BaseHTTPRequestHandler):
         self._record()
         if self.headers.get('X-Deskport-Token') != MemberHandler.TOKEN:
             return self._send({'error': 'bad token'}, status=403)
+        if self.path.startswith('/api/files/federation-info'):
+            return self._send({'maxUploadMB': 1, 'writeRootsConfigured': True})
         if self.path.startswith('/api/files/download'):
             return self._send(DOWNLOAD_BYTES, ctype='application/octet-stream')
         if self.path.startswith('/api/files/thumb'):
@@ -68,7 +71,12 @@ class MemberHandler(BaseHTTPRequestHandler):
         if self.path.startswith('/api/files/read'):
             return self._send({'content': 'from-member', 'size': 11,
                                'encoding': 'utf-8', 'lossy': False,
-                               'truncated': False})
+                               'truncated': False, 'mtime': 1700000000,
+                               'sha256': '0' * 64})
+        for op in ('rename', 'new-folder', 'recycle-delete', 'paste', 'upload',
+                   'write'):
+            if self.path.startswith('/api/files/' + op):
+                return self._send({'ok': True, 'op': op})
         return self._send({'error': 'not found'}, status=404)
 
     def log_message(self, *args):
@@ -87,16 +95,19 @@ def member():
 @pytest.fixture(autouse=True)
 def cleanFederation(monkeypatch):
     """刷新线程不启动; 联邦缓存每用例清零。"""
+    from modules import files_federation
     monkeypatch.setattr(federation, '_ensureThread', lambda force=False: None)
     federation._cache.clear()
+    files_federation._limitCache.clear()
     yield
     federation._cache.clear()
+    files_federation._limitCache.clear()
 
 
-def remoteEntry(base, files=True, mid='b', token='tok-b'):
+def remoteEntry(base, files=True, mid='b', token='tok-b', filesWrite=False):
     return {'id': mid, 'name': 'B机' if mid == 'b' else mid, 'base': base,
             'token': token, 'terminal': False, 'apps': [], 'files': files,
-            'models': [], 'model': ''}
+            'filesWrite': filesWrite, 'models': [], 'model': ''}
 
 
 def makeHub(monkeypatch, remotes, brand='中枢A', audit=None):
@@ -197,12 +208,85 @@ def test_write_ops_blocked_in_member_mode(member, monkeypatch):
         assert MemberHandler.LAST == {}   # 写操作一律不外发
 
 
+def test_files_write_switch_off_blocks_write(member, monkeypatch):
+    for c in makeHub(monkeypatch, [remoteEntry(member, filesWrite=False)]):
+        MemberHandler.LAST = {}
+        r = c.post('/api/files/rename?machine=b',
+                   json={'path': 'C:\\m\\a.txt', 'newName': 'b.txt'})
+        assert r.status_code == 403
+        assert 'filesWrite' in r.get_json()['error']
+        assert MemberHandler.LAST == {}
+
+
+def test_files_write_requires_files_master_switch(member, monkeypatch):
+    for c in makeHub(monkeypatch, [remoteEntry(member, files=False, filesWrite=True)]):
+        MemberHandler.LAST = {}
+        r = c.post('/api/files/rename?machine=b',
+                   json={'path': 'C:\\m\\a.txt', 'newName': 'b.txt'})
+        assert r.status_code == 403
+        assert '未开放文件浏览' in r.get_json()['error']
+        assert MemberHandler.LAST == {}
+
+
+def test_write_forwarded_with_actor_and_machine_stripped(member, monkeypatch):
+    for c in makeHub(monkeypatch, [remoteEntry(member, filesWrite=True)]):
+        MemberHandler.LAST = {}
+        r = c.post('/api/files/rename?machine=b',
+                   json={'path': 'C:\\m\\a.txt', 'newName': 'b.txt'})
+        assert r.status_code == 200
+        assert r.get_json()['op'] == 'rename'
+        last = MemberHandler.LAST
+        assert last['path'].startswith('/api/files/rename')
+        assert 'machine=' not in last['path']
+        assert json.loads(last['body'].decode('utf-8')) == {
+            'path': 'C:\\m\\a.txt', 'newName': 'b.txt'}
+        assert last['headers']['x-deskport-token'] == 'tok-b'
+        assert last['headers']['x-deskport-actor'] == '127.0.0.1'
+
+
+def test_permanent_delete_never_forwarded(member, monkeypatch):
+    for c in makeHub(monkeypatch, [remoteEntry(member, filesWrite=True)]):
+        MemberHandler.LAST = {}
+        r = c.post('/api/files/delete?machine=b', json={'paths': ['C:\\m\\a.txt']})
+        assert r.status_code == 403
+        assert MemberHandler.LAST == {}
+
+
+def test_upload_forwarded_streaming(member, monkeypatch):
+    for c in makeHub(monkeypatch, [remoteEntry(member, filesWrite=True)]):
+        MemberHandler.LAST = {}
+        r = c.post('/api/files/upload?machine=b',
+                   data={'path': 'C:\\m', 'file': (io.BytesIO(b'hello'), 'a.txt')},
+                   content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        last = MemberHandler.LAST
+        assert last['path'].startswith('/api/files/upload')
+        assert 'machine=' not in last['path']
+        assert b'hello' in last['body']
+        assert last['headers']['content-type'].startswith('multipart/form-data')
+
+
+def test_upload_over_member_limit_rejected_at_hub(member, monkeypatch):
+    for c in makeHub(monkeypatch, [remoteEntry(member, filesWrite=True)]):
+        MemberHandler.LAST = {}
+        payload = b'x' * (1024 * 1024 + 100 * 1024)
+        r = c.post('/api/files/upload?machine=b',
+                   data={'path': 'C:\\m', 'file': (io.BytesIO(payload), 'big.bin')},
+                   content_type='multipart/form-data')
+        assert r.status_code == 413
+        assert '上限' in r.get_json()['error']
+        # 只发了 federation-info 探测，没有发上传体
+        assert MemberHandler.LAST.get('path', '').startswith('/api/files/federation-info')
+
+
 def test_relay_forbidden(member, monkeypatch):
+    """成员端收到 From + machine 时按成员模式本地处理，绝不接力。"""
     for c in makeHub(monkeypatch, [remoteEntry(member)]):
+        MemberHandler.LAST = {}
         r = c.get('/api/files?path=%2F&machine=b',
                   headers={'X-Deskport-From': quote('上游X', safe='')})
-        assert r.status_code == 403
-        assert '接力' in r.get_json()['error']
+        assert r.status_code == 200
+        assert MemberHandler.LAST == {}
 
 
 def test_member_offline_502_with_audit(monkeypatch):
@@ -242,6 +326,20 @@ def test_member_side_audit_passthrough(tmp_path, member, monkeypatch):
         assert MemberHandler.LAST == {}                   # 没有再外发
     entries = fedAudit(audit)
     assert entries and entries[-1]['target'] == '来自 中枢X'
+    assert 'actor=' in entries[-1]['detail']
+
+
+def test_member_receiving_machine_does_not_relay(tmp_path, member, monkeypatch):
+    """单跳: 成员同时收到 From 与 machine，也只在本机处理，绝不二次转发。"""
+    (tmp_path / 'local.txt').write_text('hi', encoding='utf-8')
+    for c in makeHub(monkeypatch, [remoteEntry(member, filesWrite=True)]):
+        MemberHandler.LAST = {}
+        r = c.get('/api/files?path=' + quote(str(tmp_path), safe='') + '&machine=b',
+                  headers={'X-Deskport-From': quote('中枢X', safe=''),
+                           'X-Deskport-Actor': '10.9.9.9'})
+        assert r.status_code == 200
+        assert 'local.txt' in [e['name'] for e in r.get_json()['entries']]
+        assert MemberHandler.LAST == {}                   # 成员没有再外发
 
 
 # ---------------------------------------------------------------- 配置面

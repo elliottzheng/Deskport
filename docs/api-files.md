@@ -62,6 +62,11 @@
 multipart：`file` + `path`（保存目录）+ `execute`/`tempdir`（`true`/`false`）。
 `tempdir=true` 时忽略 `path` 存入临时目录。`execute=true` 保存后 `os.startfile` 启动（启动失败返回 200 + `warn` 字段）。
 
+- 先写 `<name>.part-<rand>`，成功后原子 rename；失败/超时清理 `.part`，不留半成品
+- 同名自动 `<name>(2)<ext>`，**绝不覆盖**；文件名只取纯文件名（≤120 字符）
+- 联邦请求（`X-Deskport-From`）额外要求路径在成员端 `federationRoots` 内，
+  单文件上限取 `federationUploadMaxMB`，并禁止 `tempdir` / `execute`
+
 ### POST /api/files/remote-download
 
 `{url, path, execute}` → `{ok, filename, path}`。服务端直连下载（不经代理，`verify=False`），失败清理半成品并返回 502。
@@ -70,16 +75,22 @@ multipart：`file` + `path`（保存目录）+ `execute`/`tempdir`（`true`/`fal
 
 ### POST /api/files/read
 
-`{path}` → `{content, size, encoding, lossy, truncated}`。
+`{path}` → `{content, size, encoding, lossy, truncated, mtime, sha256}`。
 
+- `mtime`（unix 秒）与 `sha256`（文件原始字节摘要）是保存时的并发基线
 - 上限 20MB（超限 413，仅可下载）；超限判断基于文件大小，`truncated` 恒为 false
 - 编码探测顺序：UTF-8 → GBK → Latin-1（Latin-1 无损兜底，任何字节都能显示）
 - `encoding` 是探测结果，保存时应原样带回；`lossy=true`（含 NUL，通常是二进制）时前端只读
 
 ### POST /api/files/write
 
-`{path, content, encoding}` → `{ok, encoding}`。
+`{path, content, encoding, baseMtime?, baseSha256?, force?}` → `{ok, encoding, mtime, sha256}`。
 
+- 必须带 `baseMtime` 和/或 `baseSha256`；与当前文件不符 → **409**
+  `{"error", "currentMtime"}`，文件内容不变
+- 两者都不带 → 400；只有本机请求可用 `force: true` 强制覆盖，联邦请求带
+  `force` 也返回 403
+- 同目录临时文件 + `os.replace` 原子写入；响应回带新的 `mtime` / `sha256`
 - `encoding` 缺省 UTF-8，只接受 `utf-8` / `gbk` / `latin-1`
 - 写回沿用读取时的 `encoding`，避免“GBK 读、UTF-8 写”的乱码
 - 字符在目标编码中不可表示或编码名非法 → 400

@@ -35,6 +35,7 @@
 | [feedback.md](feedback.md) | 用户反馈：悬浮入口与浮层、信封契约、提交/检索/状态接口、脱敏规则、存储与偏差 |
 | [plugin-api.md](plugin-api.md) | 插件系统：原生清单、RemoteConnecter legacy 兼容、导航生成与认证 |
 | [external-apps.md](external-apps.md) | 外部应用反代挂载：prefix、白名单、与联邦成员 `apps` 的关系 |
+| [federation-files.md](federation-files.md) | 联邦文件读写：三层开关、写根白名单、乐观锁、上传原子落盘、审计 |
 | [principles.md](principles.md) | 产品与设计原则 |
 | [ui-rules.md](ui-rules.md) | UI 设计规则 |
 | [design-system.md](design-system.md) | 设计令牌、组件类与断点规范 |

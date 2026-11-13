@@ -18,5 +18,7 @@
   "agentTokens": [],
   "phoneUploadDir": "",
   "phoneUploadMaxMB": 2048,
-  "uploadTargets": []
+  "uploadTargets": [],
+  "federationRoots": [],
+  "federationUploadMaxMB": 2048
 }
