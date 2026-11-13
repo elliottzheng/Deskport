@@ -104,6 +104,32 @@ def test_disabled_returns_404(env, monkeypatch):
     assert env.client.get(PACK).status_code == 404
 
 
+def test_pack_url_follows_forwarded_proto(env, tmp_path, monkeypatch):
+    """批次 I：trustProxyProto 打开 + X-Forwarded-Proto: https → 包内 url 是 https；
+    不带头部仍是 http；开关缺省时伪造头部不生效。"""
+    def _cfg(**data):
+        path = tmp_path / 'config.json'
+        path.write_text(json.dumps(data), encoding='utf-8')
+        monkeypatch.setattr(configMod, 'CONFIG_PATH', str(path))
+        configMod._cache.update(mtime=None, data=None)
+
+    _cfg(trustProxyProto=True)
+    z = openPack(env.client.get(PACK, headers={'X-Forwarded-Proto': 'https'}))
+    cfg = json.loads(z.read('deskport/.deskport.json').decode('utf-8'))
+    assert cfg['url'] == 'https://localhost'
+    assert '{{' not in z.read('deskport/SKILL.md').decode('utf-8')
+
+    z = openPack(env.client.get(PACK))
+    assert json.loads(z.read('deskport/.deskport.json').decode('utf-8'))['url'] \
+        == 'http://localhost'
+
+    _cfg()   # 缺省关：伪造 https 头不得生效
+    z = openPack(env.client.get(PACK, headers={'X-Forwarded-Proto': 'https'}))
+    assert json.loads(z.read('deskport/.deskport.json').decode('utf-8'))['url'] \
+        == 'http://localhost'
+    configMod._cache.update(mtime=None, data=None)
+
+
 def test_tools_endpoints_unaffected(env):
     """同一开关下单文件工具箱照旧：清单三个、原文 200、sha256 一致。"""
     listed = {t['name']: t for t in env.client.get('/api/agent/tools').get_json()['tools']}

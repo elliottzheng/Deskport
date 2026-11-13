@@ -666,6 +666,15 @@ GET /api/agent/skill.zip        → 整包 zip：deskport/{SKILL.md, deskport.py
   其它名字没有路由，子路径/`..`/隐藏文件一律 404；
 - 整包里 `SKILL.md` 的 `{{BASE}}`/`{{VERSION}}` 按本次请求替换（与 handbook 一致），
   `.deskport.json` 带本次地址、不含令牌；
+- **scheme 修正开关 `trustProxyProto`（config.json，缺省 `false`）**：**只有在你确实
+  挂在反向代理/隧道后面时才开**。TLS 在代理端终结时进程看到的 scheme 永远是
+  `http`，手册与 `.deskport.json` 会印出根本不通的 `http://…`（隧道对明文请求
+  返 501）；打开后采信上游的 `X-Forwarded-Proto`（仅 `http`/`https`）修正对外
+  印出的协议前缀。`X-Forwarded-Host` / `X-Forwarded-For` **一律不采信**——Host
+  头客户端可任意伪造，采信它等于让调用方决定手册印什么地址；
+- **`lanAddress`（config.json，可缺省）**：填了（如 `"192.168.1.23"` 或
+  `"192.168.1.23:6789"`）公开手册会多印一行「局域网直连」，同网段更快且不需要
+  `-k`；没填就没有这行。不自动探测网卡——多网卡/VPN 环境下猜的地址不可靠；
 - 目录仍是 `.agents/skills/deskport/`（单一来源，不复制文件）；
 - 开关与手册共用 `handbookEnabled`（显式 `false` 时三个端点 404）：工具箱入口写在
   手册里，手册关掉后这些地址失去被发现路径，独立开关只会造出半开状态；

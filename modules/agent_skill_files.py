@@ -86,12 +86,16 @@ def agentSkillFileGet(skill, name):
 
 
 def _packConfig():
-    """整包里附带的 .deskport.json：地址取本次请求，默认执行点 local；**不含令牌**。"""
+    """整包里附带的 .deskport.json：地址取本次请求，默认执行点 local；**不含令牌**。
+
+    url 走 agent_handbook.baseUrl()——与手册同一口径：trustProxyProto 打开时
+    按 X-Forwarded-Proto 印出 https（公网入口下印 http 会指到一个 501 的地址）。
+    """
     return {
         '_说明': 'url = 下载这个包用的地址；host = 默认执行点（local 是本机，也可填 SSH '
                 '主机名，见 GET /api/agent/hosts）。令牌放同目录 .agent-token 文件或'
                 '环境变量 DESKPORT_TOKEN，不要写进这个文件。',
-        'url': request.host_url.rstrip('/'),
+        'url': agent_handbook.baseUrl(),
         'host': 'local',
     }
 

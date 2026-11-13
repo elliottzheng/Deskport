@@ -4,10 +4,21 @@ Deskport 是一台电脑上的远程执行与任务托管服务：你可以让�
 你只需要一个 HTTP 客户端：不需要安装 CLI 或 SDK，也不需要是 Kimi 或其他特定品牌的智能体。
 令牌由部署 Deskport 的人另外发给你，每次请求放在请求头 `X-Agent-Token` 里（也接受 `Authorization: Bearer <令牌>`）。
 
-- API base：{{BASE}}
+- API base（本次请求的入口）：{{BASE}}
+{{LAN_LINE}}
 - 手册版本：{{VERSION}}
 - 本手册是公开的，不含任何密钥；可以随时重读。程序化读取用 `GET {{BASE}}/api/agent/handbook?format=json`，返回 `{version, base, markdown}`。
 - 令牌可能被收窄到某些 scope（例如只给 `share`）；权限不够时 403 会带 `need`，让部署者补发即可。
+
+## 证书是自签的
+
+公网入口（HTTPS 隧道）用的是隧道方的自签名证书，系统信任库里没有它——不处理会报证书错误（`curl` 退出码 60）。三种连法：
+
+- `curl` 加 `-k`：`curl -k https://<入口>/api/agent/handbook`；
+- `deskport.py`：`.deskport.json` 里写 `"insecure": true`，或用 `"cafile"` 指向部署者给你的证书文件（只信任这一张，比全局跳过校验更稳）；
+- 局域网直连是纯 HTTP，没有这个问题，也不需要 `-k`。
+
+这只在你确认连的就是自己的 Deskport 时才可接受；对别的地址别顺手 `-k`。
 
 ## 最短路径
 
