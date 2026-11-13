@@ -14,7 +14,7 @@ from urllib.parse import urlparse, parse_qs
 from acp_session import AcpSession, IDLE_KILL_SECONDS, PROTOCOL_VERSION, nowMs, \
     discoverModels, forkKimiSession, kimiSessionWorkDir, listKimiSessions
 from model_probe import MAX_QUEUE_MODELS, PROBE_TIMEOUT_SEC
-from node_platform import defaultCwd, nodeOs, nodeShells
+from node_platform import cwdRoots, defaultCwd, nodeOs, nodeShells
 
 CREATE_LOAD_TIMEOUT_SEC = 60   # node 侧 session/load 上限：超时杀卡住的 kimi 并报错
 
@@ -247,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                                     'models': models['models'],
                                     'defaultModel': models['default'],
                                     'os': nodeOs(), 'shells': nodeShells(),
-                                    'defaultCwd': defaultCwd(),
+                                    'defaultCwd': defaultCwd(), 'cwdRoots': cwdRoots(),
                                     'modelStatus': modelStatus,
                                     'usableModels': usable})
         if not self._authed():

@@ -28,7 +28,8 @@ blueprint = Blueprint('federation_tasks', __name__)
 
 # ---------------------------------------------------------------- 节点呈现
 # agent node 与联邦成员统一呈现在 /api/tasks/nodes，供前端徽标、cwd 占位符
-# 与健康探测；平台字段（os/shells/defaultCwd）来自节点自报，见 node_path。
+# 与健康探测；平台字段（os/shells/defaultCwd）与允许根 cwdRoots 来自节点
+# 自报，见 node_path。
 
 @blueprint.route('/api/tasks/nodes')
 def nodesList():
@@ -44,7 +45,8 @@ def nodesList():
         item = {'name': name, 'via': via, 'kind': kind,
                 'models': models, 'defaultModel': defaultModel,
                 'modelSelectable': bool(models or defaultModel),
-                'os': plat['os'], 'shells': plat['shells']}
+                'os': plat['os'], 'shells': plat['shells'],
+                'cwdRoots': plat['cwdRoots']}
         if plat['defaultCwd']:
             item['defaultCwd'] = plat['defaultCwd']
         if withStatus:

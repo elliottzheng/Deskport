@@ -150,6 +150,12 @@ def createTaskResponse(data):
         cwdErr = node_path.cwdError(node, remoteCwd)
         if cwdErr:
             return ({'error': cwdErr}), 400
+        # 批次 B3：cwd 还必须落在执行点自报的允许根之下（cwdRoots 非空才
+        # 校验；空 = 未知，沿用只查语法）。原来远端 cwd 能指到对端任何可写
+        # 目录，附件也会落进 <cwd>/.deskport-inputs/<taskId>/——先拦在建卡前
+        rootsErr = node_path.cwdRootsError(node, remoteCwd)
+        if rootsErr:
+            return ({'error': rootsErr}), 400
         # R5-1a：联邦执行点的首条消息受对端 4000 上限约束，接力棒无法保证
         # 到达；先明确拒绝，别让工作线悄悄丢棒（R5-1b 再补）
         if workline and agent_nodes.findFederationMember(node) is not None:

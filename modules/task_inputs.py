@@ -14,6 +14,8 @@
       `task_inputs.cleanup`，不覆盖原始错误；
     - 错误里带上是哪个输入失败、为什么；
     - 投递前先按上限拒（成员声明上限与中枢 `uploadLimitMB` 取小）；
+    - 批次 B3：投递前再按执行点声明的 cwdRoots 复核一次 cwd（对端
+      realpath，防建卡后软链替换）；根未知（空数组）不校验；
     - 同名不覆盖，自动 `(2)`（与本机暂存一致）；
     - 目录名固定为 taskId，重投不产生第二份目录；目录内重名仍走 `(2)`；
     - 本机执行点不走这里（`tasks_store._collectSources` 仍是本机路径）。
@@ -244,6 +246,12 @@ def deliver(node, cwd, taskId, paths=(), attachments=()):
         _checkLimit(entries, target.maxMB())
         if not target.isdir(cwd):
             raise DeliverError('执行点 %s 的工作目录不存在: %s' % (name, cwd))
+        # 批次 B3：投递前按对端 fs 复核 cwd 仍在执行点声明的根下——建卡到
+        # 投递之间目录可能被换成软链（TOCTOU），建卡时的词法校验拦不住；
+        # 根未知（cwdRoots 为空）不校验，与建卡处同语义
+        rootsErr = node_path.cwdRootsError(name, cwd, realpath=target.realpath)
+        if rootsErr:
+            raise DeliverError(rootsErr)
         made['inputs'] = target.ensureDir(target.join(cwd, INPUTS_DIR))
         made['task'] = target.ensureDir(base)
         return {'dir': base, 'paths': _placeAll(target, entries, base)}
