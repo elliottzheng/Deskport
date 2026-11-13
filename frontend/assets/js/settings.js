@@ -43,9 +43,12 @@ createApp({
             utError: '',
             utOk: '',
             utBusy: false,
+            handbookUrl: '',
+            handbookOk: '',
         };
     },
     mounted() {
+        this.handbookUrl = location.origin + '/api/agent/handbook';
         this.loadInbox();
         this.loadBrand();
         this.loadFederation();
@@ -175,6 +178,15 @@ createApp({
                 // 加载失败时 fedRoots 是 []，但那是"不知道"，不是"确实为空"
                 this.fedRootsState = 'error';
                 this.fedError = '加载联邦设置失败: ' + err.message;
+            }
+        },
+        async copyHandbook() {
+            try {
+                await navigator.clipboard.writeText(this.handbookUrl);
+                this.handbookOk = '已复制，发给智能体即可；令牌请另行发送';
+                setTimeout(() => { this.handbookOk = ''; }, 2500);
+            } catch (err) {
+                this.handbookOk = '复制失败，请手动选中链接复制';
             }
         },
         async copyToken() {

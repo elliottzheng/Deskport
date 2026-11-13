@@ -395,6 +395,11 @@ def isInboxEnabled():
     return bool(load().get('inboxEnabled'))
 
 
+def isHandbookEnabled():
+    r"""公开接入手册开关；缺省开启，显式 false 才关闭（端点 404）。"""
+    return load().get('handbookEnabled', True) is not False
+
+
 def defaultInboxDirs():
     r"""软件默认的收件箱目录：只使用用户主目录下的常见位置，不扫描本机其他盘。"""
     home = os.path.expanduser('~')

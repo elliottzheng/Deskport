@@ -13,6 +13,7 @@
   - 上传目标：内置「手机上传」（= `phoneUploadDir`，只读、不可删）+ 自定义目标增删改。自定义目标可改显示名与目录，`id` 由服务端生成、编辑时保持不变（App 已保存的目标不会失效）；保存即全量替换自定义列表。
   - 多机联邦：本机联邦令牌（留空 = 关闭联邦，别的机器再也进不来）+ 远端列表（id / 名称 / 地址 / 对方联邦令牌 / 接收策略：`terminal` 合并终端会话、`files` 只读浏览成员文件、`filesWrite` 允许写成员文件、`apps` 外接应用白名单）。每台远端卡片上有一个「只读 / 可写 / 未接文件」标识，`filesWrite` 的勾选框在 `files` 未勾选时禁用。
   - 联邦可写目录：成员端写根白名单（见下节），可增删；列表为空时页面明确写出「带 `X-Deskport-From` 的联邦转发写请求一律 403」，加载中/加载失败时只说「没加载出来」，绝不下"一律拒绝"的安全结论。
+  - 给外部智能体：只读卡片，显示 `http://<当前地址>/api/agent/handbook` 与复制按钮。这条 URL 是**公开**的接入手册（无需令牌，令牌另行发放）；`config.handbookEnabled=false` 时该端点 404，卡片仍显示地址但不保证可用。
 
 ## 联邦写（一）：成员端可写目录
 
@@ -63,6 +64,7 @@
 - 密码存放在目标机 `config.json` 的 `password` 字段；`config.setPassword()` 原子写回。
 - 收件箱开关为 `inboxEnabled`（缺省 `false`），目录为 `inboxDirs`；`config.setInboxSettings()` 原子写回并失效配置缓存。
 - 品牌名为 `brandName`（缺省 `Deskport`）；`config.setBrandName()` 原子写回，页面渲染时注入 `<meta name="wp-brand">`，manifest 动态生成。
+- 公开接入手册：`GET /api/agent/handbook`（`modules/agent_handbook.py`）**不在鉴权守卫内**，正文来自 `docs/agent-handbook.md`，运行时只替换 `{{BASE}}`（`request.host_url`）与 `{{VERSION}}`（构建号）；`?format=json` 返回 `{version, base, markdown}`。开关 `handbookEnabled` 缺省 `true`（`config.isHandbookEnabled()`），显式 `false` 时 404。公开正文里不放令牌、指纹字段、主机名或本机路径。
 - 登录设备在 `modules/device_auth.py`：令牌只存 SHA-256，落在 `%APPDATA%\<stateDir>\devices.json`（**不进** `config.json`），mtime 缓存热读 + 原子写；与 `agentTokens` 同走 `agentFromRequest` 一个鉴权入口，设备令牌默认只有 `upload` scope。同设备名重登 = 换新令牌、旧令牌即刻失效；设备上限 20 台。`lastUsedAt`/`lastIp` 同秒节流回写，不逐次写盘。签发、自吊销、管理面吊销都落审计（`device.login` / `device.logout` / `device.revoke`）。
 - 上传目标：内置 `phone` 读 `phoneUploadDir`（缺省 `<fallbackDir>\手机上传`，并自动并入 `inboxDirs`）；自定义存 `config.json` 的 `uploadTargets[]`，`config.getUploadTargets()` 合并后返回（非法条目静默跳过）。`path` 只留服务端——下发 App 的 `GET /api/agent/upload/targets` 与 `device/login` 响应只给 `id` + `name`，路径不出网。
 - 多机联邦：`config.getFederationToken()` / `setFederationToken()`、`config.getRemotes()` / `setRemotes()`；`remotes[].token` 必须等于远端 `config.json` 的 `federationToken`。联邦请求带 `X-Deskport-Token`，`authGuard` 第一道就放行（不依赖 cookie，因此没有 CSRF 面）。`terminal` 缺省 `true`、`files` 缺省 `false`（浏览成员文件比接终端更敏感）、`filesWrite` 缺省 `false`（写成员文件再敏感一层；`files=true` 仍只读）、`apps` 缺省 `[]`（`["*"]` 全收）。`GET` 响应里的 `machines` / `fileMachines` / `discoveredApps` 是给设置页下拉与白名单提示用的派生视图。成员端的 `federationRoots`（写根白名单，空 = 带 `X-Deskport-From` 的联邦转发写一律 403）由 `config.load()['federationRoots']` 直读 + `config.setFederationRoots()` 维护，生效值取 `modules/federation_write.roots()`（归一化、去重、截断），设置页入口是 `POST /api/settings/federation/roots`（`GET /api/settings/federation` 的 `roots` 返回同一个生效值）；`federationUploadMaxMB`（缺省 2048）仍直接写在成员机 `config.json`。详见 [federation-files.md](federation-files.md)。

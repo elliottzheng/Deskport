@@ -17,6 +17,7 @@ EXEMPT_PREFIXES = (
     '/login',
     '/api/auth/status',   # 未认证也要可访问: 终端页掉线探测依赖它
     '/api/agent/device/login',  # 设备登录: 凭密码换 upload 设备令牌(无 Cookie)
+    '/api/agent/handbook',      # 公开接入手册: 令牌之前就要能读
     '/assets/css/tokens.css',
     '/assets/css/login.css',
     '/manifest.webmanifest',

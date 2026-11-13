@@ -1,5 +1,8 @@
 # 智能体 API（Agent API）
 
+> 外部智能体接入先读公开手册：`GET /api/agent/handbook`（**无需令牌**，`text/markdown`；
+> `?format=json` 返回 `{version, base, markdown}`）。本文件是完整参考，手册是最小上手路径。
+
 给外部 AI 程序的机器接口：用长效令牌直接在**已保存的 SSH 主机和 Deskport 本机**上
 执行命令、读写文件、开持久会话，并把复杂任务委托给托管智能体。与浏览器终端互补
 ——人用 WS 会话，智能体用这套 HTTP API。

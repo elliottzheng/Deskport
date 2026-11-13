@@ -212,6 +212,18 @@
     </div>
 
     <div class="card settings-card">
+        <div class="card-title">给外部智能体</div>
+        <p class="settings-note">把这条链接交给任意智能体：它用普通 HTTP 就能读到接入手册，不需要安装 CLI，也不需要是某个特定品牌的智能体。</p>
+        <div class="fed-token-row">
+            <input class="input" :value="handbookUrl" readonly spellcheck="false"
+                   @focus="$event.target.select()">
+            <button type="button" class="btn btn-secondary" @click="copyHandbook">复制</button>
+        </div>
+        <p class="settings-hint">手册地址是公开的，不含密钥；令牌另行发放。</p>
+        <p v-if="handbookOk" class="settings-ok">{{ handbookOk }}</p>
+    </div>
+
+    <div class="card settings-card">
         <div class="card-title">品牌名称</div>
         <p class="settings-note">显示在顶栏、登录页和 PWA 名称；保存后刷新页面生效。</p>
         <input class="input" v-model.trim="brandName" maxlength="24" placeholder="Deskport" spellcheck="false">

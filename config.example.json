@@ -4,6 +4,7 @@
   "stateDirName": "web-platform",
   "terminalIdleTimeoutHours": 0,
   "inboxEnabled": false,
+  "handbookEnabled": true,
   "inboxDirs": [],
   "workDirs": [],
   "fallbackDir": "",
