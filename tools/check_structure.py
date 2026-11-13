@@ -38,7 +38,7 @@ LEGACY = {
     'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
     'modules/tasks_api.py': 961,                  # 任务 API 面最大，拆分需配回归
-    'modules/tasks_runner.py': 689,               # 任务执行编排（引擎分发/会话线程）
+    'modules/tasks_runner.py': 706,               # 任务执行编排；+17=lastTurn 空转标记（2026-11-13）
     'modules/tasks_store.py': 433,                # 任务存储（暂存区已拆去 staging，仍偏长）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集

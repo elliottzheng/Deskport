@@ -249,6 +249,9 @@ class TaskRepository:
             'createdAt': task.get('createdAt', 0), 'endedAt': task.get('endedAt', 0),
             'error': task.get('error', ''),
             'lastText': lastText[:200], 'lastTextTruncated': len(lastText) > 200,
+            # 上一轮是不是"空转"（一个工具都没调、一句话都没回就结束）——
+            # 2026-11-13 中招验收方三次早夭就是这个形态，列表里必须看得见
+            'emptyTurn': bool((task.get('lastTurn') or {}).get('empty')),
         }
 
     def summary(self, task) -> contracts.TaskSummary:

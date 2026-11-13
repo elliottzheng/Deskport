@@ -445,6 +445,7 @@ def _promptOnce(task, client, text, first=False):
         tail = worklines_store.turnTail(task)
         if tail:
             text = text + '\n\n' + tail
+    seq0 = int(task.get('seq') or 0)      # 本轮水位线：_markTurnKind 据此判空转
     store.repo.append_event(task, 'status', text='开始执行')
     with store.repo.lock:
         task_state.transition(task, task_state.TaskState.RUNNING)
@@ -452,6 +453,7 @@ def _promptOnce(task, client, text, first=False):
         store.repo.save()
     result = client.prompt(text)
     _flushAssistant(task)   # 回合结束即落终版，订阅者（SSE/轮询）拿到完整文本
+    _markTurnKind(task, seq0)
     _afterWorklineTurn(task)
     results = store._scanResults(task['workspace'])
     with store.repo.lock:
@@ -461,6 +463,21 @@ def _promptOnce(task, client, text, first=False):
         if not task.get('closedByUser'):
             task_state.transition(task, task_state.TaskState.WAITING)
             task['awaitingAnswer'] = store._detectQuestion(store._lastAssistantText(task))
+        store.repo.save()
+
+
+def _markTurnKind(task, seq0):
+    """本轮是真干活还是空转（2026-11-13 中招验收方早夭事件）。
+
+    早夭形态：续跑消息投递成功、会话历史也 load 了，模型却 0 工具 0 文本
+    结束轮次，events 里只剩「开始执行/这轮结束」两条 status——跟正常结束
+    一模一样，主控只能反复续跑、反复空转。标出来让调用方第一眼看见。
+    """
+    with store.repo.lock:
+        tools = sum(1 for e in task.get('events') or []
+                    if int(e.get('seq') or 0) > seq0 and e.get('type') == 'tool')
+        empty = tools == 0 and not (task.get('lastText') or '').strip()
+        task['lastTurn'] = {'tools': tools, 'empty': empty, 'at': store._now()}
         store.repo.save()
 
 
