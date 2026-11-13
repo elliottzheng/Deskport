@@ -99,6 +99,8 @@
 task-back { display: none; }
 .task-mode .input { height: 32px; padding: 0 8px; font-size: 12px; }
 .task-remote-cwd { flex: 1 1 220px; min-width: 0; height: 32px; padding: 0 8px; font-size: 12px; }
+.task-local-cwd { flex: 1 1 220px; min-width: 0; height: 32px; padding: 0 8px; font-size: 12px; }
+.task-cwd-hint { flex-basis: 100%; margin: -4px 0 0; }
 
 .task-chat {
     flex: 1; min-height: 220px; max-height: 52vh; overflow: auto;

@@ -11,6 +11,7 @@
                 runWhere: 'local',
                 nodes: [],
                 remoteCwd: '',
+                localCwd: '',
                 paths: [],
                 pathInput: '',
                 pathMenuOpen: false,
@@ -208,8 +209,11 @@
                 this.error = '';
                 try {
                     const body = { prompt: prompt, mode: this.mode, node: this.runWhere };
+                    const cwd = (this.localCwd || '').trim();
                     if (this.isLocalRun) {
                         body.paths = this.paths;
+                        // 留空不发 cwd：空串会被服务端 400，缺省语义是任务目录
+                        if (cwd) { body.cwd = cwd; }
                     } else {
                         body.cwd = this.remoteCwd;
                     }
@@ -224,12 +228,16 @@
                     this.prompt = '';
                     this.paths = [];
                     this.pathMenuOpen = false;
+                    if (this.isLocalRun) { this.rememberCwd(cwd); }
                     await this.select(data.task);
                 } catch (err) {
                     this.error = err.message;
                 } finally {
                     this.busy = false;
                 }
+            },
+            rememberCwd(p) {
+                try { localStorage.setItem('wp.taskCwd', p); } catch (err) { /* ignore */ }
             },
             async loadNodes() {
                 try {
@@ -389,6 +397,7 @@
                     const list = JSON.parse(localStorage.getItem('wp.taskPathRecent') || '[]');
                     this.recentPaths = Array.isArray(list) ? list.slice(0, 8) : [];
                 } catch (err) { this.recentPaths = []; }
+                try { this.localCwd = localStorage.getItem('wp.taskCwd') || ''; } catch (err) { this.localCwd = ''; }
             },
             rememberPath(p) {
                 const list = [p].concat(this.recentPaths.filter(function (x) { return x !== p; })).slice(0, 8);

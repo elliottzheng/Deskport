@@ -74,6 +74,11 @@
                     </label>
                     <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
                            spellcheck="false" placeholder="远端工作目录，如 /mnt/sda1/yinglin/course">
+                    <template v-if="isLocalRun">
+                        <label class="task-mode" for="task-local-cwd">工作目录</label>
+                        <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
+                               spellcheck="false" placeholder="如 D:\资料">
+                    </template>
                     <label class="task-mode">模式
                         <select class="input" v-model="mode">
                             <option value="auto">自动批准（推荐）</option>
@@ -83,6 +88,7 @@
                         </select>
                     </label>
                     <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
+                    <span class="task-hint task-cwd-hint" v-if="isLocalRun">留空 = Deskport 分配的任务目录；填了必须是执行点上已存在的绝对路径</span>
                 </div>
                 <div class="task-compose-foot">
                     <span class="task-hint">{{ isLocalRun
