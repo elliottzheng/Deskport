@@ -9,7 +9,7 @@
 | --- | --- | --- | --- |
 | 成员端 | `config.federationRoots` | `[]` | 联邦写请求的路径必须 realpath 落在这些根下；空数组 = 联邦一律 403 写 |
 | 中枢端 | `remotes[].filesWrite` | `false` | 是否把写端点转发给该成员；`files: true` 仍然只是只读 |
-| App | 设备令牌 scope `upload_remote` | 未授 | 手机上传到远端需要；本批未实施（见 §8） |
+| App | 设备令牌 scope `upload_remote` | 未授 | 手机上传到远端需要；设备登录 `allowRemoteUpload: true` 才追加（见 §8） |
 
 `files: true` 控制只读浏览，`filesWrite: true` 控制写；两者都要求 `files: true`
 （未开文件浏览的机器连写请求也不会转发）。成员端根白名单只约束写操作，
@@ -170,9 +170,11 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
 
 ## 8. 本批未实施与已知缺口
 
-- **App 的 `upload_remote` scope 未实施**：本批没有给设备令牌开任何通往
-  `/api/files/*` 的服务端路径（设备令牌只能走 `/api/agent/*`），所以手机
-  目前无法直接触发联邦写；App 接入时必须新增该 scope 并默认不授。
+- **App 的 `upload_remote` scope（2026-11-13 批次 B2 已补）**：`/api/agent/share`
+  执行点是远端时要求该 scope，`full` 视为含；设备令牌默认不授，
+  `POST /api/agent/device/login` 带 `allowRemoteUpload: true` 才追加，
+  响应里的 `scopes` 如实反映。设备令牌仍只能走 `/api/agent/*`——远端投递
+  由服务端按该 scope 代投，手机不直接触发联邦写端点。
 - 不做联邦 `pins`、远端压缩/解压、断点续传、多跳联邦（A→B→C）。
 
 ## 9. 任务输入投递（跨机附件）

@@ -2,8 +2,10 @@
 """设备登录 — App 用网页密码一次性换只带 upload+share 权限的设备令牌。
 
 端点（挂 agent_api 蓝图, app.py import 即随 agentApiModule 一次注册）:
-    POST /api/agent/device/login  {password, device}
+    POST /api/agent/device/login  {password, device, allowRemoteUpload?}
       → {token, name, scopes:["upload","share"], createdAt}
+      可选 allowRemoteUpload: true 才追加 upload_remote（往远端执行点投
+      附件，见 agent_share）；缺省不授，响应里的 scopes 如实反映。
       密码与网页登录同一来源(config.getPassword)同一比对方式; 令牌只在
       这次响应出现, 任何接口都不再回显。同设备名重登=换新令牌, 旧令牌即废。
     POST /api/agent/device/logout   凭设备令牌自吊销（智能体令牌 403）
@@ -37,10 +39,10 @@ from flask import jsonify, request
 
 import config
 from modules import events, state
-from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD, agentFromRequest,
-                               blueprint, tokenHash)
+from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD, SCOPE_UPLOAD_REMOTE,
+                               agentFromRequest, blueprint, tokenHash)
 
-DEVICE_SCOPES = [SCOPE_UPLOAD, SCOPE_SHARE]
+DEVICE_SCOPES = [SCOPE_UPLOAD, SCOPE_SHARE]   # 默认不授 upload_remote
 
 DEVICES_FILE = 'devices.json'
 MAX_DEVICES = 20
@@ -98,13 +100,13 @@ def _saveDevices(devices):
         _cache['data'] = None
 
 
-def _issueDevice(devices, name, token, ip):
+def _issueDevice(devices, name, token, ip, scopes=None):
     """同设备名重登 = 替换旧条目（旧令牌即刻失效）。返回 createdAt。"""
     nowText = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     kept = [d for d in devices if d.get('name') != name]
     kept.append({'id': secrets.token_hex(8), 'name': name,
                  'tokenHash': tokenHash(token), 'kind': 'device',
-                 'scopes': list(DEVICE_SCOPES), 'createdAt': nowText,
+                 'scopes': list(scopes or DEVICE_SCOPES), 'createdAt': nowText,
                  'lastUsedAt': '', 'lastIp': ip})
     _saveDevices(kept)
     return nowText
@@ -238,12 +240,16 @@ def deviceLogin():
     expect = config.getPassword()
     if expect and hmac.compare_digest(expect.encode(), password.encode()):
         token = secrets.token_urlsafe(32)
-        createdAt = _issueDevice(devices, name, token, ip)
+        scopes = list(DEVICE_SCOPES)
+        if data.get('allowRemoteUpload') is True:
+            scopes.append(SCOPE_UPLOAD_REMOTE)   # 显式勾选才授远端投递
+        createdAt = _issueDevice(devices, name, token, ip, scopes)
         targets = [{'id': t['id'], 'name': t['name']}
                    for t in config.getUploadTargets()]
-        events.log('device.login', name, 'ok', '', ip)
+        events.log('device.login', name, 'ok',
+                   'scopes=%s' % ','.join(scopes), ip)
         return jsonify({'token': token, 'name': name,
-                        'scopes': list(DEVICE_SCOPES), 'createdAt': createdAt,
+                        'scopes': scopes, 'createdAt': createdAt,
                         'targets': targets})
     if _recordFailure(ip):
         events.log('device.lockout', 'global', 'on',

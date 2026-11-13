@@ -49,6 +49,7 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
 - 现有 `/api/agent/*`（exec / sftp / sessions / skills / hosts）与
   `/api/tasks*` 全部要求 `full`；手机上传（见下节）要求 `upload`；
   手机转发任务（见「转发文件 → 交给执行方」一节）要求 `share`；
+  往**远端执行点**投附件还要 `upload_remote`（`node=local` 不需要）；
 - 写了 `scopes` 就按白名单精确匹配；显式 `"scopes": ["full"]` 等价全权
   （也能上传）；
 - 越权返回 `403 {"error": "令牌无此权限", "need": "<所需 scope>"}`，
@@ -154,6 +155,12 @@ POST /api/agent/share           (scope=share, multipart/form-data)
   配置的 SSH 主机走 SFTP；联邦成员经成员的文件写端点（中枢
   `remotes[].filesWrite` 与成员端 `federationRoots` 都要开）。任一文件
   投递失败 → 任务不建、已投部分清掉；远端执行点没配 `cwd` → 400；
+- **远端投递需要 `upload_remote`**：执行点不是 `local` 时，令牌还须带
+  `upload_remote`，否则 `403 {"error": "向远端执行点投递附件需要
+  upload_remote 权限", "need": "upload_remote"}`（`full` 视为含该 scope；
+  `node=local` 完全不受影响）。这是第三层授权：成员端 `federationRoots`
+  与中枢 `filesWrite` 只决定"能写哪里"，令牌 scope 才决定"谁可以写"。
+  设备令牌默认不授，登录时显式 `allowRemoteUpload: true` 才追加；
 - 令牌缺 `share` → `403 {"need": "share"}`（`full` 视为含 share）；
   无令牌 401；`prompt` 超长 / 文件数 >10 / 文件名不合法 / `mode` 非法 → 400；
 - 审计 `agent.share`：target = taskId，detail = 文件数 + prompt 长度。
@@ -166,9 +173,10 @@ App 不保存密码：用网页访问密码登录一次，服务端签发一个*
 
 ```text
 POST /api/agent/device/login    （无需令牌, 免 Cookie）
-{"password": "<网页访问密码>", "device": "小米手机"}
+{"password": "<网页访问密码>", "device": "小米手机",
+ "allowRemoteUpload": true}     ← 可选；显式 true 才追加 upload_remote
 → 200 {"token": "<43字符>", "name": "小米手机",
-       "scopes": ["upload", "share"],
+       "scopes": ["upload", "share"],       ← 带了 allowRemoteUpload 时是三项
        "createdAt": "2026-11-12 12:00:00",
        "targets": [{"id": "phone", "name": "手机上传"}, ...]}
 → 401 {"error": "密码错误"}    → 429 {"error": "尝试次数过多, 请稍后再试"}
@@ -184,6 +192,8 @@ POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
 - 设备令牌与智能体令牌走同一鉴权入口：`/api/agent/upload` 与
   `/api/agent/share` 放行，exec / SFTP / sessions / `/api/tasks*` 一律
   `403 {"need": "full"}`；
+- `allowRemoteUpload: true` 才追加 `upload_remote`（往远端执行点投附件）；
+  默认不授，响应里 `scopes` 如实反映三项/两项，要不要授由调用方显式决定；
 - **旧设备令牌只有 `upload`**：升级后重新登录一次即可拿到 `share`
   （转发任务会 403 `{"need": "share"}`，重新登录即解决）；
 - 防暴力破解（内存计数，重启清零）：每 IP 60 秒内失败≥5 拒到窗口滚出；

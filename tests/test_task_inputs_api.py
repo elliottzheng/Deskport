@@ -44,7 +44,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(configMod, 'getAgentTokens', lambda: [
         {'id': 't1', 'name': '测试智能体',
          'tokenHash': hashlib.sha256(TOKEN.encode()).hexdigest()},
-        {'id': 'share', 'name': '手机分享', 'scopes': ['share'],
+        {'id': 'share', 'name': '手机分享', 'scopes': ['share', 'upload_remote'],
          'tokenHash': hashlib.sha256(TOKEN_SHARE.encode()).hexdigest()}])
     monkeypatch.setattr(eventsMod, 'log', lambda *a, **k: None)
     repo = TaskRepository(str(tmp_path / 'tasks.json'), str(tmp_path / 'logs'))
@@ -233,7 +233,10 @@ def test_fed_target_upload_and_cleanup(tmp_path):
     assert first.endswith('a.txt') and second.endswith('a(2).txt')
     assert stored[first] == b'A' and stored[second] == b'A'
     target.cleanup(base, {'task': True, 'inputs': True})
-    assert recycled == [base]
+    assert recycled == [second, first, base,
+                        join(root, '.deskport-inputs')]   # 倒序，最后删空目录
+    assert stored == {}
+    assert not [d for d in dirs if '.deskport-inputs' in d]
 
 
 def test_fed_info_without_from_header_and_limit_takes_min(monkeypatch):

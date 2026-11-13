@@ -29,6 +29,9 @@ exec / SFTP / 改配置的全权交给手机。本模块新增 share scope，只
     - taskId 给了 → 走 tasks_api.deliverMessage（回合中排队，不另造通道）；
     - 没给 → tasks_api.createTaskResponse 建任务（paths 带上）；
     - 令牌缺 share → 403 {"need":"share"}（full 视为含 share）；
+    - 执行点是远端（agent node / 联邦成员）时还要 upload_remote，
+      缺了 → 403 {"need":"upload_remote"}；设备令牌默认不授（见
+      device_auth），`node=local` 不受影响；
     - 审计 agent.share（target=taskId, detail=文件数+prompt 长度）。
 
 执行点边界（2026-11-13 批次 B）:
@@ -46,7 +49,8 @@ from flask import jsonify, request
 
 import config
 from modules import events, staging, task_inputs, task_node, tasks_api, tasks_store
-from modules.agent_api import SCOPE_SHARE, _agentRequired, blueprint
+from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD_REMOTE,
+                               _agentRequired, agentHasScope, blueprint)
 
 MAX_FILES = 10
 MAX_PROMPT = 4000
@@ -253,6 +257,16 @@ def shareSubmit():
         if task is None or (task.get('status') or '') == 'closed':
             _audit('agent.share', taskId, 'fail', '任务不存在或已结束')
             return jsonify({'error': '任务不存在或已结束'}), 409
+
+    # 授权门（批次 B2）：往远端执行点投附件要第三层授权。成员端根白名单与
+    # 中枢 filesWrite 只回答"能写哪里"，令牌 scope 才回答"谁可以写"。
+    targetNode = task_node.of(task) if task is not None else node
+    if not task_node.isLocal(targetNode) \
+            and not agentHasScope(agent, SCOPE_UPLOAD_REMOTE):
+        _audit('agent.share', taskId, 'deny',
+               'need=upload_remote node=%s' % targetNode[:60])
+        return jsonify({'error': '向远端执行点投递附件需要 upload_remote 权限',
+                        'need': 'upload_remote'}), 403
 
     stagedFiles = []
     stagedFolder = ''

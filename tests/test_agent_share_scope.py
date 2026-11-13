@@ -9,6 +9,7 @@ scope 边界（share 可分享不能 exec、upload 403、full 与旧令牌放行
 import hashlib
 import io
 import json
+import os
 import time
 from types import SimpleNamespace
 
@@ -24,6 +25,7 @@ from modules.tasks_store import TaskRepository
 TOKEN_SHARE = 'tok-share-' + 'e' * 16   # scopes ["share"]
 TOKEN_UPLOAD = 'tok-up-' + 'f' * 16     # scopes ["upload"]（旧手机令牌）
 TOKEN_FULL = 'tok-full-' + 'a' * 16     # 没写 scopes = 全权
+TOKEN_REMOTE = 'tok-remote-' + 'r' * 16  # scopes ["share", "upload_remote"]
 PASSWORD = 'pw-share'
 
 
@@ -50,6 +52,8 @@ def env(tmp_path, monkeypatch):
         {'id': 'phone', 'name': '手机上传', 'tokenHash': _hash(TOKEN_UPLOAD),
          'scopes': ['upload']},
         {'id': 'full', 'name': '全权', 'tokenHash': _hash(TOKEN_FULL)},
+        {'id': 'remote', 'name': '远端投递', 'tokenHash': _hash(TOKEN_REMOTE),
+         'scopes': ['share', 'upload_remote']},
     ])
     monkeypatch.setattr(configMod, 'getPassword', lambda: PASSWORD)
     monkeypatch.setattr(configMod, 'statePath', fakeStatePath)
@@ -182,3 +186,100 @@ def test_tasks_list_recent_non_closed_sorted_and_limited(env):
     assert updated == sorted(updated, reverse=True)
     assert set(items[0]) == {'id', 'title', 'status', 'updatedAt', 'node'}
     assert items[0]['updatedAt'] == pytest.approx(now)
+
+
+# ---- upload_remote：往远端执行点投附件的第三层授权（批次 B2） ----
+
+def _stubRemote(monkeypatch):
+    """远端投递桩：不连真机，只记录投到了哪。"""
+    import modules.agent_nodes as nodesMod
+    from modules import task_inputs
+    monkeypatch.setattr(nodesMod, 'findNode',
+                        lambda name: {'name': name, 'via': 'h1'})
+    monkeypatch.setattr(nodesMod, 'findFederationMember', lambda name: None)
+    monkeypatch.setattr(task_inputs, 'dirFor',
+                        lambda node, cwd, taskId:
+                        cwd + '/.deskport-inputs/' + taskId)
+    seen = {}
+
+    def fakeDeliver(node, cwd, taskId, paths=(), attachments=()):
+        remote = cwd + '/.deskport-inputs/' + taskId
+        seen.update(node=node, cwd=cwd, paths=list(paths))
+        return {'dir': remote,
+                'paths': [remote + '/' + os.path.basename(p) for p in paths]}
+
+    monkeypatch.setattr(task_inputs, 'deliver', fakeDeliver)
+    return seen
+
+
+def test_remote_node_without_upload_remote_403(env, monkeypatch):
+    seen = _stubRemote(monkeypatch)
+    resp = share(env, TOKEN_SHARE, files=[('a.txt', b'A')], prompt='跑一下',
+                 node='ai-xmyz', cwd='/home/u/proj')
+    assert resp.status_code == 403
+    body = resp.get_json()
+    assert body['need'] == 'upload_remote'
+    assert 'upload_remote' in body['error'] and '权限' in body['error']
+    assert '白名单' not in body['error']      # 别让人去查成员机配置
+    assert seen == {}                         # 门在投递之前
+    assert env.repo.list() == []              # 任务没建
+    staged = env.tmp / 'taskroot'
+    assert not staged.is_dir() or not list(staged.iterdir())
+    denies = _auditOf(env.audit, 'agent.share')
+    assert denies and denies[-1]['result'] == 'deny'
+    assert 'need=upload_remote' in denies[-1]['detail']
+
+
+def test_remote_node_with_upload_remote_allowed(env, monkeypatch):
+    seen = _stubRemote(monkeypatch)
+    resp = share(env, TOKEN_REMOTE, files=[('a.txt', b'A')], prompt='跑一下',
+                 node='ai-xmyz', cwd='/home/u/proj')
+    body = resp.get_json()
+    assert resp.status_code == 200, body
+    assert seen['node'] == 'ai-xmyz' and seen['cwd'] == '/home/u/proj'
+    assert body['paths'][0].startswith('/home/u/proj/.deskport-inputs/')
+    assert env.repo.get(body['taskId'])['node'] == 'ai-xmyz'
+
+
+def test_append_to_remote_task_also_needs_upload_remote(env, monkeypatch):
+    """taskId 不能绕过授权门：追加到远端任务同样是往那台机器投附件。"""
+    seen = _stubRemote(monkeypatch)
+    seedTask(env, id='task-r', node='ai-xmyz', cwd='/home/u/proj')
+    resp = share(env, TOKEN_SHARE, files=[('a.txt', b'A')], prompt='补充',
+                 taskId='task-r')
+    assert resp.status_code == 403
+    assert resp.get_json()['need'] == 'upload_remote'
+    assert seen == {}
+
+
+def test_local_node_does_not_need_upload_remote(env, monkeypatch):
+    seen = _stubRemote(monkeypatch)
+    resp = share(env, TOKEN_SHARE, files=[('a.txt', b'A')], prompt='本机跑')
+    assert resp.status_code == 200, resp.get_json()
+    assert seen == {}
+    assert env.repo.list() and env.repo.list()[0]['node'] == 'local'
+
+
+def test_full_token_can_deliver_remotely(env, monkeypatch):
+    seen = _stubRemote(monkeypatch)
+    resp = share(env, TOKEN_FULL, files=[('a.txt', b'A')], prompt='跑一下',
+                 node='ai-xmyz', cwd='/home/u/proj')
+    assert resp.status_code == 200, resp.get_json()
+    assert seen['node'] == 'ai-xmyz'
+
+
+def test_device_login_can_opt_into_upload_remote(env, monkeypatch):
+    seen = _stubRemote(monkeypatch)
+    login = env.client.post('/api/agent/device/login',
+                            data=json.dumps({'password': PASSWORD,
+                                             'device': '远端手机',
+                                             'allowRemoteUpload': True}),
+                            content_type='application/json')
+    body = login.get_json()
+    assert body['scopes'] == ['upload', 'share', 'upload_remote']
+    assert device_auth.publicDevices()[-1]['scopes'] == body['scopes']
+    token = body['token']
+    ok = share(env, token, files=[('a.txt', b'A')], prompt='跑一下',
+               node='ai-xmyz', cwd='/home/u/proj')
+    assert ok.status_code == 200, ok.get_json()
+    assert seen['node'] == 'ai-xmyz'

@@ -152,16 +152,40 @@ class FedTarget:
     def putBytes(self, raw, name, directory, track=False):
         return self._upload(name, directory, io.BytesIO(raw), track)
 
-    def cleanup(self, base, made):
-        """联邦没有永久删除：把本次落的条目移进成员机回收站。"""
-        paths = [base] if made.get('task') else [p for p, _d in self.created]
-        if not paths:
-            return
+    def _recycle(self, path):
+        """移进成员机回收站一项；返回删不掉的路径（404 = 已经不在了）。"""
         try:
-            self._call('POST', '/api/files/recycle-delete',
-                       json={'paths': paths})
+            status, _data = self._call('POST', '/api/files/recycle-delete',
+                                       json={'paths': [path]})
         except DeliverError:
-            pass
+            return [path]
+        return [] if status in (200, 404) else [path]
+
+    def cleanup(self, base, made):
+        """倒序删本次落的条目，再删本次建的空目录；返回残留路径。
+
+        联邦没有永久删除：一律走 recycle-delete（成员机回收站）。文件没删
+        干净就不动目录（目录里还有别人的重投文件时也删不掉）。
+        """
+        left = []
+        for path, _isDir in reversed(self.created):
+            left += self._recycle(path)
+        if left or not made.get('task'):
+            return left
+        left = self._recycle(base)
+        if not left and made.get('inputs'):
+            left = self._recycleEmpty(os.path.dirname(base))
+        return left
+
+    def _recycleEmpty(self, path):
+        """删共享的 `.deskport-inputs`：非空（别的任务还在用）不算失败。"""
+        try:
+            self._forget(path)
+            if self._names(path) != set():
+                return []
+        except DeliverError:
+            return []
+        return self._recycle(path)
 
     def maxMB(self):
         local = federation_write.uploadLimitMB()

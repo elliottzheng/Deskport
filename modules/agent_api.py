@@ -6,7 +6,8 @@
     与 config.json agentTokens[].tokenHash（SHA-256）比对；未命中一律 401。
     浏览器 Cookie 登录态同样放行（供面板 UI 未来复用）。
     令牌 scope: agentTokens[].scopes 白名单；没写 = 全权（向后兼容）。
-    现有端点要求 full，手机上传要求 upload，转发任务要求 share；
+    现有端点要求 full，手机上传要求 upload，转发任务要求 share，
+    往远端执行点投附件还要求 upload_remote（node=local 不需要）；
     越权 403 {"error","need"}。
 
 端点:
@@ -52,6 +53,7 @@ blueprint = Blueprint('agent', __name__)
 SCOPE_FULL = 'full'
 SCOPE_UPLOAD = 'upload'
 SCOPE_SHARE = 'share'   # 手机「转发文件交给执行方」：投暂存区 + 建任务/追消息
+SCOPE_UPLOAD_REMOTE = 'upload_remote'   # 往远端执行点投附件（share 的第三层）
 
 
 def tokenHash(token):

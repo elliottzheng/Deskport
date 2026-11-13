@@ -31,6 +31,7 @@ from modules.tasks_store import TaskRepository
 TOKEN_SHARE = 'tok-share-' + 'e' * 16   # scopes ["share"]
 TOKEN_UPLOAD = 'tok-up-' + 'f' * 16     # scopes ["upload"]（旧手机令牌）
 TOKEN_FULL = 'tok-full-' + 'a' * 16     # 没写 scopes = 全权
+TOKEN_REMOTE = 'tok-remote-' + 'r' * 16  # scopes ["share", "upload_remote"]
 
 
 def _hash(token):
@@ -56,6 +57,8 @@ def env(tmp_path, monkeypatch):
         {'id': 'phone', 'name': '手机上传', 'tokenHash': _hash(TOKEN_UPLOAD),
          'scopes': ['upload']},
         {'id': 'full', 'name': '全权', 'tokenHash': _hash(TOKEN_FULL)},
+        {'id': 'remote', 'name': '远端投递', 'tokenHash': _hash(TOKEN_REMOTE),
+         'scopes': ['share', 'upload_remote']},
     ])
     monkeypatch.setattr(configMod, 'statePath', fakeStatePath)
     monkeypatch.setattr(eventsMod, 'log',
@@ -256,7 +259,7 @@ def test_remote_node_uses_delivery_channel(env, monkeypatch):
                         lambda node, cwd, taskId:
                         cwd + '/.deskport-inputs/' + taskId)
     monkeypatch.setattr(task_inputs, 'deliver', fakeDeliver)
-    resp = share(env, TOKEN_SHARE, files=[('e.txt', b'x')], prompt='跑一下',
+    resp = share(env, TOKEN_REMOTE, files=[('e.txt', b'x')], prompt='跑一下',
                  node='ai-xmyz', cwd='/home/u/proj')
     body = resp.get_json()
     assert resp.status_code == 200, body

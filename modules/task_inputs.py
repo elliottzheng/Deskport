@@ -9,7 +9,10 @@
                   `remotes[].filesWrite` 与成员端 `federationRoots` 两层约束）。
 
 约定:
-    - 全有或全无：任一文件失败就清掉本次已投的部分，抛 DeliverError；
+    - 全有或全无：任一文件失败就清掉本次已投的部分（倒序删文件，再尽量
+      删掉本次建的空目录），抛 DeliverError；清理自身的异常只记审计
+      `task_inputs.cleanup`，不覆盖原始错误；
+    - 错误里带上是哪个输入失败、为什么；
     - 投递前先按上限拒（成员声明上限与中枢 `uploadLimitMB` 取小）；
     - 同名不覆盖，自动 `(2)`（与本机暂存一致）；
     - 目录名固定为 taskId，重投不产生第二份目录；目录内重名仍走 `(2)`；
@@ -19,7 +22,7 @@ import os
 import posixpath
 import re
 
-from modules import fsutil
+from modules import events, fsutil
 from modules.task_inputs_base import (INPUTS_DIR, MAX_FILE_MB, MAX_FILES,
                                       MAX_TOTAL_MB, DeliverError, safeName)
 from modules.task_inputs_fed import FedTarget
@@ -174,6 +177,38 @@ def _place(target, entry, base):
     return folder
 
 
+def _placeAll(target, entries, base):
+    """逐个投递；失败时明确指出是哪个输入、为什么（清理交给调用方）。"""
+    out = []
+    for item in entries:
+        try:
+            out.append(_place(target, item, base))
+        except DeliverError as e:
+            raise DeliverError('附件 %s 投递失败: %s' % (item['name'], e),
+                               e.status) from None
+        except Exception as e:
+            raise DeliverError('附件 %s 投递失败: %s'
+                               % (item['name'], str(e)[:200]), 502) from None
+    return out
+
+
+def _cleanup(target, base, made):
+    """失败清理：倒序删本次已投的文件，再尽量删掉本次建的空目录。
+
+    清理自身的问题（异常、删不掉的残留）只记审计，**绝不覆盖原始错误**：
+    调用方仍然拿到"哪个文件失败、为什么"，残留另有一条 task_inputs.cleanup。
+    """
+    try:
+        left = list(target.cleanup(base, made) or [])
+    except Exception as e:
+        events.log('task_inputs.cleanup', base, 'fail',
+                   '%s: %s' % (type(e).__name__, str(e)[:160]))
+        return
+    if left:
+        events.log('task_inputs.cleanup', base, 'partial',
+                   '残留 %d 项: %s' % (len(left), '、'.join(left[:5])))
+
+
 def deliver(node, cwd, taskId, paths=(), attachments=()):
     """把任务输入投到执行点；成功返回 {'dir': 远端目录, 'paths': [远端路径…]}。
 
@@ -184,7 +219,7 @@ def deliver(node, cwd, taskId, paths=(), attachments=()):
     taskId = str(taskId or '').strip()
     if not cwd:
         raise DeliverError('执行点 %s 需要 cwd（该机器上的工作目录）' % name)
-    if not taskId or '/' in taskId or '\\' in taskId:
+    if not taskId or taskId in ('.', '..') or '/' in taskId or '\\' in taskId:
         raise DeliverError('taskId 不合法')
     kind, entry = _route(name)
     entries = _plan(paths, attachments)
@@ -199,13 +234,12 @@ def deliver(node, cwd, taskId, paths=(), attachments=()):
             raise DeliverError('执行点 %s 的工作目录不存在: %s' % (name, cwd))
         made['inputs'] = target.ensureDir(target.join(cwd, INPUTS_DIR))
         made['task'] = target.ensureDir(base)
-        out = [_place(target, item, base) for item in entries]
-        return {'dir': base, 'paths': out}
+        return {'dir': base, 'paths': _placeAll(target, entries, base)}
     except DeliverError:
-        target.cleanup(base, made)
+        _cleanup(target, base, made)
         raise
     except Exception as e:
-        target.cleanup(base, made)
+        _cleanup(target, base, made)
         raise DeliverError('附件投递失败（%s）: %s' % (name, str(e)[:200]), 502)
     finally:
         target.close()

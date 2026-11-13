@@ -2,8 +2,9 @@
 """跨机附件投递（批次 B）：远端目录、原子性、上限、重名与两层开关。
 
 SSH 通道用内存假 SFTP（不连真机）；联邦通道只测路由层的两层开关与
-成员端根白名单声明——真实上传/清理由 tests/test_task_inputs_api.py 的集成
-用例覆盖建任务路径。
+成员端根白名单声明——真实上传的建任务路径在 tests/test_task_inputs_api.py，
+失败清理（倒序删 / 残留审计 / 清理异常不掩盖原始错误）在
+tests/test_task_inputs_cleanup.py。
 """
 import posixpath
 from types import SimpleNamespace
@@ -182,15 +183,31 @@ def test_redelivery_keeps_single_task_dir(fake, tmp_path):
     assert taskDirs == [first['dir']]
 
 
-def test_second_file_failure_leaves_no_residue(fake, tmp_path):
+def test_second_file_failure_leaves_no_residue(fake, tmp_path, monkeypatch):
+    audit = []
+    monkeypatch.setattr(task_inputs.events, 'log',
+                        lambda action, target='', result='ok', detail='', ip='':
+                        audit.append((action, result, detail)))
     a = _local(tmp_path, 'a.txt', b'A')
     b = _local(tmp_path, 'b.txt', b'B')
     fake.failNames = {'b.txt'}
-    with pytest.raises(DeliverError):
+    with pytest.raises(DeliverError) as err:
         task_inputs.deliver('ai-xmyz', HOME, 'task6', [a, b])
+    assert err.value.status == 502                 # 原始错误仍透出
+    assert 'b.txt' in str(err.value) and '模拟投递失败' in str(err.value)
     assert not [p for p in fake.files if '/task6/' in p]
     assert not [d for d in fake.dirs if d.endswith('/task6')]
     assert not [d for d in fake.dirs if d.endswith('/.deskport-inputs')]
+    assert not audit                                # 清干净了就不该有清理审计
+
+
+def test_taskId_rejects_dot_and_separators(fake, tmp_path):
+    a = _local(tmp_path, 'a.txt', b'A')
+    for bad in ('', '.', '..', 'a/b', 'a\\b'):
+        with pytest.raises(DeliverError) as err:
+            task_inputs.deliver('ai-xmyz', HOME, bad, [a])
+        assert 'taskId' in str(err.value)
+    assert fake.files == {}
 
 
 def test_directory_input_keeps_structure(fake, tmp_path):

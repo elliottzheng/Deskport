@@ -119,43 +119,59 @@ class SshTarget:
         return target
 
     def _remove(self, path):
+        """删一个文件；返回删不掉的路径（不存在 = 已清干净）。"""
         try:
             self.sftp.remove(path)
+            return []
         except IOError:
-            pass
+            return [path] if self.exists(path) else []
+
+    def _rmdir(self, path):
+        try:
+            self.sftp.rmdir(path)
+            return []
+        except IOError:
+            return [path] if self.exists(path) else []
 
     def _rmtree(self, path):
+        """递归删一棵树；返回删不掉的路径（空列表 = 清干净）。"""
         try:
             attrs = self.sftp.listdir_attr(path)
         except IOError:
-            self._remove(path)
-            return
+            return self._remove(path)
+        left = []
         for attr in attrs:
             child = path.rstrip('/') + '/' + attr.filename
             if statMod.S_ISDIR(attr.st_mode):
-                self._rmtree(child)
+                left += self._rmtree(child)
             else:
-                self._remove(child)
+                left += self._remove(child)
+        return left or self._rmdir(path)
+
+    def _tryRmdir(self, path):
+        """删共享的 `.deskport-inputs`：非空（别的任务还在用）不算失败。"""
         try:
-            self.sftp.rmdir(path)
+            if not self.sftp.listdir_attr(path):
+                self.sftp.rmdir(path)
         except IOError:
             pass
+        return []
 
     def cleanup(self, base, made):
-        """只清本次投的部分：任务目录是我们建的就整棵删，否则删本次落的条目。"""
+        """倒序删本次落的条目，再删本次建的空目录；返回残留路径。
+
+        任务目录是本轮建的就整棵删；否则只删本次落的顶层条目（重投时
+        目录里可能有上一次的文件，不能碰）。
+        """
         if made.get('task'):
-            self._rmtree(base)
-            if made.get('inputs'):
-                try:
-                    self.sftp.rmdir(posixpath.dirname(base))
-                except IOError:
-                    pass
-            return
+            left = self._rmtree(base)
+            if made.get('inputs') and not left:
+                left = self._tryRmdir(posixpath.dirname(base))
+            return left
+        left = []
         for path, isDir in reversed(self.created):
-            if isDir:
-                self._rmtree(path)
-            else:
-                self._remove(path)
+            left += self._rmtree(path) if isDir else self._remove(path)
+        return left
 
     def maxMB(self):
         return federation_write.uploadLimitMB()
