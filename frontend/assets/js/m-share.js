@@ -248,23 +248,24 @@
     }
 
     function buildBody() {
-        var body = {ticket: ticket, way: state.way,
-                    prompt: byId('share-prompt').value};
-        if (state.way === 'new') {
-            body.node = byId('share-node').value || 'local';
-            body.mode = byId('share-mode').value;
-            body.model = byId('share-model').value || '';
-            body.cwd = byId('share-cwd').value.trim();
-            body.organize = byId('share-organize').checked ? 'folder' : 'none';
-            body.folderName = byId('share-folder').value.trim();
-        } else if (state.way === 'append') {
-            body.taskId = byId('share-task').value;
-        } else {
-            body.node = byId('share-upload-node').value || 'local';
-            body.target = byId('share-upload-target').value || '';
-            body.subdir = byId('share-subdir').value.trim();
-        }
-        return body;
+        // 字段规则在 share-form.js（纯函数，tests/js/ 有 node 单测）；这里只收 DOM 值
+        var way = state.way;
+        return WPShareForm.buildBody({
+            ticket: ticket,
+            way: way,
+            prompt: byId('share-prompt').value,
+            node: way === 'upload'
+                ? (byId('share-upload-node').value || 'local')
+                : (byId('share-node').value || 'local'),
+            mode: byId('share-mode').value,
+            model: byId('share-model').value || '',
+            cwd: byId('share-cwd').value,
+            organize: byId('share-organize').checked,
+            folderName: byId('share-folder').value,
+            taskId: byId('share-task').value,
+            target: byId('share-upload-target').value || '',
+            subdir: byId('share-subdir').value
+        });
     }
 
     function renderResult(body) {
