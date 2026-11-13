@@ -679,6 +679,7 @@ def closeTask(task, taskId):
 def closeTaskCore(task):
     """结束会话（/close 与工作线轮换共用）。返回 (payload, status)。"""
     taskId = task.get('id') or ''
+    forced = False
     with store.repo.lock:
         agent = store.repo.agentOf(taskId)
         task['closedByUser'] = True
@@ -704,6 +705,35 @@ def closeTaskCore(task):
                           'interrupted'):
                 break
             time.sleep(0.2)
+        # 兜底（2026-11-13 实测）：cancel 只是请求停这一轮，若代理正卡在一个
+        # 工具调用里（例如跑全量测试），会话不会回结果，托管线程也就永远等不到
+        # 终态——任务停在 running，名额一直不释放，close 还回 ok 骗调用方。
+        # 这里升级为硬停：先 close() 终止客户端进程（KimiAcp 会 terminate→kill），
+        # 仍不落地就强制置 CANCELLED，并在响应里标明 forced，别再说"关掉了"。
+        with store.repo.lock:
+            stillRunning = (task.get('status') or '') in ('running', 'queued')
+        if stillRunning:
+            forced = True
+            if client is not None and hasattr(client, 'close'):
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            hard = time.monotonic() + 5
+            while time.monotonic() < hard:
+                with store.repo.lock:
+                    if (task.get('status') or '') not in ('running', 'queued'):
+                        break
+                time.sleep(0.2)
+            with store.repo.lock:
+                if (task.get('status') or '') in ('running', 'queued'):
+                    task_state.transition(task, task_state.TaskState.CANCELLED,
+                                          'close 强制终止（回合未返回结果）')
+                    task['endedAt'] = store._now()
+                    store.repo.append_event(task, 'status', text='已强制终止')
+            if task.get('sessionId'):
+                from modules.agent_nodes import shutdownNodeSession
+                shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     else:
         task_state.transition(task, task_state.TaskState.CLOSED)
         task['endedAt'] = store._now()
@@ -714,7 +744,10 @@ def closeTaskCore(task):
             from modules.agent_nodes import shutdownNodeSession
             shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     # close 语义：返回的就是终态（已 cancel 的任务保持 cancelled，不会改判）
-    return {'ok': True, 'status': task.get('status')}, 200
+    payload = {'ok': True, 'status': task.get('status')}
+    if forced:
+        payload['forced'] = True
+    return payload, 200
 
 
 @blueprint.route('/api/tasks/<taskId>/permission', methods=['POST'])

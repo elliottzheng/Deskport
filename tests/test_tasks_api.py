@@ -1530,3 +1530,4 @@ def test_health_models_refresh_retries_until_all_answer(monkeypatch):
     nodesMod._refreshHealthModels(rounds=3, interval=0.01)
     cached = nodesMod._healthModels['data']
     assert cached['ai-xmyz']['models'] == ['m1']
+
