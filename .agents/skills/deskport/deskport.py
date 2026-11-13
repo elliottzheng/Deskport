@@ -1,17 +1,15 @@
 """Deskport Agent API 的极简 Python 封装（仅依赖标准库）。
 
     import deskport
-    h = deskport.connect()                 # 读 .deskport.json 的 url/node/insecure
-    print(h.sh("uptime"))                  # 返回 stdout，失败抛 CommandError
-    repo = h.cd("/srv/app")                # 绑定工作目录；相对路径都按它解析
-    print(repo.sh("git log --oneline -5"))
-    print(repo.ls("."))
+    h = deskport.connect()          # 读 .deskport.json 的 url/node/insecure/cafile
+    print(h.sh("uptime"))           # 返回 stdout，失败抛 CommandError
+    repo = h.cd("/srv/app")         # 绑定工作目录；相对路径都按它解析
+    print(repo.sh("git log --oneline -5")); print(repo.ls("."))
     repo.write("notes.txt", "hello"); print(repo.read_text("notes.txt"))
 
-配置（后者覆盖前者）：脚本同目录 .deskport.json → 环境变量 DESKPORT_URL /
-DESKPORT_NODE / DESKPORT_INSECURE=1 → 函数参数。
-令牌：参数 token → 环境变量 DESKPORT_TOKEN → 脚本同目录 .agent-token。
-
+配置（后者覆盖前者）：脚本同目录 .deskport.json → 环境变量 DESKPORT_URL / DESKPORT_NODE /
+DESKPORT_INSECURE=1 → 函数参数。令牌：参数 token → 环境变量 DESKPORT_TOKEN → 同目录 .agent-token。
+证书校验失败 / 握手失败抛 TlsError（文案带三种处理），绝不自动放宽校验。
 服务端已知行为：exec 输出超过 2 MiB 会被截断、超时上限 600s（truncated=True，sh() 会告警）；
 命令里含 NUL 字符服务端会 500，这里在客户端提前拒绝。
 """
@@ -52,6 +50,22 @@ class CommandError(Exception):
         self.result = result
 
 
+class TlsError(OSError):
+    """对端证书/TLS 问题：文案带下一步怎么修；绝不自动放宽校验。"""
+
+
+def _tlsHint(reason) -> str:
+    """证书校验失败 / 握手失败的一句人话 + 三种处理；文案要区分「不受信任」与「连不上」。"""
+    head = ('对端证书校验失败（自签证书：常见于反向代理 / frp 隧道的 HTTPS 入口）'
+            if isinstance(reason, ssl.SSLCertVerificationError) else
+            f'对端 TLS 握手失败（{(reason.args or (reason,))[-1]}）——不是证书不受信任，先核地址/端口与隧道是否在线')
+    return (head + '\n  三种处理，按可信度从高到低：\n'
+            '   1) 把对端证书存成文件，用 connect(cafile="/path/to/cert.pem") 或 .deskport.json 的 "cafile" 键\n'
+            '   2) 确认对端就是你要连的那台 Deskport 时，在 .deskport.json 加 "insecure": true\n'
+            '   3) 同一网段可改用内网明文地址（http://<host>:6789，不需要证书）\n'
+            '  注意：只有在你确认连的是自己的 Deskport 时才可用 2) 或 3)。')
+
+
 @dataclass
 class ExecResult:
     command: str
@@ -89,12 +103,11 @@ class Entry:
 
 class Deskport:
     def __init__(self, base_url: str | None = None, token: str | None = None,
-                 token_file: str | os.PathLike | None = None,
-                 insecure: bool = False, cafile: str | None = None,
-                 http_timeout: float = 60, pin: bool = False):
+                 token_file: str | os.PathLike | None = None, insecure: bool = False,
+                 cafile: str | None = None, http_timeout: float = 60, pin: bool = False):
         self.base_url = (base_url or os.environ.get("DESKPORT_URL", "")).rstrip("/")
         if not self.base_url:
-            raise ValueError("需要 base_url 或环境变量 DESKPORT_URL")
+            raise ValueError('需要 base_url：.deskport.json 的 "url" 键、环境变量 DESKPORT_URL 或参数 url')
         self._token = token or os.environ.get("DESKPORT_TOKEN") or self._read_token(token_file)
         if insecure:
             self._ctx = ssl._create_unverified_context()
@@ -103,8 +116,7 @@ class Deskport:
             if pin and cafile:
                 # 证书锁定：只信任 cafile 里这一张自签名证书，不再校验主机名（同一张证书服务 dx/yd/lt 多个运营商入口，SAN 只有 dx）
                 self._ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                self._ctx.check_hostname = False
-                self._ctx.verify_mode = ssl.CERT_REQUIRED
+                self._ctx.check_hostname, self._ctx.verify_mode = False, ssl.CERT_REQUIRED
                 self._ctx.load_verify_locations(cafile=cafile)
         self.http_timeout = http_timeout
 
@@ -114,7 +126,7 @@ class Deskport:
         try:
             return p.read_text(encoding="utf-8").strip()
         except FileNotFoundError:
-            raise ValueError(f"找不到令牌：{p}（或设置 DESKPORT_TOKEN）") from None
+            raise ValueError(f"找不到令牌：写进同目录的 .agent-token（当前找 {p}）或设环境变量 DESKPORT_TOKEN") from None
 
     def __repr__(self) -> str:  # 不泄露令牌
         return f"Deskport({self.base_url!r})"
@@ -142,17 +154,20 @@ class Deskport:
                 j = json.loads(raw)
                 msg = j.get("error", raw)
                 hints = {k: v for k, v in j.items() if k not in ("error", "code")}
-                if hints:   # availableHosts / nodes / models / shells / requestId 等提示
-                    msg = f"{msg} {json.dumps(hints, ensure_ascii=False)[:500]}"
             except ValueError:
-                msg = raw.strip()[:300]
+                msg, hints = raw.strip()[:300], {}
+            if hints:   # availableHosts / nodes / models / shells / requestId 等提示
+                msg += " " + json.dumps(hints, ensure_ascii=False)[:500]
             raise DeskportError(e.code, msg) from None
+        except (urllib.error.URLError, ssl.SSLError) as e:
+            r = getattr(e, "reason", e)   # urllib 把握手层的 OSError 包成 URLError，reason 才是原始异常
+            if isinstance(r, ssl.SSLError):
+                raise TlsError(_tlsHint(r)) from None
+            raise
 
     # ---- 持久会话 / 任务派活 ----
     def session(self, host: str, cwd: str | None = None) -> "Session":
-        body = {"node": host}
-        if cwd:
-            body["cwd"] = cwd
+        body = {"node": host, "cwd": cwd} if cwd else {"node": host}
         return Session(self, self._request("POST", "/api/agent/ssh/sessions", body)["sessionId"])
 
     def nodes(self) -> list[dict]:
@@ -185,21 +200,17 @@ class Deskport:
         return Task(self, task_id)
 
     def create_task(self, prompt: str, node: str = "local", mode: str = "default",
-                    cwd: str | None = None,
-                    paths: list[str] | None = None, model: str | None = None,
-                    attachments: dict[str, bytes | str] | None = None,
+                    cwd: str | None = None, paths: list[str] | None = None,
+                    model: str | None = None, attachments: dict[str, bytes | str] | None = None,
                     kimi_session: str | None = None, fork: bool = True,
                     policy: dict | None = None) -> "Task":
-        """派活给 Deskport 托管的智能体。默认 mode=default（危险操作逐项等审批），
-        需要全自动时显式传 mode="auto"。node=执行点（缺省 "local"）；cwd=执行目录
-        （本机可给绝对目录，任务目录仍是 workspace；非本机给该机器上已存在的目录，
-        缺省 = 任务目录）。两者都支持 kimi_session 接手（R4-7）。
-        model 可选（列表见 nodes() 的 models）；attachments={文件名: 内容} 随任务上传。
-        prompt 服务端上限 4000 字符，长材料放 attachments。
-        kimi_session=已有 Kimi 会话 id（见 kimi_sessions()）：默认 fork 副本再接手，
-        fork=False 直接接管原会话（被占用时服务端 409）。
-        policy=服务端审批边界（R4-2）：{"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则],
-        "default":"ask|allow|deny", "timeoutSec":n}；边界内自动放行，越界才挂起。"""
+        """派活给 Deskport 托管的智能体。mode=default 逐项审批，全自动显式传 "auto"。
+        node=执行点（缺省 "local"）；cwd=执行目录（本机可给绝对目录，任务目录仍是 workspace；
+        非本机给该机器上已存在的目录，缺省 = 任务目录）。kimi_session 接手（R4-7）：默认 fork
+        副本，fork=False 直接接管原会话（被占用时 409）。model 可选（见 nodes() 的 models）；
+        attachments={文件名: 内容} 随任务上传，prompt 上限 4000 字符。policy=审批边界（R4-2）：
+        {"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则], "default":"ask|allow|deny",
+        "timeoutSec":n}；边界内自动放行，越界才挂起。"""
         if len(prompt) > 4000:
             raise ValueError(f"prompt {len(prompt)} 字符超过服务端上限 4000；长内容请用 attachments")
         body: dict = {"prompt": prompt, "node": node, "mode": mode}
@@ -253,8 +264,7 @@ class Deskport:
         j = self._request("POST", "/api/agent/ssh/exec", body, timeout=timeout + 30)
         res = ExecResult(command=command, exit=j.get("exit"), out=j.get("out", ""),
                          err=j.get("err", ""), timed_out=bool(j.get("timedOut")),
-                         truncated=bool(j.get("outTruncated")),
-                         duration_ms=j.get("durationMs", 0))
+                         truncated=bool(j.get("outTruncated")), duration_ms=j.get("durationMs", 0))
         return res.check() if check else res
 
     def ls(self, host: str, path: str) -> list[Entry]:
@@ -266,8 +276,7 @@ class Deskport:
 
     CHUNK = 4 * 1024 * 1024
 
-    def read(self, host: str, path: str, offset: int | None = None,
-             length: int | None = None) -> bytes:
+    def read(self, host: str, path: str, offset: int | None = None, length: int | None = None) -> bytes:
         """整读；超过 8MB（413）时自动按 offset/length 分块拼接。"""
         if offset is not None or length is not None:
             body = {"node": host, "path": path, "offset": offset or 0}
@@ -305,10 +314,8 @@ class Session:
     def __init__(self, dp: Deskport, sid: str):
         self.dp, self.id = dp, sid
 
-    def run(self, command: str, timeout: int = 30, combined: bool = False,
-            full: bool = False) -> dict:
-        """超时返回 timedOut=True、exit=None；上一条没跑完时服务端回 409 busy；
-        会话里 exit 后 alive=False，之后 410。本机（local）会话只支持 bash。"""
+    def run(self, command: str, timeout: int = 30, combined: bool = False, full: bool = False) -> dict:
+        """超时 timedOut=True、exit=None；上一条没跑完回 409 busy；exit 后 alive=False、之后 410。本机只支持 bash。"""
         body = {"command": command, "timeoutSec": max(1, min(600, int(timeout)))}
         if combined:
             body["combined"] = True
@@ -330,11 +337,9 @@ class Session:
             if e.status != 404:
                 raise
 
-    def __enter__(self):
-        return self
+    def __enter__(self): return self
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, *exc): self.close()
 
 
 class Task:
@@ -358,9 +363,8 @@ class Task:
         return j
 
     def until(self, timeout: int = 600) -> dict | None:
-        """服务端阻塞等待（R4-3）：等到本轮结束 / 需要人工审批 / 超时，返回精简结果
-        {status, finalText, pending, stats, lastSeq, error}，并推进 self.seq。
-        服务端不支持（旧版 404）时返回 None，调用方退回 wait()。"""
+        """服务端阻塞等待（R4-3）：等到本轮结束 / 需人工审批 / 超时，返回精简结果
+        {status, finalText, pending, stats, lastSeq, error} 并推进 self.seq；旧版 404 返回 None。"""
         try:
             j = self.dp._request("GET", f"/api/tasks/{self.id}/wait?after={self.seq}&timeout={int(timeout)}",
                                  timeout=int(timeout) + 30)
@@ -379,10 +383,8 @@ class Task:
             self.seq = max(e.get("seq", 0) for e in evs)
         return evs
 
-    def wait(self, poll: float = 2.5, timeout: float = 1800, on_event=None,
-             on_permission=None) -> dict:
-        """轮询直到 status 为 waiting/failed/closed。遇到 permission_request：
-        有 on_permission(event) 就用它的返回值 (optionId, deny) 审批，否则返回让调用方处理。"""
+    def wait(self, poll: float = 2.5, timeout: float = 1800, on_event=None, on_permission=None) -> dict:
+        """轮询到 waiting/failed/closed；遇 permission_request：有 on_permission 就按其返回 (optionId, deny) 审批，否则返回给调用方。"""
         import time
         end = time.time() + timeout
         while time.time() < end:
@@ -404,7 +406,7 @@ class Task:
         raise TimeoutError(f"task {self.id} 超过 {timeout}s 未结束")
 
     def compact(self) -> dict:
-        """压缩执行方会话上下文（Kimi 的 /compact，后台进行，完成后生效）。适合一批活结束、开始下一批前调用。"""
+        """压缩执行方会话上下文（Kimi 的 /compact，后台进行，完成后生效）；一批活结束时用。"""
         return self.message("/compact")
 
     def message(self, text: str) -> dict:
@@ -437,10 +439,9 @@ class Workline:
 
     def send(self, text: str, **task_opts) -> tuple[str, "Task"]:
         """发一句话：返回 (routed, Task)。routed ∈ new/message/queued。task_opts 用于新开任务时（node、cwd、mode、model…）。"""
-        body = {"prompt": text, **task_opts}
-        j = self.dp._request("POST", f"/api/worklines/{self.id}/tasks", body, timeout=150)
-        tid = (j.get("task") or {}).get("id") or j.get("taskId")
-        return j.get("routed", ""), Task(self.dp, tid)
+        j = self.dp._request("POST", f"/api/worklines/{self.id}/tasks",
+                             {"prompt": text, **task_opts}, timeout=150)
+        return j.get("routed", ""), Task(self.dp, (j.get("task") or {}).get("id") or j.get("taskId"))
 
     def update_doc(self, doc: str, base_rev: str) -> dict:
         """主控改接力棒；base_rev 不匹配（执行方刚回写过）返回 409。"""
@@ -458,8 +459,7 @@ class Workline:
 class Host:
     """绑定到某台主机（可选绑定工作目录）的快捷对象。"""
 
-    def __init__(self, dp: Deskport, name: str, cwd: str | None = None,
-                 shell: str | None = None):
+    def __init__(self, dp: Deskport, name: str, cwd: str | None = None, shell: str | None = None):
         self.dp, self.name, self.cwd, self.shell = dp, name, cwd, shell
 
     def __repr__(self) -> str:
@@ -480,8 +480,7 @@ class Host:
             return posixpath.normpath(p) if p else p
         return posixpath.normpath(posixpath.join(self.cwd, p))
 
-    def run(self, command: str, timeout: int = 30, check: bool = False,
-            cwd: str | None = None) -> ExecResult:
+    def run(self, command: str, timeout: int = 30, check: bool = False, cwd: str | None = None) -> ExecResult:
         cwd = self.path(cwd) if cwd else self.cwd
         return self.dp.run(self.name, command, timeout=timeout, check=check, cwd=cwd,
                            shell=self.shell)
@@ -516,35 +515,36 @@ def _load_config() -> dict:
     if f.exists():
         cfg.update(json.loads(f.read_text(encoding="utf-8")))
     for key in ("url", "host", "node"):
-        if os.environ.get(f"DESKPORT_{key.upper()}"):
-            cfg[key] = os.environ[f"DESKPORT_{key.upper()}"]
+        if v := os.environ.get(f"DESKPORT_{key.upper()}"):
+            cfg[key] = v
     if os.environ.get("DESKPORT_INSECURE"):
         cfg["insecure"] = os.environ["DESKPORT_INSECURE"] not in ("0", "", "false")
     return cfg
 
 
-def connect(host: str | None = None, url: str | None = None,
-            insecure: bool | None = None, cwd: str | None = None, **kw) -> Host:
+def connect(host: str | None = None, url: str | None = None, insecure: bool | None = None,
+            cwd: str | None = None, **kw) -> Host:
     """按配置一步拿到 Host。host 参数也接受配置/环境里的旧名 host（node 优先）。"""
     cfg = _load_config()
     url = url or cfg.get("url")
     host = host or cfg.get("node") or cfg.get("host")
     if insecure is None:
         insecure = bool(cfg.get("insecure", False))
+    if not url:
+        raise ValueError('url 为空：.deskport.json 的 "url" 键（缺这个键或留空都算），也可用环境变量 DESKPORT_URL 或 --url')
     if not host:
-        raise ValueError("需要 node（参数、DESKPORT_NODE 或 .deskport.json）")
+        raise ValueError('node 为空：.deskport.json 的 "node" 键（缺这个键或留空都算），也可用环境变量 DESKPORT_NODE 或 --node；"host" 是旧名仍接受')
     h = Deskport(url, insecure=insecure, cafile=kw.pop("cafile", cfg.get("cafile")),
                  pin=kw.pop("pin", bool(cfg.get("pin"))), **kw).host(host)
     return h.cd(cwd) if cwd else h
 
 
 if __name__ == "__main__":
-    import argparse
-    import sys
+    import argparse, sys
 
-    for stream in (sys.stdout, sys.stderr):
+    for s in (sys.stdout, sys.stderr):   # Windows 控制台默认 GBK
         try:
-            stream.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK
+            s.reconfigure(encoding="utf-8")
         except AttributeError:
             pass
 
@@ -566,8 +566,7 @@ if __name__ == "__main__":
             return p
         import shutil
         roots = {os.environ.get("MSYS_ROOT", "")}
-        bash = shutil.which("bash")
-        if bash:  # ...\Git\usr\bin\bash.exe 或 ...\Git\bin\bash.exe
+        if bash := shutil.which("bash"):   # ...\Git\usr\bin\bash.exe 或 ...\Git\bin\bash.exe
             b = Path(bash).resolve()
             roots |= {str(b.parents[1]), str(b.parents[2])}
         norm = p.replace("\\", "/")
