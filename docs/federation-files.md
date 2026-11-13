@@ -141,7 +141,11 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
 - 中枢转发时设置 `X-Deskport-Actor: <百分号编码的网页请求来源 IP>`；
 - 成员端审计 `files.federation`，`target = 来自 <中枢品牌名>`，
   `detail = <操作> <路径> from=<中枢> actor=<谁>`；
-- 授权只看 `federationRoots`，`actor` 只用于审计，不引入第二套 ACL。
+- 授权只看 `federationRoots`，`actor` 只用于审计，不引入第二套 ACL；
+- 判定收敛（2026-11-13 批次 H）：成员端根白名单与中枢 `filesWrite`
+  都经 `modules/capability.py` 的 `decide(('remote', 成员名), 'file:write',
+  'path:<目标>')` 判定——配置还是那两个键，只是换成了同一个入口；
+  写操作审计事件带 `on_behalf_of`（缺省空串）。
 
 ## 6. 上传：原子落盘、去重、上限
 

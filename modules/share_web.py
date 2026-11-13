@@ -41,7 +41,7 @@ import config
 from modules import (agent_upload, events, fsutil, share_core, share_targets,
                      staging, task_node, tasks_store)
 from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD_REMOTE, agentHasScope,
-                               requireAgentScope, blueprint)
+                               onBehalfOfKwargs, requireAgentScope, blueprint)
 
 TICKET_TTL = 300
 WAYS = ('upload', 'new', 'append')
@@ -179,7 +179,7 @@ def shareStage():
         _tickets[ticket] = rec
     events.log('share.stage', ticket[:8], 'ok',
                'files=%d promptLen=%d' % (len(files), len(prompt)),
-               request.remote_addr)
+               request.remote_addr, **onBehalfOfKwargs(agent))
     return jsonify({'ticket': ticket,
                     'files': [{'name': f['name'], 'size': f['size']}
                               for f in files],

@@ -106,9 +106,11 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('worklines_store', 'task_node'), # 工作线执行点判定
 })
 # 基础设施层: 可被任何层依赖, 但自己不得 import 特性层 (依赖只能向上)
-# termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性
+# termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性;
+# capability 是权限判定入口 (纯函数, 不 import flask/config), 各特性的
+# scope/联邦写判定都收敛到它 (批次 H)
 INFRA = {'state', 'internal_api', 'events', 'fsutil', 'textio', 'media', 'contracts',
-         'decision', 'termcore', 'termprobe', 'wsproto', 'winenv'}
+         'decision', 'termcore', 'termprobe', 'wsproto', 'winenv', 'capability'}
 ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反馈入口
                   'fetch', 'onerror',              # 反馈捕获层给请求/错误打的钩子
                   'termManager', 'termUI', 'createSshSession', 'SSHUI',

@@ -19,7 +19,13 @@ def eventPath():
     return config.statePath('control_audit.jsonl')
 
 
-def log(action, target='', result='ok', detail='', ip=''):
+def log(action, target='', result='ok', detail='', ip='', on_behalf_of=''):
+    """写一条审计事件。
+
+    on_behalf_of（批次 H）：这次写操作代表谁——智能体令牌的 onBehalfOf、
+    设备令牌绑定的人；人自己与联邦写留空。缺省空串：老调用点不传，
+    事件里也始终有这个键（读取方按既有键取值的解析不受影响）。
+    """
     entry = {
         'at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'action': action,
@@ -27,6 +33,7 @@ def log(action, target='', result='ok', detail='', ip=''):
         'result': result,
         'detail': str(detail)[:300],
         'ip': ip,
+        'on_behalf_of': str(on_behalf_of)[:64],
     }
     try:
         state.appendJsonl(eventPath(), entry)

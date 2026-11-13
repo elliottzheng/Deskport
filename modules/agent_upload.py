@@ -28,8 +28,9 @@
       读进内存；单文件上限 phoneUploadMaxMB（缺省 2048），超限删除
       半成品并记 413；
     - 全部失败按原因返回 4xx（超限 413 / 校验 400），不一律 500；
-    - 审计 agent.upload 记令牌名与 target id；越权尝试由
-      requireAgentScope 记 agent.scope（need=upload）。
+    - 审计 agent.upload 记令牌名与 target id（令牌带 onBehalfOf 时随事件
+      记 on_behalf_of，批次 H）；越权尝试由 requireAgentScope 记
+      agent.scope（need=upload）。
 """
 import hashlib
 import hmac
@@ -41,7 +42,7 @@ from flask import jsonify, request
 
 import config
 from modules import events, fsutil
-from modules.agent_api import SCOPE_UPLOAD, requireAgentScope, blueprint
+from modules.agent_api import SCOPE_UPLOAD, onBehalfOfKwargs, requireAgentScope, blueprint
 from modules.staging import safeAttachmentName
 
 READ_CHUNK = 1024 * 1024
@@ -156,7 +157,8 @@ def agentUpload():
 
     def audit(result, detail):
         events.log('agent.upload', tokenName, result,
-                   'scope=%s %s' % (SCOPE_UPLOAD, detail), request.remote_addr)
+                   'scope=%s %s' % (SCOPE_UPLOAD, detail), request.remote_addr,
+                   **onBehalfOfKwargs(agent))
 
     target = _resolveTarget(request.form.get('target'))
     if target is None:

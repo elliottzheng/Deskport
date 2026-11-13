@@ -24,6 +24,7 @@ import os
 import re
 
 import config
+from modules import capability
 
 DEVICE_PREFIX = re.compile(r'^\\\\\.\\')
 _DRIVE_RELATIVE = re.compile(r'^[A-Za-z]:(?![\\/])')
@@ -106,14 +107,12 @@ def isExistingFile(path):
 
 
 def isUnder(path, root):
-    """大小写不敏感的前缀判断；UNC / 盘符根都适用（不依赖 commonpath）。"""
-    p = os.path.normcase(os.path.normpath(str(path or '')))
-    r = os.path.normcase(os.path.normpath(str(root or '')))
-    if not p or not r:
-        return False
-    if p == r:
-        return True
-    return p.startswith(r.rstrip('\\/') + os.sep)
+    """大小写不敏感的前缀判断；UNC / 盘符根都适用（不依赖 commonpath）。
+
+    实现下沉到 capability.pathUnder（批次 H）：目录前缀的匹配规则与
+    'path:' 能力资源共用同一处，不再各写一遍。
+    """
+    return capability.pathUnder(root, path)
 
 
 def roots():
@@ -144,21 +143,38 @@ def uploadLimitMB():
     return value if value > 0 else DEFAULT_UPLOAD_MAX_MB
 
 
+def _writeRules(allowed):
+    """federationRoots → capability 规则表（阶段 2：根白名单降级成规则）。
+
+    每个根一条 file:write@path:<根>；'path:' 是目录前缀语义（根本身与根下
+    都算内），匹配细节与 normcase 大小写规则见 modules/capability.py。
+    """
+    return capability.compile(
+        [{'action': 'file:write', 'resource': 'path:' + root}
+         for root in allowed])
+
+
 def checkPaths(paths):
     """校验一组路径；返回 (ok, 说明)。空列表也拒绝（宁缺毋滥）。
 
     UNC 与本地路径走同一条比较，区别只在归一化：UNC 不 realpath，
-    因此对离线共享做判定也不会阻塞。
+    因此对离线共享做判定也不会阻塞。判定经 capability.decide(
+    ('remote', 成员名), 'file:write', 'path:<目标>')（批次 H）：空根 =
+    规则表为空 = 一律拒绝，文案与 403 结构和老实现逐字一致。
     """
     allowed = roots()
     if not allowed:
         return False, '成员端未配置 federationRoots（联邦写操作一律 403）'
     if not paths:
         return False, '缺少可校验的路径'
+    rules = _writeRules(allowed)
     for raw in paths:
         path = normalizePath(raw)
         if not path:
             return False, '路径不合法: %s' % (raw or '(空)')
-        if not any(isUnder(path, root) for root in allowed):
+        verdict, _why = capability.decide(
+            rules, ('remote', config.getBrandName()), 'file:write',
+            'path:' + path)
+        if verdict == 'deny':
             return False, '路径不在 federationRoots 内: %s' % path
     return True, ''

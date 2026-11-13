@@ -6,7 +6,8 @@
     中枢  请求带 machine=<成员id>
           - 只读 browse/download/thumb/read/search 需要 remotes[].files；
           - 写 rename/new-folder/recycle-delete/paste/upload/write 需要
-            remotes[].filesWrite（缺省 false，files=true 仍是只读）；
+            remotes[].filesWrite（缺省 false，files=true 仍是只读；批次 H
+            起这道门经 capability.decide 判定，开关即规则）；
           - 转发件复用 external_proxy: hop 头剥离 + X-Deskport-Token 鉴权 +
             iter_content 生成器；上传体走 request.stream，不在中枢整块缓冲；
           - 永久 delete / extract / compress / zip / remote-download / pins
@@ -16,7 +17,8 @@
           - 只放行 READ_ONLY_PATHS + WRITE_PATHS 的并集；
           - 写操作要求 path/最终目标落点在 config.federationRoots 内
             （本地路径 realpath 后比较，UNC 只做文本归一；空数组 =
-            带 X-Deskport-From 的联邦写一律 403）；
+            带 X-Deskport-From 的联邦写一律 403；判定经
+            capability.decide，见 federation_write.checkPaths）；
           - 记一条审计 from=<中枢> actor=<谁> 后放行本机路由；
           - 收到带 machine 的联邦请求也只在本机处理，绝不二次转发（单跳）。
 
@@ -34,7 +36,7 @@ import requests
 from flask import Response, jsonify, request
 
 import config
-from modules import events
+from modules import capability, events
 from modules import federation
 from modules import federation_write
 from modules.external_proxy import HOP_BY_HOP, _dropHopHeaders  # noqa: PLC2701 同包复用转发件
@@ -159,6 +161,19 @@ def register(app):
     app.before_request(_federatedFiles)
 
 
+def _memberWriteAllowed(remote):
+    """中枢侧写门（批次 H 起经 capability.decide 判定）：成员的
+    filesWrite 开关降级成一条规则——开 = file:write@*，关 = 无规则
+    （空规则 = 一律拒绝）。路径边界在成员自己的 federationRoots，
+    中枢这里只回答「这个成员开没开联邦写」。"""
+    rules = capability.compile(
+        [{'action': 'file:write', 'resource': '*'}]
+        if remote.get('filesWrite') else [])
+    verdict, _why = capability.decide(
+        rules, ('remote', str(remote.get('name') or '')), 'file:write', 'path:*')
+    return verdict == 'allow'
+
+
 def _federatedFiles():
     path = request.path
     if path != '/api/files' and not path.startswith('/api/files/'):
@@ -181,7 +196,7 @@ def _federatedFiles():
     if not remote.get('files'):
         return jsonify({'error': '成员 %s 未开放文件浏览' % remote['name']}), 403
     if path in WRITE_PATHS:
-        if not remote.get('filesWrite'):
+        if not _memberWriteAllowed(remote):
             return jsonify({'error': '成员 %s 未开放文件写权限'
                                      '（remotes[].filesWrite）' % remote['name']}), 403
         if path == '/api/files/upload':

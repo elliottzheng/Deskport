@@ -65,18 +65,19 @@ def shareSubmit():
     agent, err = requireAgentScope(SCOPE_SHARE)
     if agent is None:
         return err
+    who = str(agent.get('onBehalfOf') or '').strip()
 
     uploads = [f for f in request.files.getlist('file')
                if f is not None and (f.filename or '')]
     if len(uploads) > MAX_FILES:
         share_core._audit('agent.share', '', 'fail',
-                          'files=%d 超过 %d' % (len(uploads), MAX_FILES))
+                          'files=%d 超过 %d' % (len(uploads), MAX_FILES), who)
         return jsonify({'error': '一次最多 %d 个文件' % MAX_FILES}), 400
 
     opts, err = share_core.parseShareOptions(request.form, len(uploads))
     if err is not None:
         payload, code = err
-        share_core._audit('agent.share', '', 'fail', payload['error'])
+        share_core._audit('agent.share', '', 'fail', payload['error'], who)
         return jsonify(payload), code
     taskId = opts['taskId']
 
@@ -86,7 +87,8 @@ def shareSubmit():
         task, err = share_core.findOpenTask(taskId)
         if err is not None:
             payload, code = err
-            share_core._audit('agent.share', taskId, 'fail', payload['error'])
+            share_core._audit('agent.share', taskId, 'fail', payload['error'],
+                              who)
             return jsonify(payload), code
 
     # 授权门（批次 B2）：往远端执行点投附件要第三层授权。成员端根白名单与
@@ -95,7 +97,7 @@ def shareSubmit():
     if not task_node.isLocal(targetNode) \
             and not agentHasScope(agent, SCOPE_UPLOAD_REMOTE):
         share_core._audit('agent.share', taskId, 'deny',
-                          'need=upload_remote node=%s' % targetNode[:60])
+                          'need=upload_remote node=%s' % targetNode[:60], who)
         return jsonify({'error': '向远端执行点投递附件需要 upload_remote 权限',
                         'need': 'upload_remote'}), 403
 
@@ -107,17 +109,20 @@ def shareSubmit():
             stagedFolder = staging.createStagedFolder(opts['folderName'],
                                                       tasks_store.taskRoot())
         except ValueError as e:
-            share_core._audit('agent.share', taskId, 'fail', '文件夹名不合法')
+            share_core._audit('agent.share', taskId, 'fail', '文件夹名不合法',
+                              who)
             return jsonify({'error': str(e)}), 400
         except OSError as e:
-            share_core._audit('agent.share', taskId, 'fail', '建文件夹失败')
+            share_core._audit('agent.share', taskId, 'fail', '建文件夹失败',
+                              who)
             return jsonify({'error': '建文件夹失败: %s' % e}), 500
         folderName = os.path.basename(stagedFolder)   # 重名时以 (2) 后的实际名为准
     for item in uploads:
         name = staging.safeAttachmentName(item.filename)
         if not name:
             share_core._discard(stagedFiles, stagedFolder)
-            share_core._audit('agent.share', taskId, 'fail', '文件名不合法')
+            share_core._audit('agent.share', taskId, 'fail', '文件名不合法',
+                              who)
             return jsonify({'error': '文件名不合法（需纯文件名，≤120 字符）: %s'
                                      % (item.filename or '')}), 400
         try:
@@ -127,14 +132,14 @@ def shareSubmit():
         except ValueError:
             share_core._discard(stagedFiles, stagedFolder)
             share_core._audit('agent.share', taskId, 'fail',
-                              '文件超过 %dMB' % MAX_FILE_MB)
+                              '文件超过 %dMB' % MAX_FILE_MB, who)
             return jsonify({'error': '单文件超过 %dMB 上限: %s'
                                      % (MAX_FILE_MB, name)}), 413
         except OSError as e:
             share_core._discard(stagedFiles, stagedFolder)
-            share_core._audit('agent.share', taskId, 'fail', '写盘失败')
+            share_core._audit('agent.share', taskId, 'fail', '写盘失败', who)
             return jsonify({'error': '写盘失败: %s' % e}), 500
 
     payload, code = share_core.deliverShare(opts, stagedFiles, stagedFolder,
-                                            folderName, task)
+                                            folderName, task, who)
     return jsonify(payload), code
