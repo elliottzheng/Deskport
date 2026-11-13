@@ -1,7 +1,7 @@
 """Deskport Agent API 的极简 Python 封装（仅依赖标准库）。
 
     import deskport
-    h = deskport.connect()                 # 读 .deskport.json 的 url/host/insecure
+    h = deskport.connect()                 # 读 .deskport.json 的 url/node/insecure
     print(h.sh("uptime"))                  # 返回 stdout，失败抛 CommandError
     repo = h.cd("/srv/app")                # 绑定工作目录；相对路径都按它解析
     print(repo.sh("git log --oneline -5"))
@@ -9,7 +9,7 @@
     repo.write("notes.txt", "hello"); print(repo.read_text("notes.txt"))
 
 配置（后者覆盖前者）：脚本同目录 .deskport.json → 环境变量 DESKPORT_URL /
-DESKPORT_HOST / DESKPORT_INSECURE=1 → 函数参数。
+DESKPORT_NODE / DESKPORT_INSECURE=1 → 函数参数。
 令牌：参数 token → 环境变量 DESKPORT_TOKEN → 脚本同目录 .agent-token。
 
 服务端已知行为：exec 输出超过 2 MiB 会被截断、超时上限 600s（truncated=True，sh() 会告警）；
@@ -150,7 +150,7 @@ class Deskport:
 
     # ---- 持久会话 / 任务派活 ----
     def session(self, host: str, cwd: str | None = None) -> "Session":
-        body = {"host": host}
+        body = {"node": host}
         if cwd:
             body["cwd"] = cwd
         return Session(self, self._request("POST", "/api/agent/ssh/sessions", body)["sessionId"])
@@ -241,11 +241,11 @@ class Deskport:
 
     def run(self, host: str, command: str, timeout: int = 30, check: bool = False,
             cwd: str | None = None, shell: str | None = None) -> ExecResult:
-        """shell 仅对 host="local" 有效：bash（默认）/ powershell / pwsh。"""
+        """shell 仅对 node="local" 有效：bash（默认）/ powershell / pwsh。"""
         if "\x00" in command:
             raise ValueError("命令里含 NUL 字符（服务端会 400）")
         timeout = max(1, min(600, int(timeout)))
-        body = {"host": host, "command": command, "timeoutSec": timeout}
+        body = {"node": host, "command": command, "timeoutSec": timeout}
         if cwd:
             body["cwd"] = cwd          # heredoc+cwd 的服务端 bug 已于 2026-11-10 修复
         if shell:
@@ -258,7 +258,7 @@ class Deskport:
         return res.check() if check else res
 
     def ls(self, host: str, path: str) -> list[Entry]:
-        j = self._request("POST", "/api/agent/sftp/list", {"host": host, "path": path})
+        j = self._request("POST", "/api/agent/sftp/list", {"node": host, "path": path})
         ents = [Entry(e["name"], e.get("path", path.rstrip("/") + "/" + e["name"]),
                       e.get("size", 0), e.get("mtime", 0), bool(e.get("dir")))
                 for e in j["entries"]]
@@ -270,12 +270,12 @@ class Deskport:
              length: int | None = None) -> bytes:
         """整读；超过 8MB（413）时自动按 offset/length 分块拼接。"""
         if offset is not None or length is not None:
-            body = {"host": host, "path": path, "offset": offset or 0}
+            body = {"node": host, "path": path, "offset": offset or 0}
             if length is not None:
                 body["length"] = length
             return base64.b64decode(self._request("POST", "/api/agent/sftp/get", body)["contentB64"])
         try:
-            j = self._request("POST", "/api/agent/sftp/get", {"host": host, "path": path})
+            j = self._request("POST", "/api/agent/sftp/get", {"node": host, "path": path})
             return base64.b64decode(j["contentB64"])
         except DeskportError as e:
             if e.status != 413:
@@ -283,7 +283,7 @@ class Deskport:
         parts, off = [], 0
         while True:
             j = self._request("POST", "/api/agent/sftp/get",
-                              {"host": host, "path": path, "offset": off, "length": self.CHUNK})
+                              {"node": host, "path": path, "offset": off, "length": self.CHUNK})
             b = base64.b64decode(j["contentB64"])
             parts.append(b)
             off += len(b)
@@ -294,7 +294,7 @@ class Deskport:
         if isinstance(data, str):
             data = data.encode("utf-8")
         return self._request("POST", "/api/agent/sftp/put",
-                             {"host": host, "path": path,
+                             {"node": host, "path": path,
                               "contentB64": base64.b64encode(data).decode(),
                               "sha256": hashlib.sha256(data).hexdigest()})
 
@@ -515,7 +515,7 @@ def _load_config() -> dict:
     f = _HERE / ".deskport.json"
     if f.exists():
         cfg.update(json.loads(f.read_text(encoding="utf-8")))
-    for key in ("url", "host"):
+    for key in ("url", "host", "node"):
         if os.environ.get(f"DESKPORT_{key.upper()}"):
             cfg[key] = os.environ[f"DESKPORT_{key.upper()}"]
     if os.environ.get("DESKPORT_INSECURE"):
@@ -525,14 +525,14 @@ def _load_config() -> dict:
 
 def connect(host: str | None = None, url: str | None = None,
             insecure: bool | None = None, cwd: str | None = None, **kw) -> Host:
-    """按配置一步拿到 Host。"""
+    """按配置一步拿到 Host。host 参数也接受配置/环境里的旧名 host（node 优先）。"""
     cfg = _load_config()
     url = url or cfg.get("url")
-    host = host or cfg.get("host")
+    host = host or cfg.get("node") or cfg.get("host")
     if insecure is None:
         insecure = bool(cfg.get("insecure", False))
     if not host:
-        raise ValueError("需要 host（参数、DESKPORT_HOST 或 .deskport.json）")
+        raise ValueError("需要 node（参数、DESKPORT_NODE 或 .deskport.json）")
     h = Deskport(url, insecure=insecure, cafile=kw.pop("cafile", cfg.get("cafile")),
                  pin=kw.pop("pin", bool(cfg.get("pin"))), **kw).host(host)
     return h.cd(cwd) if cwd else h
@@ -550,7 +550,7 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="Deskport Agent API CLI（默认读 .deskport.json）")
     ap.add_argument("--url")
-    ap.add_argument("--host")
+    ap.add_argument("--node", help="目标机器（local 或 GET /api/agent/hosts 里的名字；旧名 --host 的配置键仍读）")
     ap.add_argument("-k", "--insecure", action="store_true", default=None)
     ap.add_argument("-C", "--cwd", help="远端工作目录")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -589,7 +589,7 @@ if __name__ == "__main__":
             for h in dp.hosts():
                 print(f"{h['name']}\t{h['host']}:{h['port']}\t{h['id']}")
             sys.exit(0)
-        h = connect(a.host, a.url, a.insecure, a.cwd)
+        h = connect(a.node, a.url, a.insecure, a.cwd)
         if a.cmd == "run":
             r = h.run(a.command, timeout=a.timeout)
             sys.stdout.write(r.out); sys.stderr.write(r.err)

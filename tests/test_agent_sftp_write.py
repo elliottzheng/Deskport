@@ -78,6 +78,27 @@ def test_local_mkdir_and_conflict(env, tmp_path):
     assert r2.status_code == 409
 
 
+def test_write_ops_accept_node_alias(env, tmp_path):
+    """批次 J：delete/mkdir/rename 与 list/get/put 同一套 node/host 词汇。"""
+    target = tmp_path / 'n1'
+    r = _post(env, '/api/agent/sftp/mkdir',
+              {'node': 'local', 'path': str(target), 'parents': True})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body['node'] == 'local' and body['host'] == 'local'
+    r = _post(env, '/api/agent/sftp/rename',
+              {'node': 'local', 'from': str(target), 'to': str(tmp_path / 'n2')})
+    assert r.status_code == 200
+    assert r.get_json()['node'] == 'local'
+    r = _post(env, '/api/agent/sftp/delete', {'node': 'local',
+                                              'path': str(tmp_path / 'n2')})
+    assert r.status_code == 200
+    # 两个都给且不同 → 400 含「冲突」
+    r = _post(env, '/api/agent/sftp/mkdir',
+              {'node': 'local', 'host': 'office', 'path': str(tmp_path / 'n3')})
+    assert r.status_code == 400 and '冲突' in r.get_json()['error']
+
+
 def test_local_delete_requires_recursive_for_nonempty_dir(env, tmp_path):
     folder = tmp_path / 'd'
     folder.mkdir()

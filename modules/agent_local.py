@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Deskport 本机作为内置主机（host='local'）——与 SSH 主机全等价（反馈 §7b）。
+"""Deskport 本机作为内置主机（node/host='local'）——与 SSH 主机全等价（反馈 §7b）。
 
 原则：能 exec、能开会话、能 SFTP 的目标不区分本机与远端，接口、参数、
-响应格式、鉴权、审计完全一致，只换 host 名与默认 shell。
+响应格式、鉴权、审计完全一致，只换 node/host 名与默认 shell。
 
 shell:
     bash        Git Bash（默认）——智能体写的命令多为 POSIX 风格
@@ -327,7 +327,7 @@ def sftpListLocal(path):
     except OSError as e:
         status, msg = mapSftpError(e)
         return jsonify({'error': msg}), status
-    return jsonify({'path': native, 'entries': entries})
+    return jsonify({'path': native, 'entries': entries, 'node': 'local', 'host': 'local'})
 
 
 def sftpGetLocal(path, offset=0, length=0):
@@ -357,7 +357,7 @@ def sftpGetLocal(path, offset=0, length=0):
         status, msg = mapSftpError(e)
         return jsonify({'error': msg}), status
     return jsonify({'ok': True, 'path': native, 'size': len(chunk),
-                    'total': total, 'offset': offset,
+                    'total': total, 'offset': offset, 'node': 'local', 'host': 'local',
                     'contentB64': base64.b64encode(chunk).decode('ascii')})
 
 
@@ -403,7 +403,7 @@ def sftpPutLocal(path, contentB64, wantSha='', mkdirs=False):
         status, msg = mapSftpError(e)
         return jsonify({'error': msg}), status
     return jsonify({'ok': True, 'path': native, 'size': len(raw),
-                    'sha256': hashlib.sha256(raw).hexdigest()})
+                    'node': 'local', 'host': 'local', 'sha256': hashlib.sha256(raw).hexdigest()})
 
 
 # ---------------------------------------------------------------- 路由
@@ -441,7 +441,7 @@ def agentLocalExec():
             'reason': result['reason'], 'outTruncated': result['truncated'],
             'durationMs': result['durationMs'], 'timeoutSec': timeoutSec,
             'pid': result['pid'], 'shell': shell,
-            'cwd': normalizeLocalPath(cwd) if cwd else ''}
+            'cwd': normalizeLocalPath(cwd) if cwd else '', 'node': 'local', 'host': 'local'}
     if encoding == 'base64':
         body['outB64'] = base64.b64encode(result['out'][:MAX_OUTPUT_BYTES]).decode('ascii')
         body['errB64'] = base64.b64encode(result['err'][:MAX_OUTPUT_BYTES]).decode('ascii')

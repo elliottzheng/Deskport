@@ -14,12 +14,13 @@
 | `driver.py` | 主控 | 驱动模板：别名目录、边界判定、自动放行、409 排队 |
 
 客户端与驱动只用标准库（Python ≥ 3.9），拷一个文件到任何机器就能跑，不需要 pip。
-整包下载时还会多一份生成的 `.deskport.json`（`url` + `host`，不含令牌）。
+整包下载时还会多一份生成的 `.deskport.json`（`url` + `node`，不含令牌；`host`
+是旧名，与 `node` 同值，新旧客户端都读）。
 
 ## 自举（一条链接，无需令牌）
 
 整包下载：`GET /api/agent/skill.zip`（公开）。解开就是技能目录，包里的 `.deskport.json`
-已按本次下载的地址填好 `url`，`host` 缺省 `local`；`SKILL.md` 里的 `{{BASE}}`/`{{VERSION}}`
+已按本次下载的地址填好 `url`，`node` 缺省 `local`；`SKILL.md` 里的 `{{BASE}}`/`{{VERSION}}`
 按本次请求替换，解开即可照做；**令牌不进包**，由人单独交给智能体。
 
 ```bash
@@ -45,10 +46,11 @@ done
 # 清单与版本：GET /api/agent/skills（含 files / pack / sha256）
 ```
 
-换执行点或地址：改包里的 `.deskport.json`（`host` 可填 SSH 主机名，见
+换执行点或地址：改包里的 `.deskport.json`（`node` 可填 SSH 主机名，见
 `GET /api/agent/hosts`；远程用 `insecure`/`cafile`/`pin` 处理自签证书）。
-配置从低到高：脚本同目录 `.deskport.json` → `DESKPORT_URL` / `DESKPORT_HOST` /
+配置从低到高：脚本同目录 `.deskport.json` → `DESKPORT_URL` / `DESKPORT_NODE` /
 `DESKPORT_INSECURE` → 函数参数；令牌：参数 `token` → `DESKPORT_TOKEN` → 同目录 `.agent-token`。
+（旧名 `host` / `DESKPORT_HOST` 仍读，`node` 优先。）
 
 ## 没有令牌先拿工具（公开端点）
 
@@ -69,7 +71,7 @@ curl -s $D/api/agent/skill.zip -o deskport-skill.zip     # 整包：5 个条目
 ```python
 import deskport
 
-h = deskport.connect()              # 用 .deskport.json 里的 host（例：远端执行机）
+h = deskport.connect()              # 用 .deskport.json 里的 node（例：远端执行机；旧键 host 仍读）
 print(h.sh("uptime"))               # 返回 stdout，非零退出抛 CommandError
 repo = h.cd("/srv/app")             # 绑定工作目录，之后相对路径都按它解析
 print(repo.sh("git log --oneline -5"))

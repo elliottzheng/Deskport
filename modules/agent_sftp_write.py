@@ -4,12 +4,15 @@
 给跨机附件投递（§7）与联邦内部维护用，不替代文件页的回收站。
 错误码沿用 agent_sftp: 403 权限 / 404 不存在 / 409 已存在 / 400 用法。
 
+指代机器的入参 node 与 host 同义（批次 J，归一在 agent_api.nodeArg）：
+优先 node，其次 host（旧名，仍接受），都缺省 = local，冲突 400。
+
 契约:
-    POST /api/agent/sftp/delete {host, path, recursive?}
+    POST /api/agent/sftp/delete {node, path, recursive?}
         文件/软链: remove；目录: 空目录 rmdir，recursive=true 才整棵删。
-    POST /api/agent/sftp/mkdir  {host, path, parents?}
+    POST /api/agent/sftp/mkdir  {node, path, parents?}
         已存在 → 409；parents=true 逐级创建（已存在的父级跳过）。
-    POST /api/agent/sftp/rename {host, from, to, overwrite?}
+    POST /api/agent/sftp/rename {node, from, to, overwrite?}
         目标已存在且 overwrite=false → 409；overwrite=true 才覆盖。
 """
 import os
@@ -18,7 +21,8 @@ import stat as statMod
 
 from flask import jsonify, request
 
-from modules.agent_api import requireAgentScope, auditAgentAction, blueprint
+from modules.agent_api import requireAgentScope, auditAgentAction, blueprint, \
+    nodeArg
 from modules.agent_sftp import (mapSftpError, normalize, sftpFor,
                                 sftpMakedirs, isLocal)
 
@@ -144,20 +148,25 @@ def agentSftpDelete():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
     raw = str(data.get('path') or '').strip()
     if not raw:
         return jsonify({'error': '缺少 path'}), 400
     recursive = _bool(data, 'recursive')
     try:
-        if isLocal(data.get('host')):
+        if isLocal(node):
             if not _localEnabled():
                 return jsonify({'error': '主机不存在'}), 404
             path = _localPath(raw)
             count = _deleteLocal(path, recursive)
+            hostName = 'local'
         else:
-            _host, sftp, err = sftpFor(data.get('host'))
+            hostEntry, sftp, err = sftpFor(node)
             if err:
                 return jsonify({'error': err}), 404
+            hostName = hostEntry.get('name') or hostEntry.get('host') or node
             path = normalize(sftp, raw)
             _deleteSftp(sftp, path, recursive)
             count = 1
@@ -173,7 +182,8 @@ def agentSftpDelete():
         return jsonify({'error': msg}), status
     _audit(agent, 'delete', path, 'ok',
            'recursive=%s' % ('true' if recursive else 'false'))
-    return jsonify({'ok': True, 'path': path, 'count': count})
+    return jsonify({'ok': True, 'path': path, 'count': count,
+                    'node': hostName, 'host': hostName})
 
 
 @blueprint.route('/api/agent/sftp/mkdir', methods=['POST'])
@@ -182,20 +192,25 @@ def agentSftpMkdir():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
     raw = str(data.get('path') or '').strip()
     if not raw:
         return jsonify({'error': '缺少 path'}), 400
     parents = _bool(data, 'parents') or _bool(data, 'mkdirs')
     try:
-        if isLocal(data.get('host')):
+        if isLocal(node):
             if not _localEnabled():
                 return jsonify({'error': '主机不存在'}), 404
             path = _localPath(raw)
             _mkdirLocal(path, parents)
+            hostName = 'local'
         else:
-            _host, sftp, err = sftpFor(data.get('host'))
+            hostEntry, sftp, err = sftpFor(node)
             if err:
                 return jsonify({'error': err}), 404
+            hostName = hostEntry.get('name') or hostEntry.get('host') or node
             path = normalize(sftp, raw)
             _mkdirSftp(sftp, path, parents)
     except FileExistsError:
@@ -206,7 +221,8 @@ def agentSftpMkdir():
         _audit(agent, 'mkdir', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     _audit(agent, 'mkdir', path, 'ok', 'parents=%s' % ('true' if parents else 'false'))
-    return jsonify({'ok': True, 'path': path})
+    return jsonify({'ok': True, 'path': path,
+                    'node': hostName, 'host': hostName})
 
 
 @blueprint.route('/api/agent/sftp/rename', methods=['POST'])
@@ -215,21 +231,26 @@ def agentSftpRename():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
     src = str(data.get('from') or data.get('oldPath') or '').strip()
     dst = str(data.get('to') or data.get('newPath') or '').strip()
     if not src or not dst:
         return jsonify({'error': '缺少 from / to'}), 400
     overwrite = _bool(data, 'overwrite')
     try:
-        if isLocal(data.get('host')):
+        if isLocal(node):
             if not _localEnabled():
                 return jsonify({'error': '主机不存在'}), 404
             srcPath, dstPath = _localPath(src), _localPath(dst)
             _renameLocal(srcPath, dstPath, overwrite)
+            hostName = 'local'
         else:
-            _host, sftp, err = sftpFor(data.get('host'))
+            hostEntry, sftp, err = sftpFor(node)
             if err:
                 return jsonify({'error': err}), 404
+            hostName = hostEntry.get('name') or hostEntry.get('host') or node
             srcPath = normalize(sftp, src)
             dstPath = normalize(sftp, dst)
             _renameSftp(sftp, srcPath, dstPath, overwrite)
@@ -242,4 +263,5 @@ def agentSftpRename():
         return jsonify({'error': msg}), status
     _audit(agent, 'rename', src, 'ok', '→ %s overwrite=%s'
            % (dstPath, 'true' if overwrite else 'false'))
-    return jsonify({'ok': True, 'from': srcPath, 'to': dstPath})
+    return jsonify({'ok': True, 'from': srcPath, 'to': dstPath,
+                    'node': hostName, 'host': hostName})

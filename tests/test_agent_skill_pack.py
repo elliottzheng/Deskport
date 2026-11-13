@@ -39,11 +39,12 @@ def test_pack_files_are_byte_identical(env):
 
 
 def test_pack_config_is_ready_but_tokenless(env):
-    """url 取本次请求地址、host 默认 local；配置里只有这三样，令牌绝不进包。"""
+    """url 取本次请求地址、node/host 默认 local（同值，新旧客户端都读）；配置里不含令牌。"""
     z = openPack(env.client.get(PACK, headers=HEADERS))
     cfg = json.loads(z.read('deskport/.deskport.json').decode('utf-8'))
-    assert cfg['url'].startswith('http://') and cfg['host'] == 'local'
-    assert sorted(cfg) == ['_说明', 'host', 'url']
+    assert cfg['url'].startswith('http://')
+    assert cfg['node'] == 'local' and cfg['host'] == 'local'
+    assert sorted(cfg) == ['_说明', 'host', 'node', 'url']
     assert '不要写进这个文件' in cfg['_说明']
 
 

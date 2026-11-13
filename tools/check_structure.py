@@ -31,6 +31,10 @@ LEGACY = {
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
     'frontend/assets/css/files.css': 522,         # 文件页样式一体，选择器跨文件耦合，拆分暂缓
     'modules/agent_local.py': 491,                # 本机内置主机全等价实现（exec/sftp/读文件），拆分中
+    'modules/agent_api.py': 412,                  # agent 家族门面：守卫/主机解析/入参归一都在这
+                                                  # （批次 C 把各模块的私有名收进来，批次 H 加
+                                                  # onBehalfOfKwargs，批次 J 加 nodeArg）——只减不增，
+                                                  # 下一步把主机解析与入参归一拆成独立小模块
     'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
     'modules/tasks_api.py': 961,                  # 任务 API 面最大，拆分需配回归
@@ -127,11 +131,11 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
 # 规则: 跨模块 import 不得出现单下划线前缀（引私有名 / 公有名起私有别名都算）。
 # 本表登记的是「同包内部接缝」——提供方是使用方所在家族的共享底座, 私有助手
 # 只在该家族内流转; 每条附理由, 且只减不增: 新接缝必须公开化, 不许往这加项。
+# 批次 J: node/host 归一（agent_api.nodeArg）后, agent_sftp/agent_sessions 改走
+# 公开的 resolveHost / unknownHostError, agent_api 的两条主机解析接缝随之删除。
 PRIVATE_SEAM_ALLOWED = {
     ('agent_nodes', 'tasks_federation'): {'_memberCall'},      # federation 成员 RPC 是 tasks_federation 的内部机制
-    ('agent_sessions', 'agent_api'): {'_resolveHost', '_safeHosts'},  # agent 家族的主机解析/主机清单助手
     ('agent_sessions', 'agent_local'): {'_resolveShell'},      # 持久会话的 shell 解析在本机模块
-    ('agent_sftp', 'agent_api'): {'_resolveHost'},             # 同上: 主机解析助手
     ('agent_sftp', 'ssh_sftp'): {'_openSftp'},                 # SFTP 连接助手, ssh_sftp → agent_sftp 的本地分支要用
     ('agent_skill_files', 'agent_skills'): {'_skillsDir'},     # 技能包附件读写 agent_skills 的技能目录
     ('aihandoff', 'inbox_scan'): {'_under', '_sha256', '_dedupe'},  # 收件箱家族的遍历/摘要/去重助手

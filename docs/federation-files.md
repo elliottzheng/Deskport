@@ -168,11 +168,12 @@ curl -s -b cookie.txt -H 'Content-Type: application/json' \
 
 | 端点 | Body | 说明 |
 | --- | --- | --- |
-| `POST /api/agent/sftp/delete` | `{host, path, recursive?}` | 文件/软链 remove；目录空删，`recursive:true` 整棵删 |
-| `POST /api/agent/sftp/mkdir` | `{host, path, parents?}` | 已存在 409；`parents:true` 逐级创建 |
-| `POST /api/agent/sftp/rename` | `{host, from, to, overwrite?}` | 目标存在且 `overwrite:false` → 409 |
+| `POST /api/agent/sftp/delete` | `{node, path, recursive?}` | 文件/软链 remove；目录空删，`recursive:true` 整棵删 |
+| `POST /api/agent/sftp/mkdir` | `{node, path, parents?}` | 已存在 409；`parents:true` 逐级创建 |
+| `POST /api/agent/sftp/rename` | `{node, from, to, overwrite?}` | 目标存在且 `overwrite:false` → 409 |
 
-`host: "local"` 走本机文件系统，其余走 SFTP。审计 action：
+`node: "local"`（或缺省）走本机文件系统，其余走 SFTP；`host` 是旧名，仍接受
+（批次 J：node/host 同义，冲突 400，响应两个键都回）。审计 action：
 `agent.sftp.delete` / `agent.sftp.mkdir` / `agent.sftp.rename`。
 
 ## 8. 本批未实施与已知缺口

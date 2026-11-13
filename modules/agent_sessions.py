@@ -2,7 +2,7 @@
 """智能体持久会话: bash 常驻通道, 多次 exec 共享 cwd 与环境。
 
 端点 (路由挂在 agent_api 的 blueprint 上, 前缀 /api/agent/ssh/sessions):
-    POST   /api/agent/ssh/sessions          开会话 {host, cwd}
+    POST   /api/agent/ssh/sessions          开会话 {node, cwd}（host 旧名仍接受，批次 J）
     GET    /api/agent/ssh/sessions          会话列表
     POST   /api/agent/ssh/sessions/<sid>    执行命令 {command, timeoutSec, tailBytes, combined, full}
     DELETE /api/agent/ssh/sessions/<sid>    关闭会话
@@ -31,8 +31,8 @@ import paramiko
 from flask import jsonify, request
 
 from modules import events
-from modules.agent_api import (requireAgentScope, _resolveHost, _safeHosts,
-                               blueprint, onBehalfOfKwargs, parseTimeoutSec)
+from modules.agent_api import (requireAgentScope, resolveHost, unknownHostError,
+                               blueprint, onBehalfOfKwargs, parseTimeoutSec, nodeArg)
 from modules.ssh_hosts import getConnection
 
 _sessions = {}
@@ -152,8 +152,11 @@ def agentSessionOpen():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
     cwd = str(data.get('cwd') or '').strip()
-    isLocal = str(data.get('host') or '').strip().lower() == 'local'
+    isLocal = node.lower() == 'local'
     with _sessionsLock:
         openCount = sum(1 for s in _sessions.values() if s['alive'])
     if openCount >= SESSION_MAX_OPEN:
@@ -163,8 +166,7 @@ def agentSessionOpen():
         from modules.agent_local import (localEnabled, openLocalSession,
                                          normalizeLocalPath, _resolveShell)
         if not localEnabled():
-            names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
-            return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
+            return unknownHostError()
         shell, shellErr = _resolveShell(data)
         if shellErr:
             return jsonify(shellErr), 400
@@ -174,10 +176,9 @@ def agentSessionOpen():
         hostName = 'local'
         cwd = normalizeLocalPath(cwd)
     else:
-        hostEntry = _resolveHost(str(data.get('host') or ''))
+        hostEntry = resolveHost(node)
         if hostEntry is None:
-            names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
-            return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
+            return unknownHostError()
         try:
             channel = _openChannel(hostEntry, cwd)
         except paramiko.SSHException as e:
@@ -216,8 +217,7 @@ def agentSessionOpen():
                           'deadAt': 0}
     events.log('agent.session.open', hostName, 'ok', cwd or '~',
                request.remote_addr, **onBehalfOfKwargs(agent))
-    return jsonify({'sessionId': sid, 'host': hostName,
-                    'cwd': cwd or '~'})
+    return jsonify({'sessionId': sid, 'host': hostName, 'node': hostName, 'cwd': cwd or '~'})
 
 
 def _pruneAndListLocked():
@@ -233,7 +233,7 @@ def _pruneAndListLocked():
                 and now - sess['deadAt'] > DEAD_PRUNE_SECONDS:
             del _sessions[sid]
             continue
-        items.append({'id': sess['id'], 'host': sess['host'],
+        items.append({'id': sess['id'], 'host': sess['host'], 'node': sess['host'],
                       'cwd': sess['cwd'], 'alive': sess['alive']})
     return items
 

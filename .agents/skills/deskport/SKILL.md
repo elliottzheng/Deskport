@@ -5,7 +5,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 
 # deskport
 
-通过 Deskport 的智能体 API 操作主机（SSH 主机 + Deskport 本机 `host:"local"`）、
+通过 Deskport 的智能体 API 操作主机（SSH 主机 + Deskport 本机 `node:"local"`）、
 并把复杂任务委托给其他智能体。所有请求带 `X-Agent-Token` 头。
 
 ## 速查
@@ -16,6 +16,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - 主机: `GET /api/agent/hosts` 列出（SSH 主机 + 本机 `local`，本机带 os/defaultShell/shells）
 - 执行点: `GET /api/tasks/nodes` 列出（本机节点 `local`、远端节点如 `ai-xmyz`、联邦成员），每个带 `models`/`defaultModel`/`modelSelectable`（远端节点升级后自动上报）
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
+- **机器参数用 `node`**（exec/sftp/会话与任务同一套词汇，缺省 `local`）：`host` 是旧名，仍接受；两个都给且不同 → 400
 
 ## 这个包里还有什么（一起拉）
 
@@ -61,10 +62,12 @@ done
 
 ```text
 POST /api/agent/ssh/exec
-{"host": "<主机或local>", "command": "uptime", "timeoutSec": 30, "cwd": "/path"}
+{"node": "<主机或local>", "command": "uptime", "timeoutSec": 30, "cwd": "/path"}
 → {"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 4321}
 ```
 
+- `node` 指机器（缺省 `local`）：`local` 是本机，其余取 `GET /api/agent/hosts`；
+  `host` 是旧名，仍接受，但请用 `node`（两个都给且不同 → 400）。
 - exec 无状态：cd 不延续。多步任务用 `cwd` 参数（每条都带），或用持久会话 / 任务派活（见下）。
 - `timeoutSec` 1–600，越界 400；命令含 NUL 400；stdin 即时 EOF（读 stdin 的命令不挂死）。
 - 输出上限 2MB；`"encoding": "base64"` 拿 `outB64`/`errB64` 原文字节。
@@ -74,10 +77,12 @@ POST /api/agent/ssh/exec
 ## 持久会话（cd / export / venv 激活都延续）
 
 ```text
-POST   /api/agent/ssh/sessions              {"host": "...", "cwd": "..."} → {"sessionId"}
+POST   /api/agent/ssh/sessions              {"node": "...", "cwd": "..."} → {"sessionId"}
 POST   /api/agent/ssh/sessions/<sid>        {"command": "...", "timeoutSec": 30}
 DELETE /api/agent/ssh/sessions/<sid>
 ```
+
+- 开会话用 `node` 指机器（缺省 `local`）；`host` 是旧名，仍接受。
 
 - `cwd` 不存在 → 开会话就 400（不会再"创建成功、执行全 500"）。
 - 语法错误（未闭合引号等）只影响本条：`exit:2` + bash 原始报错，会话不会被卡死。
@@ -88,11 +93,12 @@ DELETE /api/agent/ssh/sessions/<sid>
 ## SFTP（文件读写）
 
 ```text
-POST /api/agent/sftp/list  {"host": "...", "path": "/srv"} → {path, entries:[{name,path,size,mtime,dir,type,mode,target}]}
-POST /api/agent/sftp/get   {"host": "...", "path": "...", "offset": 0, "length": 4096} → {contentB64, total}
-POST /api/agent/sftp/put   {"host": "...", "path": "...", "contentB64": "...", "sha256": "可选"}
+POST /api/agent/sftp/list  {"node": "...", "path": "/srv"} → {path, entries:[{name,path,size,mtime,dir,type,mode,target}]}
+POST /api/agent/sftp/get   {"node": "...", "path": "...", "offset": 0, "length": 4096} → {contentB64, total}
+POST /api/agent/sftp/put   {"node": "...", "path": "...", "contentB64": "...", "sha256": "可选"}
 ```
 
+- 指代机器用 `node`（缺省 `local`）；`host` 是旧名，仍接受。
 - `~` 与相对路径都解析为绝对路径；错误码：403 权限 / 404 不存在 / 400 用法（对目录 get 等）/ 413 超限。
 - 整读上限 8MB，超限用 `offset`/`length` 分块（413 响应带 `total`）。
 - put 严格校验 base64（坏编码 400 拒写，原文件不动）；可选 sha256 校验；原子写入。

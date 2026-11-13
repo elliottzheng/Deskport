@@ -18,7 +18,7 @@
 
 端点:
     GET  /api/agent/hosts          主机列表（只含 id/name/host/port，无凭据）
-    POST /api/agent/ssh/exec       非交互执行命令（paramiko exec_command）
+    POST /api/agent/ssh/exec       非交互执行命令（机器参数 node/host 同义，见 nodeArg）
 
 配套路由（蓝图同源, 在 app.py 显式登记）:
     modules/agent_sftp.py          SFTP list/get/put（错误码、分块、原子写）
@@ -182,7 +182,7 @@ def requireAgentScope(scope=SCOPE_FULL):
 
 # ---------------------------------------------------------------- 主机解析
 
-def _resolveHost(nameOrId):
+def resolveHost(nameOrId):
     entry = hosts.findHost(nameOrId)
     if entry is not None:
         return entry
@@ -193,11 +193,23 @@ def _resolveHost(nameOrId):
     return None
 
 
+def nodeArg(data):
+    """node 与 host 同义（批次 J）：优先 node，其次 host，缺省 local，冲突 400。"""
+    node, host = (str(data.get(k) or '').strip() for k in ('node', 'host'))
+    if node and host and node != host:
+        return None, (jsonify({'error': 'node 与 host 冲突：二者同义，请只给一个'
+                                          '（host 是旧名）'}), 400)
+    return node or host or 'local', None
+
+
+def unknownHostError():
+    names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
+    return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
+
+
 def _safeHosts():
-    out = []
-    for item in hosts.repo.all():
-        out.append({'id': item.get('id'), 'name': item.get('name'),
-                    'host': item.get('host'), 'port': item.get('port')})
+    out = [{'id': i.get('id'), 'name': i.get('name'), 'host': i.get('host'),
+            'port': i.get('port')} for i in hosts.repo.all()]
     # Deskport 本机也是一台主机（§7b 全等价）；agentLocalEnabled=false 时不出现
     from modules.agent_local import localEnabled, localHostEntry
     if localEnabled():
@@ -338,8 +350,11 @@ def agentExec():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
     from modules.agent_local import isLocalHost, localEnabled
-    if isLocalHost(data.get('host')):
+    if isLocalHost(node):
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
         from modules.agent_local import agentLocalExec
@@ -360,10 +375,9 @@ def agentExec():
     if timeoutErr:
         return jsonify({'error': timeoutErr}), 400
 
-    hostEntry = _resolveHost(str(data.get('host') or ''))
+    hostEntry = resolveHost(node)
     if hostEntry is None:
-        names = [h.get('name') or h.get('id') for h in _safeHosts()][:8]
-        return jsonify({'error': '主机不存在', 'availableHosts': names}), 404
+        return unknownHostError()
     hostName = hostEntry.get('name') or hostEntry.get('host') or ''
 
     started = time.monotonic()
@@ -380,7 +394,7 @@ def agentExec():
             'timedOut': result['timedOut'], 'reason': result['reason'],
             'outTruncated': result['truncated'],
             'durationMs': durationMs, 'timeoutSec': timeoutSec,
-            'pid': result['pid']}
+            'pid': result['pid'], 'node': hostName, 'host': hostName}
     if encoding == 'base64':
         body['outB64'] = base64.b64encode(result['out'][:MAX_OUTPUT_BYTES]).decode('ascii')
         body['errB64'] = base64.b64encode(result['err'][:MAX_OUTPUT_BYTES]).decode('ascii')

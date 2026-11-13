@@ -3,6 +3,9 @@
 
 与 agent_sessions 同模式挂在 agent_api 的蓝图上（app.py 显式登记）。
 
+指代机器的入参 node 与 host 同义（批次 J，归一在 agent_api.nodeArg）：
+优先 node，其次 host（旧名，仍接受），都缺省 = local，冲突 400。
+
 约定:
     - 错误码: 权限不足 403 / 不存在 404 / 用法错误(如对目录 get) 400 / 超 413；
     - list 返回 type(file/dir/symlink/fifo/…)、mode、symlink 的 target，
@@ -18,8 +21,8 @@ import stat as statMod
 
 from flask import jsonify, request
 
-from modules.agent_api import (auditAgentAction, requireAgentScope, _resolveHost,
-                               blueprint)
+from modules.agent_api import (auditAgentAction, requireAgentScope, resolveHost,
+                               blueprint, nodeArg)
 from modules.fsutil import decodeBase64
 from modules.ssh_sftp import _openSftp
 
@@ -33,7 +36,7 @@ _TYPE_NAMES = {
 
 
 def sftpFor(hostNameOrId):
-    hostEntry = _resolveHost(str(hostNameOrId or ''))
+    hostEntry = resolveHost(str(hostNameOrId or ''))
     if hostEntry is None:
         return None, None, '主机不存在'
     try:
@@ -126,14 +129,18 @@ def agentSftpList():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
-    if isLocal(data.get('host')):
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
+    if isLocal(node):
         from modules.agent_local import localEnabled, sftpListLocal
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
         return sftpListLocal(data.get('path'))
-    _host, sftp, err = sftpFor(data.get('host'))
+    _host, sftp, err = sftpFor(node)
     if err:
         return jsonify({'error': err}), 404
+    hostName = _host.get('name') or _host.get('host') or node
     raw = str(data.get('path') or '.').strip() or '.'
     try:
         path = normalize(sftp, raw)
@@ -148,7 +155,8 @@ def agentSftpList():
         return jsonify({'error': msg}), status
     auditAgentAction(agent, 'agent.sftp.list', path, 'ok',
                      '%d items' % len(entries))
-    return jsonify({'path': path, 'entries': entries})
+    return jsonify({'path': path, 'entries': entries,
+                    'node': hostName, 'host': hostName})
 
 
 @blueprint.route('/api/agent/sftp/get', methods=['POST'])
@@ -157,7 +165,10 @@ def agentSftpGet():
     if agent is None:
         return err
     data = request.get_json(silent=True) or {}
-    if isLocal(data.get('host')):
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
+    if isLocal(node):
         from modules.agent_local import localEnabled, sftpGetLocal
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
@@ -167,9 +178,10 @@ def agentSftpGet():
                                 int(data.get('length') or 0))
         except (TypeError, ValueError):
             return jsonify({'error': 'offset/length 必须是整数'}), 400
-    _host, sftp, err = sftpFor(data.get('host'))
+    _host, sftp, err = sftpFor(node)
     if err:
         return jsonify({'error': err}), 404
+    hostName = _host.get('name') or _host.get('host') or node
     raw = str(data.get('path') or '')
     if not raw:
         return jsonify({'error': '缺少 path'}), 400
@@ -216,6 +228,7 @@ def agentSftpGet():
                      '%d+%d bytes' % (offset, len(chunk)))
     return jsonify({'ok': True, 'path': path, 'size': len(chunk), 'total': total,
                     'offset': offset,
+                    'node': hostName, 'host': hostName,
                     'contentB64': base64.b64encode(chunk).decode('ascii')})
 
 
@@ -228,16 +241,20 @@ def agentSftpPut():
     if request.content_length and request.content_length > MAX_FILE_BYTES * 2 + 65536:
         return jsonify({'error': '请求体超过上限（文件上限 %d bytes）' % MAX_FILE_BYTES}), 413
     data = request.get_json(silent=True) or {}
-    if isLocal(data.get('host')):
+    node, nodeErr = nodeArg(data)
+    if nodeErr is not None:
+        return nodeErr
+    if isLocal(node):
         from modules.agent_local import localEnabled, sftpPutLocal
         if not localEnabled():
             return jsonify({'error': '主机不存在'}), 404
         return sftpPutLocal(data.get('path'), data.get('contentB64'),
                             str(data.get('sha256') or ''),
                             mkdirs=bool(data.get('mkdirs')))
-    _host, sftp, err = sftpFor(data.get('host'))
+    _host, sftp, err = sftpFor(node)
     if err:
         return jsonify({'error': err}), 404
+    hostName = _host.get('name') or _host.get('host') or node
     path = str(data.get('path') or '')
     if not path:
         return jsonify({'error': '缺少 path'}), 400
@@ -297,4 +314,6 @@ def agentSftpPut():
     digest = hashlib.sha256(raw).hexdigest()
     auditAgentAction(agent, 'agent.sftp.put', path, 'ok',
                      '%d bytes' % len(raw))
-    return jsonify({'ok': True, 'path': path, 'size': len(raw), 'sha256': digest})
+    return jsonify({'ok': True, 'path': path, 'size': len(raw),
+                    'node': hostName, 'host': hostName,
+                    'sha256': digest})
