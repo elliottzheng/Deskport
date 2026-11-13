@@ -40,6 +40,7 @@ from modules import agent_upload as agentUploadModule  # noqa: E402
 from modules import agent_share as agentShareModule  # noqa: E402  路由注册
 from modules import share_web as shareWebModule  # noqa: E402  路由注册
 from modules import agent_skill_files as agentSkillFilesModule  # noqa: E402  路由注册
+from modules import agent_skills as agentSkillsModule  # noqa: E402  路由注册
 from modules import agent_handbook as agentHandbookModule  # noqa: E402  路由注册
 from modules import feedback as feedbackModule  # noqa: E402
 from modules import device_auth as deviceAuthModule  # noqa: E402  路由注册

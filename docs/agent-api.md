@@ -87,13 +87,14 @@ Content-Type: multipart/form-data
   `GET /api/agent/upload/targets`（scope=upload）→
   `{targets: [{id, name}], default: "phone"}`，登录响应的 `targets`
   同样只含 id+name；
-- **联邦成员也能调用这两个端点**（批次 E）：中枢把自己的 `remotes[]` 令牌
-  放进 `X-Deskport-Token`，成员端认这个身份只为「只上传到成员机的收件箱」
-  服务——`GET /api/agent/upload/targets` 回成员自己声明的 id/name（同样没有
-  path），`POST /api/agent/upload` 由成员把 target id 映射成目录。调用方
-  没有任何办法指定绝对路径，所以这条通道不额外要求 `federationRoots`；
-  审计 `agent.upload` 的 target 字段记为 `联邦:<来源>`。中枢侧的授权门
-  `upload_remote` 与页面行为见 [m-share.md](m-share.md)；
+- **联邦成员也能调用这两个端点**：中枢把自己的 `remotes[]` 令牌放进
+  `X-Deskport-Token`，成员端认这个身份——`GET /api/agent/upload/targets`
+  回成员自己声明的 id/name（同样没有 path），`POST /api/agent/upload` 由
+  成员把 target id 映射成目录，调用方没有任何办法指定绝对路径，所以这条
+  通道不额外要求 `federationRoots`；审计 `agent.upload` 的 target 字段记为
+  `联邦:<来源>`。注意：联邦令牌的权限是 `full`（见「认证与错误格式」），
+  这两个端点放行不再依赖什么上传专用身份——`upload` 只是被 `full` 覆盖。
+  中枢侧的授权门 `upload_remote` 与页面行为见 [m-share.md](m-share.md)；
 - `saved[].path` = 目标名/相对路径（如 `教研资料/11月/a.pdf`），不暴露
   服务器上的绝对路径；
 - 目标目录自动创建；phone 目标的目录自动并入 `inboxDirs`，上传即出现
@@ -223,10 +224,23 @@ POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
 
 - 每次请求带 `X-Agent-Token: <令牌>` 或 `Authorization: Bearer <令牌>`；
   未带/不匹配 → `401 {"error": ...}`（JSON）。
+- **联邦令牌（`X-Deskport-Token`）同样可作为智能体令牌使用**：请求头
+  `X-Deskport-Token` 命中本机 `config.json` 的 `federationToken` 时，
+  `/api/agent/*` 与 `/api/tasks*` 按 `full` 权限放行（`need=upload` 之类
+  的受限端点同样放行——它拿到的就是全权），审计记为 `联邦:<来源>`
+  （`<来源>` = 中枢自报的 `X-Deskport-From`，缺省为来源 IP）。命中顺序：
+  内置 `agentTokens` → 设备令牌 → 联邦令牌；**内置令牌优先**——同一个值
+  同时配成两种令牌时，身份以内置令牌留痕，不会出现"联邦来源"的歧义命名。
 - `/api/*` 的所有错误都是 JSON：404/405/500 含 `error`/`code`，500 另有
   `requestId`（服务端日志可按 requestId 查 traceback）。未知 API 路径由
   认证守卫统一 401 JSON，不暴露端点存在性。
 - 浏览器 Cookie 登录态同样放行（面板 UI 复用同一组端点）。
+
+> **警告**：联邦令牌因此等同于"在那台机器上执行任意命令"的完整控制权
+> （exec / sftp / 会话 / 建任务全开）。请只把它发给自己的 Deskport 实例，
+> 并像保管本机密码一样保管它；泄露 = 换令牌（设置页 → 多机联邦 → 本机
+> 联邦令牌，留空即关闭联邦）。公开手册 `/api/agent/handbook` 不包含、
+> 也不应泄露联邦令牌。
 
 ## 主机：本机与 SSH 全等价
 
@@ -592,7 +606,10 @@ Deskport 升级后重新拉取即更新（`files` / `sha256` 判断要不要换�
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.*` / `agent.session.*` /
 `agent.task.create` / `agent.task.upload` / `agent.upload` / `agent.share`），控制台审计可
-回看：哪个令牌、哪台主机、执行了什么。令牌越权（scope 不满足）另记
+回看：哪个令牌、哪台主机、执行了什么。`agent.exec` / `agent.sftp.*` 的
+detail 带 `[令牌名]` 前缀，`agent.task.*` / `agent.upload` 的 target 即
+令牌名；联邦来源统一记为 `联邦:<来源>`（见上一节），便于事后追责。
+令牌越权（scope 不满足）另记
 `agent.scope`（result=deny，含令牌名与所需 scope）。
 
 ## 已知边界

@@ -18,8 +18,8 @@ import stat as statMod
 
 from flask import jsonify, request
 
-from modules import events
-from modules.agent_api import _agentRequired, _resolveHost, blueprint
+from modules.agent_api import (auditAgentAction, _agentRequired, _resolveHost,
+                               blueprint)
 from modules.fsutil import decodeBase64 as _decodeB64
 from modules.ssh_sftp import _openSftp
 
@@ -144,10 +144,10 @@ def agentSftpList():
         entries = [_entryFor(sftp, path, attr) for attr in sftp.listdir_attr(path)]
     except IOError as e:
         status, msg = _mapSftpError(e)
-        events.log('agent.sftp.list', raw, 'fail', msg[:160], request.remote_addr)
+        auditAgentAction(agent, 'agent.sftp.list', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
-    events.log('agent.sftp.list', path, 'ok', '%d items' % len(entries),
-               request.remote_addr)
+    auditAgentAction(agent, 'agent.sftp.list', path, 'ok',
+                     '%d items' % len(entries))
     return jsonify({'path': path, 'entries': entries})
 
 
@@ -210,10 +210,10 @@ def agentSftpGet():
             chunk = f.read(min(length or MAX_FILE_BYTES, MAX_FILE_BYTES))
     except IOError as e:
         status, msg = _mapSftpError(e)
-        events.log('agent.sftp.get', raw, 'fail', msg[:160], request.remote_addr)
+        auditAgentAction(agent, 'agent.sftp.get', raw, 'fail', msg[:160])
         return jsonify({'error': msg}), status
-    events.log('agent.sftp.get', path, 'ok', '%d+%d bytes' % (offset, len(chunk)),
-               request.remote_addr)
+    auditAgentAction(agent, 'agent.sftp.get', path, 'ok',
+                     '%d+%d bytes' % (offset, len(chunk)))
     return jsonify({'ok': True, 'path': path, 'size': len(chunk), 'total': total,
                     'offset': offset,
                     'contentB64': base64.b64encode(chunk).decode('ascii')})
@@ -257,8 +257,8 @@ def agentSftpPut():
     except IOError:
         # R5-3：父目录缺失 → 干净的 404（不暴露临时文件名），mkdirs 可自动创建
         if not bool(data.get('mkdirs')):
-            events.log('agent.sftp.put', path, 'fail', '父目录不存在',
-                       request.remote_addr)
+            auditAgentAction(agent, 'agent.sftp.put', path, 'fail',
+                             '父目录不存在')
             return jsonify({'error': '父目录不存在：%s' % parent,
                             'hint': '加 mkdirs:true 自动创建'}), 404
         _sftpMakedirs(sftp, parent)
@@ -292,9 +292,9 @@ def agentSftpPut():
                 pass
     except IOError as e:
         status, msg = _mapSftpError(e)
-        events.log('agent.sftp.put', path, 'fail', msg[:160], request.remote_addr)
+        auditAgentAction(agent, 'agent.sftp.put', path, 'fail', msg[:160])
         return jsonify({'error': msg}), status
     digest = hashlib.sha256(raw).hexdigest()
-    events.log('agent.sftp.put', path, 'ok', '%d bytes' % len(raw),
-               request.remote_addr)
+    auditAgentAction(agent, 'agent.sftp.put', path, 'ok',
+                     '%d bytes' % len(raw))
     return jsonify({'ok': True, 'path': path, 'size': len(raw), 'sha256': digest})

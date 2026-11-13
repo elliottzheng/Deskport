@@ -132,6 +132,10 @@ def register(app):
         # 联邦模式: 门面 Deskport 持有本机 token, header 认证免疫 CSRF
         fedToken = config.getFederationToken()
         if fedToken and request.headers.get('X-Deskport-Token') == fedToken:
+            # 联邦身份同样进审计留痕（批次 FD）: /api/tasks*、/api/worklines*
+            # 的 owner 与 agent.task.* 审计记「联邦:<来源>」而非「面板」
+            from modules.agent_api import federationTokenName
+            g.agentTokenName = federationTokenName()
             return None
         if isAuthenticated():
             return None
