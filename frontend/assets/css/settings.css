@@ -49,3 +49,16 @@
 .fed-remote .input { margin-bottom: var(--sp-2); font-size: 13px; }
 .fed-check { display: flex; align-items: center; gap: 8px; margin-bottom: var(--sp-2); font-size: 13px; color: var(--text-1); cursor: pointer; }
 .fed-check input { width: 15px; height: 15px; accent-color: var(--accent, #4a7dff); }
+
+/* 联邦写: 远端卡片上的只读/可写标识 + 成员端可写目录的空列表提示 */
+.fed-remote-actions { display: flex; align-items: center; gap: var(--sp-2); }
+.fed-mode {
+    font-size: 12px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: var(--bg-2); color: var(--text-3);
+}
+.fed-mode-write { color: var(--ok); font-weight: 600; }
+.fed-check-off { color: var(--text-3); }
+.settings-warn {
+    margin-top: var(--sp-2); padding: 10px 12px; border-radius: var(--radius-s);
+    background: var(--bg-2); border-left: 3px solid var(--warn); color: var(--text-2);
+}

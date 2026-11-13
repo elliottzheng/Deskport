@@ -15,6 +15,45 @@
 （未开文件浏览的机器连写请求也不会转发）。成员端根白名单只约束写操作，
 只读浏览保持现状。
 
+### 1.1 怎么打开（两边都要配）
+
+联邦写**两边都要配**才成立：中枢开「转发写」、成员开「允许落到哪」。只配一边
+仍然是只读，缺哪边就在哪边 403。
+
+中枢（A，想写别人）：
+
+1. 设置页 →「多机联邦」→ 远端卡片先勾「允许浏览它的文件」(`files`)，再勾
+   「允许写它的文件」(`filesWrite`)，保存；
+2. 卡片右上角徽标会显示 `只读` / `可写`（未开 `files` 时是 `未接文件`）；
+   取消「允许写」并保存，下一个写请求立刻退回只读。
+
+成员（B，被别人写）：
+
+1. 设置页 →「联邦可写目录」→ 添加目录（如 `E:\共享\给中枢`）→ 保存；
+2. 列表非空且落点在列表内 → 写请求放行；**清空列表 → 立刻恢复「联邦写一律
+   拒绝」**，页面在该状态下有橙色提示，不是配置出错；
+3. 只读浏览不看这个列表（那由中枢的 `files` 控制）。
+
+等价 API（都立即生效，无需重启）：
+
+```bash
+# 成员端：设置可写目录（全量替换；[] = 联邦写一律拒绝）
+curl -s -b cookie.txt -H 'Content-Type: application/json' \
+  -d '{"roots":["E:\\共享\\给中枢"]}' \
+  http://B:6789/api/settings/federation/roots
+
+# 成员端：读取当前生效值（归一化后的真实路径）
+curl -s -b cookie.txt http://B:6789/api/settings/federation | jq .roots
+
+# 中枢端：给某远端开写（remotes 是全量替换，原有字段要一起带上）
+curl -s -b cookie.txt -H 'Content-Type: application/json' \
+  -d '{"remotes":[{"id":"b","name":"B 机","base":"http://B:6789","token":"<对方联邦令牌>","files":true,"filesWrite":true}]}' \
+  http://A:6789/api/settings/federation/remotes
+```
+
+非法根（相对路径 / `..` / 盘符相对 `C:foo` / 设备路径 `\\.\...`）→ 400，响应
+`error` 里指出是「第 N 项」，且**原有列表不变**；超过 20 个目录同样 400。
+
 ## 2. 在线编辑的乐观锁（本机与联邦同一套）
 
 `POST /api/files/read` 现在返回：
@@ -133,9 +172,11 @@
 ```powershell
 python -m pytest -q tests/test_files_write_lock.py tests/test_federation_roots.py `
   tests/test_files_upload.py tests/test_files_federation.py `
-  tests/test_agent_sftp_write.py tests/test_settings_federation.py
+  tests/test_agent_sftp_write.py tests/test_settings_federation.py `
+  tests/test_settings_federation_roots.py
 ```
 
 覆盖：空根 403、根内放行、根外 / `..` / 软链 / UNC / 长路径、版本冲突 409
 且内容不变、联邦 `force` 403、永久 delete 永不生效、上传中断无 `.part`、
-同名 `(2)` 且原文件不变、单跳不二次转发、上传上限中枢先拒。
+同名 `(2)` 且原文件不变、单跳不二次转发、上传上限中枢先拒；设置页接口侧另加
+「加目录即时生效 / 清空即时拒绝 / 非法项 400 且不写入 / 上限 20」。

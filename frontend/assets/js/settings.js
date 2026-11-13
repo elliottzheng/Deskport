@@ -28,6 +28,11 @@ createApp({
             fedError: '',
             fedOk: '',
             fedBusy: false,
+            fedRoots: [],
+            newFedRoot: '',
+            rootsError: '',
+            rootsOk: '',
+            rootsBusy: false,
             devices: [],
             deviceError: '',
             deviceOk: '',
@@ -144,6 +149,7 @@ createApp({
             return { id: x.id, name: x.name, base: x.base, token: x.token || '',
                      terminal: x.terminal !== false,
                      files: x.files === true,
+                     filesWrite: x.filesWrite === true,
                      appsText: (x.apps || []).join(', ') };
         },
         async loadFederation() {
@@ -153,6 +159,7 @@ createApp({
                 if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                 this.fedToken = data.token || '';
                 this.fedRemotes = (data.remotes || []).map(x => this.toRemoteRow(x));
+                this.fedRoots = data.roots || [];
                 const seen = {};
                 (data.discoveredApps || []).forEach(function (a) {
                     const key = a.remoteId;
@@ -209,7 +216,16 @@ createApp({
                 return b.toString(36).padStart(2, '0');
             }).join('').slice(0, 6);
             this.fedRemotes.push({ id: id, name: '', base: '', token: '',
-                                   terminal: true, files: false, appsText: '' });
+                                   terminal: true, files: false, filesWrite: false,
+                                   appsText: '' });
+        },
+        remoteMode(r) {
+            // 未开文件浏览 = 未接文件；开了浏览才分只读/可写
+            if (!r.files) { return '未接文件'; }
+            return r.filesWrite ? '可写' : '只读';
+        },
+        syncFiles(r) {
+            if (!r.files) { r.filesWrite = false; }
         },
         async saveRemotes() {
             if (this.fedBusy) { return; }
@@ -221,7 +237,8 @@ createApp({
             const payload = this.fedRemotes.map(function (r) {
                 const apps = (r.appsText || '').split(/[,，\s]+/).filter(Boolean);
                 return { id: r.id, name: r.name, base: r.base, token: r.token || '',
-                         terminal: r.terminal !== false, files: r.files === true, apps: apps };
+                         terminal: r.terminal !== false, files: r.files === true,
+                         filesWrite: r.files === true && r.filesWrite === true, apps: apps };
             });
             this.fedBusy = true;
             try {
@@ -239,6 +256,39 @@ createApp({
                 this.fedError = err.message;
             } finally {
                 this.fedBusy = false;
+            }
+        },
+        addFedRoot() {
+            const path = this.newFedRoot.trim();
+            if (!path) { return; }
+            if (!this.fedRoots.includes(path)) { this.fedRoots.push(path); }
+            this.newFedRoot = '';
+        },
+        removeFedRoot(index) {
+            this.fedRoots.splice(index, 1);
+        },
+        async saveRoots() {
+            if (this.rootsBusy) { return; }
+            this.rootsError = '';
+            this.rootsOk = '';
+            this.rootsBusy = true;
+            try {
+                const r = await fetch('/api/settings/federation/roots', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roots: this.fedRoots }),
+                });
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                this.fedRoots = data.roots || [];
+                this.rootsOk = this.fedRoots.length
+                    ? ('已保存 ' + this.fedRoots.length + ' 个可写目录，立即生效（无需重启）')
+                    : '已清空：联邦写现在一律拒绝';
+                setTimeout(() => { this.rootsOk = ''; }, 3000);
+            } catch (err) {
+                this.rootsError = err.message;
+            } finally {
+                this.rootsBusy = false;
             }
         },
         async loadDevices() {

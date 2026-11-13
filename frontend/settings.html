@@ -140,10 +140,14 @@
         </button>
 
         <div class="settings-subhead">远端机器</div>
-        <div class="fed-remote" v-for="(r, i) in fedRemotes" :key="r.id">
+        <div class="fed-remote" v-for="(r, i) in fedRemotes" :key="r.id" :id="'fed-remote-' + r.id">
             <div class="fed-remote-head">
                 <span class="fed-remote-idx">{{ i + 1 }} · {{ r.id }}</span>
-                <button type="button" class="btn btn-ghost" @click="fedRemotes.splice(i, 1)">删除</button>
+                <span class="fed-remote-actions">
+                    <span class="fed-mode" :id="'fed-remote-' + r.id + '-mode'"
+                          :class="!r.files ? 'fed-mode-none' : (r.filesWrite ? 'fed-mode-write' : 'fed-mode-read')">{{ remoteMode(r) }}</span>
+                    <button type="button" class="btn btn-ghost" @click="fedRemotes.splice(i, 1)">删除</button>
+                </span>
             </div>
             <input class="input" v-model.trim="r.name" placeholder="名称，如 B 机" maxlength="24" spellcheck="false">
             <input class="input" v-model.trim="r.base" placeholder="地址，如 http://10.126.126.3:6789" spellcheck="false">
@@ -152,8 +156,14 @@
                 <input type="checkbox" v-model="r.terminal"> 接受它的终端会话
             </label>
             <label class="fed-check">
-                <input type="checkbox" v-model="r.files"> 允许浏览它的文件（只读）
+                <input type="checkbox" v-model="r.files" @change="syncFiles(r)"> 允许浏览它的文件
             </label>
+            <label class="fed-check" :class="{ 'fed-check-off': !r.files }">
+                <input type="checkbox" v-model="r.filesWrite" :disabled="!r.files"
+                       :id="'fed-remote-' + r.id + '-write'"> 允许写它的文件（改 / 传 / 移入回收站）
+            </label>
+            <p class="settings-hint" v-if="r.files && r.filesWrite">可写：写请求会转发到那台机器，还要它在自己的「联邦可写目录」里放行落点，否则 403。关闭后立刻退回只读。</p>
+            <p class="settings-hint" v-else-if="r.files">只读：可以浏览、下载它的文件，写请求不转发。</p>
             <label class="field-label">接受它的外部应用（逗号分隔应用 id，<code>*</code> = 全部，留空 = 不接）</label>
             <input class="input" v-model.trim="r.appsText" placeholder="如 yuanchuang；多个用逗号隔开" spellcheck="false">
             <p class="settings-hint" v-if="fedDiscovered[r.id] && fedDiscovered[r.id].length">
@@ -166,6 +176,33 @@
         <p v-if="fedOk" class="settings-ok">{{ fedOk }}</p>
         <button class="btn btn-primary settings-submit" @click="saveRemotes" :disabled="fedBusy">
             {{ fedBusy ? '保存中…' : '保存远端列表' }}
+        </button>
+    </div>
+
+    <div class="card settings-card" id="fed-roots-card">
+        <div class="card-title">联邦可写目录</div>
+        <p class="settings-note">本机作为成员时，别的电脑通过「多机联邦」写本机文件，落点必须真实落在这里的某个目录内（先归一化再比较，软链与 <code>..</code> 逃逸都算越界）。<strong>空列表 = 当前联邦写一律拒绝</strong>；只读浏览不受这里限制。保存后立即生效，无需重启。</p>
+
+        <div class="settings-dir" v-for="(p, i) in fedRoots" :key="p">
+            <code>{{ prettyPath(p) }}</code>
+            <button type="button" class="btn btn-ghost settings-dir-remove" @click="removeFedRoot(i)">移除</button>
+        </div>
+
+        <p class="settings-hint settings-warn" id="fed-roots-empty" v-if="!fedRoots.length">
+            当前可写目录为空：联邦写一律拒绝——任何远端对本机的写请求都会 403（这不是配错了）。要允许写，请添加目录并保存。
+        </p>
+        <p class="settings-hint" id="fed-roots-count" v-else>已配置 {{ fedRoots.length }} 个可写目录；目录之外的写请求一律 403。</p>
+
+        <div class="settings-dir-add">
+            <input class="input" id="fed-root-input" v-model.trim="newFedRoot"
+                   placeholder="如 E:\共享\给中枢" @keyup.enter="addFedRoot" spellcheck="false">
+            <button type="button" class="btn btn-secondary" @click="addFedRoot">添加</button>
+        </div>
+
+        <p v-if="rootsError" class="load-error" style="margin-top:12px">{{ rootsError }}</p>
+        <p v-if="rootsOk" class="settings-ok">{{ rootsOk }}</p>
+        <button class="btn btn-primary settings-submit" id="fed-roots-save" @click="saveRoots" :disabled="rootsBusy">
+            {{ rootsBusy ? '保存中…' : '保存可写目录' }}
         </button>
     </div>
 

@@ -7,7 +7,7 @@ import secrets
 from flask import Blueprint, jsonify, request
 
 import config
-from modules import device_auth, events, federation
+from modules import device_auth, events, federation, federation_write
 
 blueprint = Blueprint('settings', __name__)
 
@@ -83,6 +83,9 @@ def federationSettings():
              'label': a.get('label') or '', 'prefix': a.get('prefix') or ''}
             for a in federation.discoveredExternalApps()
         ],
+        # 成员端写根白名单: 归一化后的生效值 (空 = 联邦写一律拒绝)
+        'roots': federation_write.roots(),
+        'maxRoots': federation_write.MAX_ROOTS,
     })
 
 
@@ -143,6 +146,33 @@ def setRemotes():
     config.setRemotes(cleaned)
     return jsonify({'ok': True, 'remotes': cleaned,
                     'machines': federation.machineOptions()})
+
+
+@blueprint.route('/api/settings/federation/roots', methods=['POST'])
+def setFederationRoots():
+    """成员端写根白名单：全量替换，逐项 normalizePath 校验（非法 400 且不落盘）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    raw = data.get('roots')
+    if not isinstance(raw, list):
+        return jsonify({'error': 'roots 必须是数组'}), 400
+    if len(raw) > federation_write.MAX_ROOTS:
+        return jsonify({'error': '最多 %d 个目录' % federation_write.MAX_ROOTS}), 400
+    cleaned = []
+    for idx, item in enumerate(raw, 1):
+        if not isinstance(item, str) or not item.strip():
+            return jsonify({'error': '第 %d 项不是非空字符串' % idx}), 400
+        root = federation_write.normalizePath(item)
+        if not root:
+            return jsonify({'error': '第 %d 项不是合法的绝对路径（相对路径 / .. / '
+                                     '盘符相对 / 设备路径一律拒绝）: %s'
+                                     % (idx, item.strip()[:200])}), 400
+        if root not in cleaned:
+            cleaned.append(root)
+    config.setFederationRoots(cleaned)
+    events.log('settings.federationRoots', '', 'ok',
+               'roots=%d' % len(cleaned), request.remote_addr)
+    return jsonify({'ok': True, 'roots': federation_write.roots(),
+                    'maxRoots': federation_write.MAX_ROOTS})
 
 
 # ---------------------------------------------------------------- 登录设备

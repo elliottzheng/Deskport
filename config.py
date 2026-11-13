@@ -449,6 +449,13 @@ def setRemotes(remotes):
     _save(cfg)
 
 
+def setFederationRoots(roots):
+    r"""写回成员端写根白名单; 空列表 = 联邦写一律拒绝（不是"不校验"）。"""
+    cfg = load()
+    cfg['federationRoots'] = list(roots)
+    _save(cfg)
+
+
 def stateDir():
     r"""SSH 运行时状态目录: %APPDATA%\<stateDirName> (自动创建; 名字取自 config.json)"""
     base = os.environ.get('APPDATA') or os.path.expanduser('~')
