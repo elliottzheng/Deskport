@@ -12,14 +12,24 @@
 
 ## 签发令牌
 
-1. 生成随机令牌并计算哈希：
+在设置页「智能体令牌」卡片里签发：填名称、选权限档位，提交后**明文只显示
+一次**（服务端只存 SHA-256，任何接口都不再回显），列出与吊销也在同一张
+卡片。写完即热生效，无需重启。
 
-```bash
-TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
-python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()).hexdigest())"
+```text
+GET    /api/settings/agent-tokens        # 列表（无哈希、无明文）
+POST   /api/settings/agent-tokens        {name, scopes?} → {id, token, name, scopes}
+DELETE /api/settings/agent-tokens/<id>   # 吊销
 ```
 
-2. 把 `tokenHash` 写进 `config.json`（令牌明文自己保存，仓库与日志里都不落）：
+- 三档权限：省略 `scopes` = 全权；`["upload","share"]` = 上传与派活；`["share"]` = 仅派活；其它组合 400；
+- 名称 1-24 字符、不可重名；上限 10 条；
+- **不能吊销最后一条全权令牌**（否则可能把自己锁在门外）→ 400；
+- 吊销即时生效：持该令牌的程序下一个请求就 401。
+
+仍可手改 `config.json` 的 `agentTokens[]`（先生成随机串、再算 SHA-256、再粘
+进 JSON，字段与旧版一致）——但手滑一次就全 401，且网页上看不到有哪些令牌、
+没法吊销，推荐走设置页：
 
 ```json
 "agentTokens": [
@@ -27,8 +37,6 @@ python -c "import hashlib; print('tokenHash =', hashlib.sha256('$TOKEN'.encode()
   { "id": "kimi",   "name": "Kimi Code", "tokenHash": "<SHA-256>" }
 ]
 ```
-
-3. 重启 Deskport 生效；撤销 = 删除对应条目再重启。
 
 **每个智能体单独签发一个令牌**：审计按令牌名留痕，混用一个令牌会让
 "谁干了什么"查不清（反馈 §8.1）。任务、会话对所有令牌可见——这是单用户
@@ -87,13 +95,14 @@ Content-Type: multipart/form-data
   `GET /api/agent/upload/targets`（scope=upload）→
   `{targets: [{id, name}], default: "phone"}`，登录响应的 `targets`
   同样只含 id+name；
-- **联邦成员也能调用这两个端点**（批次 E）：中枢把自己的 `remotes[]` 令牌
-  放进 `X-Deskport-Token`，成员端认这个身份只为「只上传到成员机的收件箱」
-  服务——`GET /api/agent/upload/targets` 回成员自己声明的 id/name（同样没有
-  path），`POST /api/agent/upload` 由成员把 target id 映射成目录。调用方
-  没有任何办法指定绝对路径，所以这条通道不额外要求 `federationRoots`；
-  审计 `agent.upload` 的 target 字段记为 `联邦:<来源>`。中枢侧的授权门
-  `upload_remote` 与页面行为见 [m-share.md](m-share.md)；
+- **联邦成员也能调用这两个端点**：中枢把自己的 `remotes[]` 令牌放进
+  `X-Deskport-Token`，成员端认这个身份——`GET /api/agent/upload/targets`
+  回成员自己声明的 id/name（同样没有 path），`POST /api/agent/upload` 由
+  成员把 target id 映射成目录，调用方没有任何办法指定绝对路径，所以这条
+  通道不额外要求 `federationRoots`；审计 `agent.upload` 的 target 字段记为
+  `联邦:<来源>`。注意：联邦令牌的权限是 `full`（见「认证与错误格式」），
+  这两个端点放行不再依赖什么上传专用身份——`upload` 只是被 `full` 覆盖。
+  中枢侧的授权门 `upload_remote` 与页面行为见 [m-share.md](m-share.md)；
 - `saved[].path` = 目标名/相对路径（如 `教研资料/11月/a.pdf`），不暴露
   服务器上的绝对路径；
 - 目标目录自动创建；phone 目标的目录自动并入 `inboxDirs`，上传即出现
@@ -223,10 +232,23 @@ POST /api/agent/device/logout   （X-Agent-Token: 设备令牌自吊销）
 
 - 每次请求带 `X-Agent-Token: <令牌>` 或 `Authorization: Bearer <令牌>`；
   未带/不匹配 → `401 {"error": ...}`（JSON）。
+- **联邦令牌（`X-Deskport-Token`）同样可作为智能体令牌使用**：请求头
+  `X-Deskport-Token` 命中本机 `config.json` 的 `federationToken` 时，
+  `/api/agent/*` 与 `/api/tasks*` 按 `full` 权限放行（`need=upload` 之类
+  的受限端点同样放行——它拿到的就是全权），审计记为 `联邦:<来源>`
+  （`<来源>` = 中枢自报的 `X-Deskport-From`，缺省为来源 IP）。命中顺序：
+  内置 `agentTokens` → 设备令牌 → 联邦令牌；**内置令牌优先**——同一个值
+  同时配成两种令牌时，身份以内置令牌留痕，不会出现"联邦来源"的歧义命名。
 - `/api/*` 的所有错误都是 JSON：404/405/500 含 `error`/`code`，500 另有
   `requestId`（服务端日志可按 requestId 查 traceback）。未知 API 路径由
   认证守卫统一 401 JSON，不暴露端点存在性。
 - 浏览器 Cookie 登录态同样放行（面板 UI 复用同一组端点）。
+
+> **警告**：联邦令牌因此等同于"在那台机器上执行任意命令"的完整控制权
+> （exec / sftp / 会话 / 建任务全开）。请只把它发给自己的 Deskport 实例，
+> 并像保管本机密码一样保管它；泄露 = 换令牌（设置页 → 多机联邦 → 本机
+> 联邦令牌，留空即关闭联邦）。公开手册 `/api/agent/handbook` 不包含、
+> 也不应泄露联邦令牌。
 
 ## 主机：本机与 SSH 全等价
 
@@ -335,7 +357,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
-| GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`modelStatus`/`usableModels` |
+| GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`os`/`shells`/`defaultCwd`/`modelStatus`/`usableModels` |
 | POST | /api/tasks/nodes/<node>/probe | 手动触发模型可用性探测 `{models?: [...]}`（缺省=全部声明模型），立即入队后台探测 |
 | POST | /api/tasks/files | 上传文件 → 返回本机路径（塞进 paths 用） |
 | GET | /api/tasks/kimi-sessions?cwd= | 已存在的 Kimi CLI 会话（接手候选，按最近更新排序） |
@@ -354,11 +376,30 @@ DELETE /api/agent/ssh/sessions/<sid>
   （agent node 或联邦成员，不存在 → 400 并附 `nodes` 提示）；
 - `cwd`（执行目录，缺省 = Deskport 分配的任务目录）：本机必须是绝对路径、
   存在、是目录且在 `config.workDirs` / `fallbackDir` 之下；非本机是该机器
-  上已存在的目录（必填，由对端校验）。网页任务表单（`/app?view=tasks`）在
-  执行点选「本机」时也有「工作目录」输入框，留空即任务目录（此时请求不带
-  `cwd` 键）；输入框的占位符与候选取自 `GET /api/ai/config` 的 `workDirs`，
-  提示里列出这些根目录。两者的细节见下节；
+  上已存在的目录（必填，由对端校验）。**非本机还要过平台语法关**（见下条）。
+  网页任务表单（`/app?view=tasks`）在执行点选「本机」时也有「工作目录」输入框，
+  留空即任务目录（此时请求不带 `cwd` 键）；输入框的占位符与候选取自
+  `GET /api/ai/config` 的 `workDirs`，提示里列出这些根目录。两者的细节见下节；
+- **cwd 的平台语法（批次 NODE-OS）**：派活前按执行点自报的 `os` 校验 cwd
+  语法——`os == "windows"` 时 cwd 必须是盘符绝对路径（`C:\work`）或 UNC
+  （`\\server\share\work`）；`os` 为 `linux` / `darwin` 时必须以 `/` 开头；
+  `os` 为空（老 node / 老成员没上报平台）**不校验**，保持向后兼容。只查
+  语法不查存在性（目录在不在由执行点自己答，hub 探不到对端的盘）；不匹配
+  → **400**，文案指明执行点、平台与示例（如「执行点 i7-4710MQ 是 windows，
+  cwd 必须是盘符路径（如 C:\work）或 UNC（如 \\server\share\work），你给的
+  是 /tmp」）。本机执行点不走这条，仍走 `task_cwd.resolve`（存在性 + 越界）；
 - 历史字段 `engine`（早期版本选执行引擎的入参）已移除：传了直接 **400**，不会被忽略或映射；
+- **执行点平台（`GET /api/tasks/nodes`，批次 NODE-OS）**：每项带
+  `os`（`"windows"` / `"linux"` / `"darwin"`；agent node 由节点 `/health`
+  自报、联邦成员取它自己 `/api/tasks/nodes` 的 local 条目、本机取本机声明；
+  取不到 = `""` 未知）、`shells`（该平台可用 shell，第一项为默认；如本机
+  Windows `["bash","powershell","pwsh"]`、Linux `["bash","sh"]`）、
+  `defaultCwd`（可选，该节点的建议目录，拿不到就不给；UI 占位符用）。
+  `os` 只是**声明**，不据此放宽任何权限——用途有三：派活前校验 cwd
+  平台语法、往该点投附件时按目标 OS 选路径分隔符（hub 是 Windows、
+  成员是 Linux 时不再拼出 `/home/me/project\.deskport-inputs\<id>`）、
+  前端 cwd 占位符跟着变。网页任务页与 `/m/share` 的远端 cwd 占位符
+  即按它切换；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；
 - `model`（可选）：给执行点选模型（§7）。`GET /api/tasks/nodes` 里每个执行点
@@ -620,7 +661,10 @@ GET /api/agent/skill.zip        → 整包 zip：deskport/{SKILL.md, deskport.py
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.*` / `agent.session.*` /
 `agent.task.create` / `agent.task.upload` / `agent.upload` / `agent.share`），控制台审计可
-回看：哪个令牌、哪台主机、执行了什么。令牌越权（scope 不满足）另记
+回看：哪个令牌、哪台主机、执行了什么。`agent.exec` / `agent.sftp.*` 的
+detail 带 `[令牌名]` 前缀，`agent.task.*` / `agent.upload` 的 target 即
+令牌名；联邦来源统一记为 `联邦:<来源>`（见上一节），便于事后追责。
+令牌越权（scope 不满足）另记
 `agent.scope`（result=deny，含令牌名与所需 scope）。
 
 ## 已知边界

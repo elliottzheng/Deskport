@@ -132,6 +132,17 @@ for module in BLUEPRINT_MODULES:
 | `/api/*`（含插件与外部应用 API） | 返回 JSON `{"error": "unauthorized"}` + 401 |
 | 其余（页面） | 302 重定向到 `/login?next=<原路径含查询串>` |
 
+联邦令牌的权限落地（2026-11-13 批次 FD）：`X-Deskport-Token` 命中
+`federationToken` 时，除守卫直接放行外，还经 `agent_api.agentFromRequest()`
+按 `full` 进入智能体令牌通道——即**在那台机器上执行任意命令**（exec /
+sftp / 会话 / 建任务全开），这正是"联邦令牌 = 本机 API 完整控制权"这句话
+的可执行含义。合成身份 `{'id': 'federation', 'kind': 'federation',
+'scopes': ['full'], 'name': '联邦:<来源>'}`，命中顺序为内置 `agentTokens`
+→ 设备令牌 → 联邦令牌（内置优先，同值双配不歧义）；`federationToken`
+留空即关闭联邦，该通道恒不命中。审计：`agent.exec` / `agent.sftp.*` 的
+detail 带 `[联邦:<来源>]` 前缀，`agent.task.*` 的 target 即
+`联邦:<来源>`。**这把钥匙能执行任意命令，请只发给自己的 Deskport 实例。**
+
 登录实现要点（`auth.py`）：
 
 - 密码比对用 `hmac.compare_digest`，防时序侧信道；密码来自 `config.getPassword()`。

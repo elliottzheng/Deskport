@@ -22,7 +22,7 @@ import os
 import posixpath
 import re
 
-from modules import events, fsutil
+from modules import events, fsutil, node_path
 from modules.task_inputs_base import (INPUTS_DIR, MAX_FILE_MB, MAX_FILES,
                                       MAX_TOTAL_MB, DeliverError, safeName)
 from modules.task_inputs_fed import FedTarget
@@ -63,10 +63,22 @@ def _route(node):
     return 'ssh', entry
 
 
+def _pathModule(kind, node):
+    """目标机器的 path 模块（批次 NODE-OS）：按执行点自报 os 选分隔符。
+
+    hub 是 Windows、成员是 Linux 时拿本机 os.path 拼会把
+    /home/me/project 拼成 /home/me/project\\.deskport-inputs\\<taskId>。
+    os 未知（老 node / 老成员）时保持原行为：ssh 通道一直是 posix，
+    联邦通道继续用本机模块。
+    """
+    fallback = posixpath if kind == 'ssh' else os.path
+    return node_path.pathModule(node_path.nodeOs(node), fallback)
+
+
 def dirFor(node, cwd, taskId):
     """远端输入目录（投递前预检 prompt 长度也要用）。"""
     kind, _entry = _route(node)
-    join = posixpath.join if kind == 'ssh' else os.path.join
+    join = _pathModule(kind, node).join
     return join(str(cwd or '').strip(), INPUTS_DIR, str(taskId or '').strip())
 
 

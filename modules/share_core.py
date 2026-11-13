@@ -255,15 +255,17 @@ def _createShare(opts, files, folder, paths, folderName, detail):
 
 def nodesPayload():
     """执行点列表：本机 + agent node + 联邦成员（附件由服务端投递过去）。"""
-    from modules import agent_nodes
+    from modules import agent_nodes, node_path
     models, defaultModel = agent_nodes.nodeModelsFor('local')
     nodes = [{'name': 'local', 'label': '本机', 'status': 'online',
-              'models': list(models or []), 'defaultModel': defaultModel or ''}]
+              'models': list(models or []), 'defaultModel': defaultModel or '',
+              'os': node_path.nodeOs('local')}]
     for item in list(config.getAgentNodes()) + list(config.getRemotes()):
         models, defaultModel = agent_nodes.nodeModelsFor(item['name'], item)
         nodes.append({'name': item['name'], 'label': item['name'],
                       'status': 'unknown', 'models': list(models or []),
-                      'defaultModel': defaultModel or ''})
+                      'defaultModel': defaultModel or '',
+                      'os': node_path.nodeOs(item['name'])})
     return {'nodes': nodes, 'default': 'local'}
 
 

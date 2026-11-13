@@ -123,10 +123,13 @@ def setPassword(newPassword):
 
 def getAgentTokens():
     r"""智能体 API 令牌列表; 每项 {id, name, tokenHash(SHA-256), ...}。缺省空。"""
-    tokens = load().get('agentTokens')
-    if not isinstance(tokens, list):
-        return []
-    return [t for t in tokens if isinstance(t, dict)]
+    return [t for t in load().get('agentTokens') or [] if isinstance(t, dict)]
+
+
+def setAgentTokens(tokens):
+    cfg = load()
+    cfg['agentTokens'] = list(tokens)
+    _save(cfg)
 
 
 def getBrandName():

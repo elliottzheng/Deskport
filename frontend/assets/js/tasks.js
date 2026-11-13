@@ -47,6 +47,11 @@
             remoteNodes() {
                 return this.nodes.filter((n) => n.kind !== 'local');
             },
+            // 远端 cwd 占位符跟着所选执行点的平台变（批次 NODE-OS）
+            remoteCwdPlaceholder() {
+                const node = this.nodes.find((n) => n.name === this.runWhere);
+                return '远端工作目录，如 ' + WPCommon.cwdExample(node);
+            },
             isRunning() {
                 return !!this.detail && ['queued', 'running'].indexOf(this.detail.status) >= 0;
             },

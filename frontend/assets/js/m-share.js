@@ -94,6 +94,7 @@
                 opt.textContent = node.label || node.name;
                 opt.setAttribute('data-models', JSON.stringify(node.models || []));
                 opt.setAttribute('data-default', node.defaultModel || '');
+                opt.setAttribute('data-os', node.os || '');
                 select.appendChild(opt);
             });
             select.value = data.default || 'local';
@@ -104,7 +105,8 @@
         });
     }
 
-    // 执行点换人：远端要 cwd，有模型清单才显示模型选择
+    // 执行点换人：远端要 cwd，有模型清单才显示模型选择；
+    // cwd 占位符跟着执行点平台变（windows → C:\work，linux → /home/me/project）
     function syncNode() {
         var select = byId('share-node');
         var opt = select.options[select.selectedIndex];
@@ -113,6 +115,7 @@
 
         var models = [];
         var def = '';
+        var node = null;
         if (opt) {
             try {
                 models = JSON.parse(opt.getAttribute('data-models') || '[]');
@@ -120,7 +123,9 @@
                 models = [];
             }
             def = opt.getAttribute('data-default') || '';
+            node = {os: opt.getAttribute('data-os') || ''};
         }
+        byId('share-cwd').placeholder = WPCommon.cwdExample(node);
         var modelSelect = byId('share-model');
         modelSelect.innerHTML = '';
         if (models.length) {

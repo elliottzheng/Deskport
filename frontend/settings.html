@@ -95,6 +95,51 @@
         <p v-if="deviceOk" class="settings-ok">{{ deviceOk }}</p>
     </div>
 
+    <div class="card settings-card" id="agent-tokens-card">
+        <div class="card-title">智能体令牌</div>
+        <p class="settings-note">给外部智能体（AI 程序）用的长效令牌：持令牌即可按权限档位执行命令、读写文件、建任务。明文只在新建成功时显示一次，之后这里只看得到名称与权限——丢了就吊销重发，服务端只存 SHA-256 哈希。</p>
+
+        <div class="agent-token-row" v-for="t in agentTokens" :key="t.id" :id="'agent-token-' + t.id">
+            <span class="agent-token-name">{{ t.name }}</span>
+            <span class="agent-token-scope" :class="{ 'agent-token-full': !t.scopes || !t.scopes.length }">{{ scopeText(t) }}</span>
+            <span class="agent-token-meta">签发 {{ t.createdAt || '-' }}</span>
+            <button type="button" class="btn btn-ghost settings-dir-remove" @click="revokeAgentToken(t)">吊销</button>
+        </div>
+        <p class="settings-hint" id="agent-tokens-empty" v-if="!agentTokens.length">还没有智能体令牌，点下面新建。</p>
+
+        <div class="settings-subhead">新建</div>
+        <input class="input" id="agent-token-name" v-model.trim="newTokenName"
+               placeholder="名称，如 Kimi Code（1-24 字符，不可重名）" maxlength="24" spellcheck="false">
+        <label class="field-label">权限</label>
+        <select class="select" id="agent-token-scope" v-model="newTokenScope">
+            <option value="">全权（可执行命令、读写文件、建任务）</option>
+            <option value="upload+share">上传与派活（投文件、建任务，不能执行命令）</option>
+            <option value="share">仅派活（只能建任务/投附件）</option>
+        </select>
+        <p class="settings-hint settings-warn" id="agent-token-scope-warn" v-if="!newTokenScope">
+            全权令牌等同于把这台机器的完整控制权交给持有者：它能执行任意命令、读写任意文件。请只签发给自己的程序，并妥善保管明文。
+        </p>
+
+        <p v-if="agentTokenError" class="load-error" style="margin-top:12px">{{ agentTokenError }}</p>
+        <button type="button" class="btn btn-primary settings-submit" id="agent-token-create"
+                @click="createAgentToken" :disabled="agentTokenBusy">
+            {{ agentTokenBusy ? '签发中…' : '签发令牌' }}
+        </button>
+
+        <div class="agent-token-plain settings-warn" id="agent-token-plain" v-if="plainToken">
+            <p class="agent-token-plain-title">新令牌「{{ plainToken.name }}」已签发，明文只显示这一次，关闭后不再显示：</p>
+            <div class="fed-token-row">
+                <input class="input" id="agent-token-plaintext" :value="plainToken.token" readonly
+                       spellcheck="false" autocomplete="off" @focus="$event.target.select()">
+                <button type="button" class="btn btn-secondary" id="agent-token-copy" @click="copyPlainToken">{{ plainCopied || '复制' }}</button>
+            </div>
+            <p class="settings-hint">服务端只保存了它的 SHA-256 哈希；泄露或遗失只能吊销重发，找不回来。</p>
+            <button type="button" class="btn btn-ghost settings-submit" id="agent-token-plain-close" @click="plainToken = null; plainCopied = ''">关闭，不再显示</button>
+        </div>
+
+        <p v-if="agentTokenOk" class="settings-ok">{{ agentTokenOk }}</p>
+    </div>
+
     <div class="card settings-card">
         <div class="card-title">上传目标</div>
         <p class="settings-note">手机 App 上传时可选的落盘位置。内置「手机上传」指向手机上传目录，不能删除；自定义目标只会把名称下发给 App，目录本身不出这台电脑。</p>

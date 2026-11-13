@@ -21,7 +21,7 @@ from modules import tasks_runner as runner
 from modules import task_state
 from modules import tasks_store as store
 from modules import worklines_store
-from modules import fsutil, staging, task_cwd, task_node
+from modules import fsutil, node_path, staging, task_cwd, task_node
 from modules import agent_nodes
 from modules import model_availability
 from modules import events
@@ -144,6 +144,12 @@ def createTaskResponse(data):
                             'hint': 'cwd 必须是执行点上已存在的目录（由执行点校验）'}), 400
         if len(remoteCwd) > 500:
             return ({'error': 'cwd 过长'}), 400
+        # 批次 NODE-OS：按执行点自报平台前置校验 cwd 语法——Windows 执行点
+        # 收到 /tmp 时 Popen(cwd=...) 抛的 FileNotFoundError 会被对端归成
+        # 「找不到 kimi 命令」，根因就在这；os 未知（老 node/老成员）不校验
+        cwdErr = node_path.cwdError(node, remoteCwd)
+        if cwdErr:
+            return ({'error': cwdErr}), 400
         # R5-1a：联邦执行点的首条消息受对端 4000 上限约束，接力棒无法保证
         # 到达；先明确拒绝，别让工作线悄悄丢棒（R5-1b 再补）
         if workline and agent_nodes.findFederationMember(node) is not None:

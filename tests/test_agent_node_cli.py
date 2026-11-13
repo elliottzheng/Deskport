@@ -3,6 +3,7 @@
 
 起真进程打 /health 与带令牌的受保护端点，保证优先级与认证行为端到端成立。
 """
+import json
 import os
 import socket
 import subprocess
@@ -68,6 +69,33 @@ def _waitReady(proc, port, timeout=10):
             pass
         time.sleep(0.15)
     raise RuntimeError('node 启动超时')
+
+
+def _httpJson(port, path, token=None):
+    req = urllib.request.Request('http://127.0.0.1:%d%s' % (port, path))
+    if token:
+        req.add_header('X-Agent-Token', token)
+    try:
+        with _opener.open(req, timeout=5) as r:
+            return r.status, json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+
+
+def test_health_reports_platform(tmp_path):
+    """批次 NODE-OS：/health 自报 os/shells/defaultCwd（hub 按它校验 cwd）。"""
+    from agent_node.node_platform import defaultCwd, nodeOs, nodeShells
+    port = _freePort()
+    proc = _launch([], tmp_path / 'data', port=port)
+    try:
+        _waitReady(proc, port)
+        status, body = _httpJson(port, '/health')
+        assert status == 200
+        assert body['os'] == nodeOs()
+        assert body['shells'] == nodeShells()
+        assert body['defaultCwd'] == defaultCwd()
+    finally:
+        _stop(proc)
 
 
 def test_token_file_works(tmp_path):

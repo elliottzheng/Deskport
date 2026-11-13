@@ -28,7 +28,8 @@ import zipfile
 from flask import Response, jsonify, request
 
 from modules import agent_handbook, meta
-from modules.agent_api import _agentRequired, _skillsDir, blueprint
+from modules.agent_api import _agentRequired, blueprint
+from modules.agent_skills import _skillsDir
 
 _SKILL_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
 _FILE_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}\.(md|py|json|txt)$')

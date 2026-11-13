@@ -5,6 +5,10 @@
     请求头 X-Agent-Token 或 Authorization: Bearer <token>，
     与 config.json agentTokens[].tokenHash（SHA-256）比对；未命中一律 401。
     浏览器 Cookie 登录态同样放行（供面板 UI 未来复用）。
+    联邦令牌（X-Deskport-Token 命中本机 federationToken）同样可作为智能体
+    令牌：scope 视作 full，审计记「联邦:<来源>」（批次 FD）。命中顺序:
+    内置 agentTokens → 设备令牌 → 联邦令牌——内置优先，同一值同时配成
+    两种令牌时身份以内置令牌留痕，不出现歧义命名。
     令牌 scope: agentTokens[].scopes 白名单；没写 = 全权（向后兼容）。
     现有端点要求 full，手机上传要求 upload，转发任务要求 share，
     往远端执行点投附件还要求 upload_remote（node=local 不需要）；
@@ -16,28 +20,32 @@
 
 配套路由（蓝图同源, 在 app.py 显式登记）:
     modules/agent_sftp.py          SFTP list/get/put（错误码、分块、原子写）
+    modules/agent_sftp_write.py    SFTP delete/mkdir/rename（跨机投递内部通道）
     modules/agent_sessions.py      持久会话（bash 常驻通道）
     modules/agent_local.py         Deskport 本机作为内置主机（全等价）
     modules/agent_upload.py        手机分享上传（scope=upload）
     modules/agent_share.py         手机转发文件交给执行方（scope=share）
+    modules/agent_skills.py        技能清单/原文分发（自举入口）
     modules/agent_skill_files.py   技能包附件（客户端/驱动/协作原则，同一套自举）
     modules/agent_handbook.py      公开接入手册 /api/agent/handbook（无需令牌）
     modules/agent_tools.py         公开工具箱 /api/agent/tools 与整包 /api/agent/skill.zip（无需令牌）
     modules/device_auth.py         设备登录（App 密码换 upload+share 设备令牌, 自吊销）
 
-审计: 每次调用写 events（agent.exec / agent.sftp.*）。
+审计: 每次调用写 events（agent.exec / agent.sftp.* / agent.task.*）；
+exec/sftp 的 detail 带 [令牌名] 前缀, task/upload 的 target 即令牌名,
+联邦来源一律记「联邦:<来源>」（federationTokenName）。
 安全: 插件安全模型同档——外部智能体 = 可信代码；危险命令审批是后续增强项。
 """
 import base64
 import hashlib
 import hmac
-import os
 import re
 import shlex
 import time
 
 import paramiko
 from flask import Blueprint, jsonify, request
+from urllib.parse import unquote
 
 import config
 from modules import events
@@ -90,11 +98,26 @@ def _tokenFromRequest():
         auth = request.headers.get('Authorization') or ''
         if auth.startswith('Bearer '):
             token = auth[7:].strip()
+    if not token:
+        # 联邦令牌通道（批次 FD）：中枢转发/直连都带这个头
+        token = (request.headers.get('X-Deskport-Token') or '').strip()
     return token
 
 
+def federationTokenName():
+    """联邦来源名（审计留痕用）: X-Deskport-From（中枢自报身份, 百分号
+    编码）优先，缺省回退来源 IP。"""
+    given = unquote(request.headers.get('X-Deskport-From') or '').strip()
+    return '联邦:' + (given or request.remote_addr or 'unknown')
+
+
 def agentFromRequest():
-    """返回命中的令牌条目；未命中返回 None。"""
+    """返回命中的令牌条目；未命中返回 None。
+
+    命中顺序（批次 FD）: 内置 agentTokens → 设备令牌 → 联邦令牌。
+    内置令牌优先: 同一值若同时配成 agentToken 与 federationToken,
+    身份以内置令牌的 name 留痕, 不会出现"联邦来源"的歧义命名。
+    """
     token = _tokenFromRequest()
     if not token:
         return None
@@ -106,7 +129,28 @@ def agentFromRequest():
     # 设备令牌（App 密码换发, kind='device', 固定 upload）独立存储在
     # devices.json, 经同一入口鉴权: upload 放行, full 端点照常 403。
     from modules import device_auth
-    return device_auth.agentFromDevices(digest)
+    agent = device_auth.agentFromDevices(digest)
+    if agent is not None:
+        return agent
+    # 联邦令牌（X-Deskport-Token 命中本机 federationToken）= 本机 API 的
+    # 完整控制权, 同样可作智能体令牌: 合成条目 kind='federation'、
+    # scopes=['full'], 审计记「联邦:<来源>」。federationToken 明文存
+    # config（setFederationToken 热改即时生效）, 只能常量比较; 留空
+    # （关闭联邦）时恒不命中。
+    fedToken = config.getFederationToken()
+    if fedToken and hmac.compare_digest(token, fedToken):
+        return {'id': 'federation', 'name': federationTokenName(),
+                'kind': 'federation', 'scopes': [SCOPE_FULL]}
+    return None
+
+
+def auditAgentAction(agent, action, target, result, detail):
+    """exec/sftp 审计: detail 前缀带令牌名（联邦来源记「联邦:<来源>」），
+    事后追责能看出请求经哪条令牌通道发起（批次 FD）。"""
+    name = str((agent or {}).get('name') or '').strip()
+    if name:
+        detail = '[%s] %s' % (name, detail)
+    events.log(action, target, result, detail, request.remote_addr)
 
 
 def _agentRequired(scope=SCOPE_FULL):
@@ -314,12 +358,12 @@ def agentExec():
     try:
         result = _execOnHost(hostEntry, command, timeoutSec, cwd)
     except paramiko.SSHException as e:
-        events.log('agent.exec', hostName, 'fail', command[:160], request.remote_addr)
+        auditAgentAction(agent, 'agent.exec', hostName, 'fail', command[:160])
         return jsonify({'error': 'SSH 执行失败: %s' % e}), 502
     durationMs = int((time.monotonic() - started) * 1000)
 
-    events.log('agent.exec', hostName,
-               result['reason'] or 'ok', command[:160], request.remote_addr)
+    auditAgentAction(agent, 'agent.exec', hostName,
+                     result['reason'] or 'ok', command[:160])
     body = {'exit': result['exit'],
             'timedOut': result['timedOut'], 'reason': result['reason'],
             'outTruncated': result['truncated'],
@@ -337,55 +381,6 @@ def agentExec():
 # ---------------------------------------------------------------- SFTP
 # SFTP list/get/put 在 modules/agent_sftp.py（同蓝图, app.py 显式登记）。
 
-
 # ---------------------------------------------------------------- 技能分发
-
-def _skillsDir():
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        '.agents', 'skills')
-
-
-@blueprint.route('/api/agent/skills')
-def agentSkillsList():
-    """可分发的技能清单（供外部智能体自举与检测更新）。"""
-    agent, err = _agentRequired()
-    if agent is None:
-        return err
-    root = _skillsDir()
-    skills = []
-    if os.path.isdir(root):
-        for name in sorted(os.listdir(root)):
-            skillFile = os.path.join(root, name, 'SKILL.md')
-            if os.path.isfile(skillFile):
-                try:
-                    stat = os.stat(skillFile)
-                except OSError:
-                    continue
-                folder = os.path.dirname(skillFile)
-                extras = sorted(f for f in os.listdir(folder)
-                                if f != 'SKILL.md' and os.path.isfile(os.path.join(folder, f)))
-                skills.append({'name': name, 'size': stat.st_size,
-                               'mtime': int(stat.st_mtime), 'files': extras,
-                               'pack': '/api/agent/skills/%s/pack.zip' % name})
-    return jsonify({'skills': skills})
-
-
-@blueprint.route('/api/agent/skills/<name>')
-def agentSkillGet(name):
-    """返回技能原文（text/markdown），供智能体拉取安装到本地技能目录。"""
-    agent, err = _agentRequired()
-    if agent is None:
-        return err
-    if not re.match(r'^[A-Za-z0-9_-]{1,40}$', name):
-        return jsonify({'error': '名称不合法'}), 400
-    skillFile = os.path.join(_skillsDir(), name, 'SKILL.md')
-    if not os.path.isfile(skillFile):
-        return jsonify({'error': '技能不存在', 'available':
-                        [s for s in os.listdir(_skillsDir())
-                         if os.path.isfile(os.path.join(_skillsDir(), s, 'SKILL.md'))]
-                        if os.path.isdir(_skillsDir()) else []}), 404
-    with open(skillFile, 'r', encoding='utf-8') as f:
-        body = f.read()
-    resp = jsonify({'name': name, 'content': body})
-    resp.headers['X-Skill-Name'] = name
-    return resp
+# 技能清单/原文在 modules/agent_skills.py, 整包与包内文件在
+# modules/agent_skill_files.py（同蓝图, app.py 显式登记）。

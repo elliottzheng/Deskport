@@ -25,9 +25,8 @@ import time
 
 from flask import jsonify, request
 
-from modules import events
-from modules.agent_api import MAX_OUTPUT_BYTES, _agentRequired, blueprint, \
-    parseTimeoutSec
+from modules.agent_api import MAX_OUTPUT_BYTES, _agentRequired, \
+    auditAgentAction, blueprint, parseTimeoutSec
 from modules.fsutil import decodeBase64 as _decodeB64
 from modules.fsutil import ensureParentDir
 from modules.agent_sftp import _mapSftpError
@@ -60,9 +59,9 @@ def isLocalHost(nameOrId):
 
 
 def _resolveShell(data):
-    """shell 参数校验：缺省 bash；不支持的返回 (None, 错误响应体)。"""
-    shells = ('bash', 'powershell', 'pwsh')
-    shell = str(data.get('shell') or 'bash').strip().lower()
+    """shell 参数校验：缺省取本机 shells 第一项（Windows = bash，不硬编码）。"""
+    shells = localHostEntry()['shells']
+    shell = str(data.get('shell') or shells[0]).strip().lower()
     if shell not in shells:
         return None, {'error': '本机不支持 shell: %s' % shell,
                       'shells': list(shells)}
@@ -436,8 +435,8 @@ def agentLocalExec():
         return jsonify(shellErr), 400
     result = execLocal(command, timeoutSec, cwd, shell)
     status = 'timeout' if result['timedOut'] else 'ok'
-    events.log('agent.exec', 'local(%s)' % shell, status, command[:160],
-               request.remote_addr)
+    auditAgentAction(agent, 'agent.exec', 'local(%s)' % shell, status,
+                     command[:160])
     body = {'exit': result['exit'], 'timedOut': result['timedOut'],
             'reason': result['reason'], 'outTruncated': result['truncated'],
             'durationMs': result['durationMs'], 'timeoutSec': timeoutSec,
@@ -460,7 +459,7 @@ def agentLocalSftpList():
     data = request.get_json(silent=True) or {}
     resp = sftpListLocal(data.get('path'))
     if resp[1] == 200:
-        events.log('agent.sftp.list', data.get('path'), 'ok', '', request.remote_addr)
+        auditAgentAction(agent, 'agent.sftp.list', data.get('path'), 'ok', '')
     return resp
 
 
@@ -487,5 +486,5 @@ def agentLocalSftpPut():
                         mkdirs=bool(data.get('mkdirs')))
     if isinstance(resp, tuple):   # 错误 = (jsonify, status)；成功 = 裸 Response
         return resp
-    events.log('agent.sftp.put', data.get('path'), 'ok', '', request.remote_addr)
+    auditAgentAction(agent, 'agent.sftp.put', data.get('path'), 'ok', '')
     return resp

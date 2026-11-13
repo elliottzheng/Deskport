@@ -162,10 +162,13 @@ def test_nodes_include_local_and_remote(env, monkeypatch):
     assert body['default'] == 'local'
     names = [n['name'] for n in body['nodes']]
     assert names == ['local', 'ai-xmyz', 'win4710']
+    # 批次 NODE-OS：每项带 os（本机声明 + 远端自报），分享页占位符按它切
     assert body['nodes'][0] == {'name': 'local', 'label': '本机',
                                 'status': 'online', 'models': ['k2'],
-                                'defaultModel': 'k2'}
+                                'defaultModel': 'k2', 'os': 'windows'}
     assert body['nodes'][1]['models'] == ['k2']
+    assert body['nodes'][1]['os'] == ''     # 没上报 = 未知
+    assert body['nodes'][2]['os'] == ''
 
 
 def test_tasks_list_recent_non_closed_sorted_and_limited(env):
