@@ -27,6 +27,7 @@ from modules import screen as screenModule  # noqa: E402
 from modules import aihandoff as aiModule  # noqa: E402
 from modules import control as controlModule  # noqa: E402
 from modules import settings as settingsModule  # noqa: E402
+from modules import agent_tokens as agentTokensModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
@@ -217,6 +218,7 @@ def gzipText(resp):
 # 显式注册表：蓝图模块与 register(app) 模块分开，新增模块必须在这里登记。
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
+                     agentTokensModule,
                      pluginsModule, agentApiModule, agentHandbookModule,
                      agentNodesModule,
                      tasksFederationModule, worklinesModule, feedbackModule)
