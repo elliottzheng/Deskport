@@ -90,7 +90,8 @@ for module in BLUEPRINT_MODULES:
 
 ```
 基础设施层   config / state / internal_api / events / fsutil / textio / media /
-             contracts / decision / termcore / termprobe / wsproto / winenv
+             contracts / decision / termcore / termprobe / wsproto / winenv /
+             capability
 特性层       terminal / ssh / screen / command / control / aihandoff /
              agent_api / agent_local / agent_nodes / agent_sftp /
              agent_sftp_write / agent_sessions / agent_share /
@@ -102,6 +103,8 @@ for module in BLUEPRINT_MODULES:
 ```
 
 依赖方向：特性 → 基础设施；基础设施 → 基础设施。特性横向 import（同层互引）须登记 `ALLOWED_FEATURE_IMPORTS` 并附方向理由，未登记即门禁报错；基础设施 → 特性同样拦（warning）。
+
+`capability`（2026-11-13 批次 H）是权限判定入口：`decide(principal, action, resource)` 纯函数，不 import flask / config。agent 令牌 scope 门与联邦写（`federationRoots` / `remotes[].filesWrite`）都收敛到它；`scopes → capabilities` 的老值映射只写在它一处。
 
 两份分类集合在 `tools/check_structure.py` 的 `INFRA` 与 `FEATURES`，上表以它们为准，新增共享内核要两边同步。两点现状：
 

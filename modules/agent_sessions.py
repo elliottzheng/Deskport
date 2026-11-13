@@ -32,7 +32,7 @@ from flask import jsonify, request
 
 from modules import events
 from modules.agent_api import (requireAgentScope, _resolveHost, _safeHosts,
-                               blueprint, parseTimeoutSec)
+                               blueprint, onBehalfOfKwargs, parseTimeoutSec)
 from modules.ssh_hosts import getConnection
 
 _sessions = {}
@@ -215,7 +215,7 @@ def agentSessionOpen():
                           'pendingFrom': 0, 'createdAt': time.time(),
                           'deadAt': 0}
     events.log('agent.session.open', hostName, 'ok', cwd or '~',
-               request.remote_addr)
+               request.remote_addr, **onBehalfOfKwargs(agent))
     return jsonify({'sessionId': sid, 'host': hostName,
                     'cwd': cwd or '~'})
 

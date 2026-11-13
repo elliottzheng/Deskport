@@ -9,7 +9,9 @@
     令牌：scope 视作 full，审计记「联邦:<来源>」（批次 FD）。命中顺序:
     内置 agentTokens → 设备令牌 → 联邦令牌——内置优先，同一值同时配成
     两种令牌时身份以内置令牌留痕，不出现歧义命名。
-    令牌 scope: agentTokens[].scopes 白名单；没写 = 全权（向后兼容）。
+    令牌 scope: agentTokens[].scopes 白名单；没写 = 全权（向后兼容）；可选
+    capabilities 字段（scopes 的超集）优先。判定收敛到 modules/capability.py
+    的 decide（批次 H），本模块只留 scope 门 → 查询的翻译。
     现有端点要求 full，手机上传要求 upload，转发任务要求 share，
     往远端执行点投附件还要求 upload_remote（node=local 不需要）；
     越权 403 {"error","need"}。
@@ -48,7 +50,7 @@ from flask import Blueprint, jsonify, request
 from urllib.parse import unquote
 
 import config
-from modules import events
+from modules import capability, events
 from modules import ssh_hosts as hosts
 
 DEFAULT_TIMEOUT = 30
@@ -71,13 +73,18 @@ def tokenHash(token):
 
 
 def agentHasScope(agent, scope):
-    """令牌是否持有 scope。没写 scopes（或为空列表）= 全权，向后兼容；
-    显式 'full' 同样视为全权；写了 scopes 则按白名单精确匹配。"""
-    scopes = agent.get('scopes')
-    if not isinstance(scopes, list) or not scopes:
-        return True
-    names = [str(s).strip() for s in scopes if str(s).strip()]
-    return scope in names or SCOPE_FULL in names
+    """令牌是否持有 scope。判定走 capability.decide（批次 H），语义与老
+    白名单逐字一致：没写 scopes（或为空列表）= 全权；显式 'full' 同样全权；
+    写了 scopes 则精确匹配。scope 门 → 能力查询的映射在 capability.py
+    （SCOPE_QUERIES），与 scopes → capabilities 映射同一处，别散落。"""
+    return capability.tokenAllows(agent, scope)
+
+
+def onBehalfOfKwargs(agent):
+    """on_behalf_of 关键字（批次 H）：令牌条目带 onBehalfOf（代表谁）时才传。
+    没带的调用点与老形状逐字一致（events.log 缺省空串，不破坏现有解析）。"""
+    who = str((agent or {}).get('onBehalfOf') or '').strip()
+    return {'on_behalf_of': who} if who else {}
 
 
 def scopeDenied(agent, scope):
@@ -146,11 +153,16 @@ def agentFromRequest():
 
 def auditAgentAction(agent, action, target, result, detail):
     """exec/sftp 审计: detail 前缀带令牌名（联邦来源记「联邦:<来源>」），
-    事后追责能看出请求经哪条令牌通道发起（批次 FD）。"""
+    事后追责能看出请求经哪条令牌通道发起（批次 FD）。
+
+    on_behalf_of（批次 H）：令牌条目带 onBehalfOf（代表谁）时写进事件；
+    没有就不传——events.log 缺省空串，老日志解析不受影响。
+    """
     name = str((agent or {}).get('name') or '').strip()
     if name:
         detail = '[%s] %s' % (name, detail)
-    events.log(action, target, result, detail, request.remote_addr)
+    events.log(action, target, result, detail, request.remote_addr,
+               **onBehalfOfKwargs(agent))
 
 
 def requireAgentScope(scope=SCOPE_FULL):

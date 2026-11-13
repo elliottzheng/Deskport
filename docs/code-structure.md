@@ -103,6 +103,7 @@ config.py  modules/state.py  modules/internal_api.py  modules/events.py
 - 前端格式化与 DOM 工具只允许一份：`frontend/assets/js/common.js`（`fmtSize`、`fmtTime`、`escapeHtml`、`toast`、`fetchJson`）。
 - 前端纯逻辑（构造请求体、判断分支）抽成可 import 的纯函数模块：挂 `window.X` 供页面调用，同时 `module.exports` 供 Node 引入；测试放 `tests/js/` 用 `node --test` 跑（`tools/check_frontend.py` 门禁含这一步，红即失败）。
 - 后端状态读写只允许一份：`modules/state.py`（原子写）与 `modules/events.py`（审计）。
+- 权限判定只允许一个入口：`modules/capability.py` 的 `decide(principal, action, resource)`（2026-11-13 批次 H）；各配置（scopes / filesWrite / federationRoots）降级成它的规则生成器，不复制第二份判定。
 - 禁止复制动作表、格式化函数（`principles.md` 已否决）。
 - 禁止新增 `window.*` 跨页契约；已有契约登记在 `frontend/assets/js/common.js` 顶部注释，新增需评审。
 

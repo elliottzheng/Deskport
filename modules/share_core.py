@@ -31,8 +31,11 @@ FILES_ONLY_PROMPT = '（未写处理要求）请先查看随附的 %d 个附件�
 FOLDER_NOTE = '以上附件在 %s 目录下'
 
 
-def _audit(action, target, result, detail):
-    events.log(action, target, result, detail, request.remote_addr)
+def _audit(action, target, result, detail, on_behalf_of=''):
+    """分享交付审计。on_behalf_of（批次 H）：代表谁（智能体/设备令牌的
+    onBehalfOf）；空就不传——events.log 缺省空串，老日志解析不受影响。"""
+    kw = {'on_behalf_of': on_behalf_of} if on_behalf_of else {}
+    events.log(action, target, result, detail, request.remote_addr, **kw)
 
 
 def _text(raw):
@@ -174,29 +177,34 @@ def findOpenTask(taskId):
 
 # ---------------------------------------------------------------- 交付内核
 
-def deliverShare(opts, files, folder='', folderName='', task=None):
+def deliverShare(opts, files, folder='', folderName='', task=None,
+                 on_behalf_of=''):
     """把已落暂存区的附件交付到两个 AI 去处（新建任务 / 接到任务）。
 
     files = 暂存区绝对路径；folder 非空（organize=folder）时 paths 只给目录，
     folderName 是建目录后的实际名（重名 (2) 之后）。task 非空 = 接到该任务。
-    失败时清掉本次暂存。返回 (payload, code)。审计在此统一写。
+    on_behalf_of（批次 H）：代表谁，随审计落下。失败时清掉本次暂存。
+    返回 (payload, code)。审计在此统一写。
     """
     paths = [folder] if folder else list(files)
     detail = 'files=%d promptLen=%d' % (len(files), len(opts['prompt']))
     if folder:
         detail += ' organize=folder'
     if task is not None:
-        return _appendShare(task, opts, files, folder, paths, detail)
-    return _createShare(opts, files, folder, paths, folderName, detail)
+        return _appendShare(task, opts, files, folder, paths, detail,
+                            on_behalf_of)
+    return _createShare(opts, files, folder, paths, folderName, detail,
+                        on_behalf_of)
 
 
-def _appendShare(task, opts, files, folder, paths, detail):
+def _appendShare(task, opts, files, folder, paths, detail, on_behalf_of=''):
     taskId = task['id']
     if not task_node.isLocal(task_node.of(task)) and paths:
         payload, code = _deliverRemote(task, paths)
         if code >= 400:
             _discard(files, folder)
-            _audit('agent.share', taskId, 'fail', 'appended ' + detail)
+            _audit('agent.share', taskId, 'fail', 'appended ' + detail,
+                   on_behalf_of)
             return payload, code
         paths = payload
     basePrompt = opts['prompt']
@@ -204,30 +212,34 @@ def _appendShare(task, opts, files, folder, paths, detail):
         basePrompt = _withFolderNote(basePrompt, os.path.basename(paths[0]))
         if len(basePrompt) > MAX_PROMPT:
             _discard(files, folder)
-            _audit('agent.share', taskId, 'fail', 'prompt 加目录说明超长')
+            _audit('agent.share', taskId, 'fail', 'prompt 加目录说明超长',
+                   on_behalf_of)
             return {'error': 'prompt 过长（加上文件夹说明超过 %d 字符）'
                              % MAX_PROMPT}, 400
     text = _messageText(basePrompt, paths)
     payload, code = tasks_api.deliverMessage(task, text, 'queue')
     if code >= 400:
         _discard(files, folder)
-        _audit('agent.share', taskId, 'fail', 'appended ' + detail)
+        _audit('agent.share', taskId, 'fail', 'appended ' + detail,
+               on_behalf_of)
         return payload, code
     if not task_node.isLocal(task_node.of(task)):
         _discard(files, folder)   # 本机暂存只是投递中转
-    _audit('agent.share', taskId, 'ok', 'appended ' + detail)
+    _audit('agent.share', taskId, 'ok', 'appended ' + detail, on_behalf_of)
     return {'taskId': taskId, 'mode': 'appended',
             'paths': paths, 'prompt': text}, 200
 
 
-def _createShare(opts, files, folder, paths, folderName, detail):
+def _createShare(opts, files, folder, paths, folderName, detail,
+                 on_behalf_of=''):
     prompt = opts['prompt']
     finalPrompt = prompt or (FILES_ONLY_PROMPT % len(files))
     if folder:
         finalPrompt = _withFolderNote(finalPrompt, folderName)
     if len(finalPrompt) > MAX_PROMPT:
         _discard(files, folder)
-        _audit('agent.share', '', 'fail', 'prompt 加目录说明超长')
+        _audit('agent.share', '', 'fail', 'prompt 加目录说明超长',
+               on_behalf_of)
         return {'error': 'prompt 过长（加上文件夹说明超过 %d 字符）'
                          % MAX_PROMPT}, 400
     data = {'prompt': finalPrompt, 'paths': paths, 'mode': opts['mode'],
@@ -239,14 +251,14 @@ def _createShare(opts, files, folder, paths, folderName, detail):
     payload, code = tasks_api.createTaskResponse(data)
     if code >= 300:
         _discard(files, folder)
-        _audit('agent.share', '', 'fail', 'created ' + detail)
+        _audit('agent.share', '', 'fail', 'created ' + detail, on_behalf_of)
         return payload, code
     newId = (payload.get('task') or {}).get('id') or ''
     finalPrompt = (payload.get('task') or {}).get('prompt') or finalPrompt
     if not task_node.isLocal(opts['node']):
         _discard(files, folder)       # 本机暂存只是投递中转
         paths = payload.get('paths') or paths
-    _audit('agent.share', newId, 'ok', 'created ' + detail)
+    _audit('agent.share', newId, 'ok', 'created ' + detail, on_behalf_of)
     return {'taskId': newId, 'mode': 'created',
             'paths': paths, 'prompt': finalPrompt}, 200
 

@@ -138,6 +138,7 @@ def register(app):
             # 的 owner 与 agent.task.* 审计记「联邦:<来源>」而非「面板」
             from modules.agent_api import federationTokenName
             g.agentTokenName = federationTokenName()
+            g.agentOnBehalfOf = ''
             return None
         if isAuthenticated():
             return None
@@ -166,6 +167,8 @@ def register(app):
                     if denied is not None:
                         return denied
                 g.agentTokenName = agent.get('name') or ''
+                # 批次 H：令牌可绑定「代表谁」，写操作审计随事件落下
+                g.agentOnBehalfOf = str(agent.get('onBehalfOf') or '')
                 return None
             if path.startswith('/api/agent/'):
                 return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401

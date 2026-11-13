@@ -68,6 +68,13 @@ DELETE /api/settings/agent-tokens/<id>   # 吊销
 - 手机令牌是典型的受限令牌：丢了/泄露了，删掉 `agentTokens` 里的对应
   条目即热生效（config 按 mtime 热读，无需重启），暴露面只有上传一种。
 
+判定收敛（2026-11-13 批次 H）：所有 scope 门内部都走
+`modules/capability.py` 的 `decide(principal, action, resource)`——
+`full → *@*`、`upload → upload@node:local`、`share → share@node:local`、
+`upload_remote → upload@node:*`，`scopes` 与这套能力的映射只写在
+`capability.py` 一处。令牌条目新增可选 `capabilities` 字段（规则数组，
+`scopes` 的超集），写了就优先按它判定；403 的 `need` 字段与文案不变。
+
 ## 手机上传（POST /api/agent/upload，scope=upload）
 
 手机「分享」直达电脑的落盘通道：multipart 直传，不需要会话 Cookie，

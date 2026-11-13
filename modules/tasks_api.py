@@ -43,6 +43,13 @@ def taskRoute(fn):
         return fn(task, taskId, *args, **kwargs)
     return wrapper
 
+
+def _agentOnBehalfOf():
+    """on_behalf_of 关键字（批次 H）：authGuard 放行令牌时记下它代表谁；
+    没有就不传——events.log 缺省空串，老日志解析不受影响。"""
+    who = str(getattr(g, 'agentOnBehalfOf', '') or '').strip()
+    return {'on_behalf_of': who} if who else {}
+
 @blueprint.route('/api/tasks', methods=['GET'])
 def listTasks():
     store.repo.load()
@@ -293,7 +300,7 @@ def createTaskResponse(data):
         # 外部智能体经令牌通道建任务: 写系统审计（任务卡事件之外独立留痕）
         detail = prompt[:160] + (' · model=%s' % model if model else '')
         events.log('agent.task.create', tokenName, 'ok', detail,
-                   request.remote_addr)
+                   request.remote_addr, **_agentOnBehalfOf())
     runner._startTask(task, manifest)
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:
@@ -790,7 +797,8 @@ def uploadTaskFile():
     tokenName = getattr(g, 'agentTokenName', '')
     if tokenName:
         events.log('agent.task.upload', tokenName, 'ok',
-                   '%s (%d bytes)' % (name, len(raw)), request.remote_addr)
+                   '%s (%d bytes)' % (name, len(raw)), request.remote_addr,
+                   **_agentOnBehalfOf())
     return jsonify({'ok': True, 'path': os.path.abspath(path),
                     'size': len(raw),
                     'hint': '把该 path 放进 POST /api/tasks 的 paths 数组即可作为任务输入'})
