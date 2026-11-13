@@ -126,7 +126,9 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
                   'TermEnv', 'TermSessionUI', 'TermControls',
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
-                  'WPShareForm'}
+                  'WPShareForm',
+                  # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
+                  'WPSettingsCapability'}
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。
 # 规则: 跨模块 import 不得出现单下划线前缀（引私有名 / 公有名起私有别名都算）。
 # 本表登记的是「同包内部接缝」——提供方是使用方所在家族的共享底座, 私有助手

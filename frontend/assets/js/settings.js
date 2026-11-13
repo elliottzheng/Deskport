@@ -1,7 +1,7 @@
 // 设置 — 单用户改密
 const { createApp } = Vue;
-
-createApp({
+// 「我的权限」卡片（批次 L）经 mixin 挂进来: 自带 capability/capabilityState/capabilityError 三态与 loadCapability，规则判定全在服务端，前端只展示
+const app = createApp({
     data() {
         return {
             current: '',
@@ -495,4 +495,6 @@ createApp({
             }
         },
     },
-}).mount('#app');
+});
+app.mixin(WPSettingsCapability.mixin());
+app.mount('#app');

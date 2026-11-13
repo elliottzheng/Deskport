@@ -140,6 +140,38 @@
         <p v-if="agentTokenOk" class="settings-ok">{{ agentTokenOk }}</p>
     </div>
 
+    <div class="card settings-card" id="capability-card">
+        <div class="card-title">我的权限</div>
+        <p class="settings-note">当前这个会话能做什么：下面是生效的规则表和几条固定示例判定。只读展示，不能在这里改；吊销令牌或设备在上面的卡片里。</p>
+
+        <p class="settings-hint" id="capability-loading" v-if="capabilityState === 'loading'">正在加载权限信息…</p>
+        <p class="settings-hint settings-warn" id="capability-error" v-else-if="capabilityState === 'error'">
+            权限信息没加载出来，暂时无法判断——不要据此认为你什么都没有权限。请刷新页面重试。
+        </p>
+        <template v-else-if="capabilityState === 'ok' && capability">
+            <div class="settings-dir">
+                <div class="device-row">
+                    <span class="device-name">{{ capability.kind }}：{{ capability.name }}</span>
+                    <span class="device-meta">当前主体</span>
+                </div>
+            </div>
+
+            <div class="settings-subhead">规则</div>
+            <div class="settings-dir" v-for="(rule, i) in capability.rules" :key="i">
+                <code>{{ rule.action }} @ {{ rule.resource }}</code>
+                <span class="capability-source">{{ rule.source }}</span>
+            </div>
+            <p class="settings-hint" v-if="!capability.rules.length">没有生效的规则：任何操作都不会被允许。</p>
+
+            <div class="settings-subhead">示例判定</div>
+            <div class="capability-decision" v-for="(d, i) in capability.decisions" :key="i">
+                <span class="capability-verdict" :class="d.allow ? 'capability-allow' : 'capability-deny'">{{ d.allow ? '✓' : '✗' }}</span>
+                <code>{{ d.action }} @ {{ d.resource }}</code>
+                <span class="capability-deny-text" v-if="!d.allow">deny</span>
+            </div>
+        </template>
+    </div>
+
     <div class="card settings-card">
         <div class="card-title">上传目标</div>
         <p class="settings-note">手机 App 上传时可选的落盘位置。内置「手机上传」指向手机上传目录，不能删除；自定义目标只会把名称下发给 App，目录本身不出这台电脑。</p>
@@ -301,6 +333,7 @@
 <script src="/assets/js/nav.js?v=__BUILD__"></script>
 <script src="/assets/js/app-shell.js?v=__BUILD__"></script>
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+<script src="/assets/js/settings-capability.js?v=__BUILD__"></script>
 <script src="/assets/js/settings.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>

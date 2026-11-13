@@ -75,6 +75,13 @@ DELETE /api/settings/agent-tokens/<id>   # 吊销
 `capability.py` 一处。令牌条目新增可选 `capabilities` 字段（规则数组，
 `scopes` 的超集），写了就优先按它判定；403 的 `need` 字段与文案不变。
 
+查「我到底能干什么」（2026-11-13 批次 L）：`GET /api/capability/me`
+（Cookie 会话，或带同一个令牌）返回当前主体、生效规则表与固定 6 条
+示例判定——**只读**，不接受入参，示例判定固定 6 条（本机建任务 /
+本机读文件 / 本机执行命令 / 远端写 / 远端读 / 配置写），不是任意
+`(action, resource)` 查询接口。设置页「我的权限」卡片就是这个端点的
+网页版，详见 [settings.md](settings.md) 的「我的权限（只读）」一节。
+
 ## 手机上传（POST /api/agent/upload，scope=upload）
 
 手机「分享」直达电脑的落盘通道：multipart 直传，不需要会话 Cookie，

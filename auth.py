@@ -154,9 +154,12 @@ def register(app):
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
         if path.startswith('/api/agent/') or path.startswith('/api/tasks') \
-                or path.startswith('/api/worklines'):
+                or path.startswith('/api/worklines') \
+                or path.startswith('/api/capability/'):
             # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行。
             # /api/tasks、/api/worklines 放行后外部智能体可建任务/收事件/回权限
+            # /api/capability/me 是只读自述(主体+规则+示例判定), 任何有效令牌
+            # (含设备令牌) 都该能问"我能干什么", 所以不跟着要 full scope
             from modules import agent_api as agentModule
             agent = agentModule.agentFromRequest()
             if agent is not None:
