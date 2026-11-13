@@ -23,6 +23,55 @@ T=<部署者发你的令牌>
 
 所有请求和响应都是 JSON（分享接口是 multipart）。失败也返回 JSON：`{"error": "..."}`，部分错误带 `need` 或提示字段。
 
+## 工具箱（任选其一，不必全用）
+
+上面的裸 HTTP 是底座：任何语言都能照做。不想自己写轮询/审批/任务管理，就用现成工具——三级递进，**任选其一，不必全用**。
+
+### 1. 裸 HTTP（本手册其余部分）
+
+不带任何依赖，`curl` 或标准库 HTTP 即可。适合一次性调用，或要把调用逻辑嵌进你自己的程序。
+
+### 2. deskport.py — 零依赖单文件客户端
+
+一个 Python 文件、只用标准库，下载即可用：
+
+```bash
+curl -s $D/api/agent/tools/deskport.py -o deskport.py
+```
+
+最快三行：
+
+```python
+import deskport
+h = deskport.connect()   # 地址与令牌：同目录 .deskport.json，或 DESKPORT_URL / DESKPORT_HOST / DESKPORT_TOKEN
+print(h.sh("uptime"))    # 失败抛 CommandError；h.cd("/srv/app") 绑定工作目录后再发命令
+```
+
+也能当 CLI：
+
+```bash
+python deskport.py hosts
+python deskport.py run "uptime"
+```
+
+派活、等结果、审批、持久会话都有对应方法（`create_task` / `until` / `permission` / `session`），不用自己写轮询。
+
+### 3. driver.py — 长期驱动另一个智能体
+
+适用场景：**持续驱动一个托管智能体干活**——别名目录、边界内自动放行、越界停下等人、本轮忙碌时消息排队（结束后自动补发）。
+
+```bash
+curl -s $D/api/agent/tools/driver.py -o driver.py
+```
+
+诚实声明：它假定执行方是 **Kimi Code**——`new <kimi会话id>` 接手已有会话、`/compact` 压缩上下文都是 Kimi 侧的能力；执行方不是 Kimi 时请用第 1 或第 2 级。用法一行：`driver.py <别名> [y|n|c|m|new <会话id>|st]`，边界写在 `driver.json`。
+
+`COLLABORATION.md` 讲主控怎么分工与验收，需要时再读：
+
+```bash
+curl -s $D/api/agent/tools/COLLABORATION.md -o COLLABORATION.md
+```
+
 ## 端点
 
 ### 执行点：GET /api/tasks/nodes
@@ -43,8 +92,8 @@ curl -s -X POST "$D/api/tasks" \
 ```
 
 - `prompt` 必填，上限 4000 字符。
-- `node` 是执行点（去哪台机器），缺省 `"local"`。**只认 `node` 与 `cwd`；旧字段 `engine` 已移除，传了直接 400。**
-- `cwd` 是执行目录：本机是可写的项目目录（Windows 用正斜杠，如 `E:/work/project`）；非本机执行点必填，且目录须存在于那台机器。
+- `node` 是执行点（去哪台机器），缺省 `local`；`cwd` 是执行目录，缺省由服务端分配的任务目录。
+- `cwd` 是执行目录：本机是可写的项目目录（路径按执行点的平台书写，Windows 上用正斜杠，如 `E:/work/project`）；非本机执行点必填，且目录须存在于那台机器。
 - `mode` 不传 = 逐项审批（安全默认）；要自动批准显式传 `"mode": "auto"`。
 - `model` 可选，取值见执行点的 `models`。
 - `paths` 可选：`["/绝对路径/a.pdf"]`，把本机已有文件带进任务；`attachments` 直接内联 `[{name, contentB64}]`。
@@ -204,7 +253,7 @@ while True:
 
 - `401`：令牌缺失或无效。确认请求头是 `X-Agent-Token: <令牌>`，且令牌仍由部署者签发。
 - `403`：令牌 scope 不够，响应带 `{"need": "<所需 scope>"}`；让部署者重发对应 scope 的令牌。
-- `400`：参数不合法（例如不认识 `node`、非本机执行点缺 `cwd`、`prompt` 过长、传了旧字段）。
+- `400`：参数不合法（例如不认识 `node`、非本机执行点缺 `cwd`、`prompt` 过长）。
 - `409`：当前状态不允许（例如任务已结束或已关闭、审批已失效、持久会话正忙）。按响应提示调整后重试。
 - `429`：并发任务达到上限，响应带 `{limit, running, holders}`；退避后重试。
 

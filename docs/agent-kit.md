@@ -47,6 +47,19 @@ done
 配置从低到高：脚本同目录 `.deskport.json` → `DESKPORT_URL` / `DESKPORT_HOST` /
 `DESKPORT_INSECURE` → 函数参数；令牌：参数 `token` → `DESKPORT_TOKEN` → 同目录 `.agent-token`。
 
+## 没有令牌先拿工具（公开端点）
+
+三个工具文件（`deskport.py` / `driver.py` / `COLLABORATION.md`）不含凭据，可**不带令牌**
+直接下载；`SKILL.md` 不在此列（Kimi 技能格式，走上面的自举通道）：
+
+```bash
+D=<中枢地址>
+curl -s $D/api/agent/tools -o -            # 清单 {name, bytes, sha256}
+curl -s $D/api/agent/tools/deskport.py -o deskport.py    # 响应头 X-Tools-Sha256 可校验
+```
+
+开关与手册共用 `handbookEnabled`（`false` 时 404）。详见 `docs/agent-api.md`「工具箱」。
+
 ## 客户端：五分钟
 
 ```python

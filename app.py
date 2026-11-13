@@ -41,6 +41,7 @@ from modules import agent_share as agentShareModule  # noqa: E402  路由注册
 from modules import share_web as shareWebModule  # noqa: E402  路由注册
 from modules import agent_skill_files as agentSkillFilesModule  # noqa: E402  路由注册
 from modules import agent_handbook as agentHandbookModule  # noqa: E402  路由注册
+from modules import agent_tools as agentToolsModule  # noqa: E402  路由注册
 from modules import feedback as feedbackModule  # noqa: E402
 from modules import device_auth as deviceAuthModule  # noqa: E402  路由注册
 from modules import agent_nodes as agentNodesModule  # noqa: E402
@@ -217,6 +218,7 @@ def gzipText(resp):
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      pluginsModule, agentApiModule, agentHandbookModule,
+                     agentToolsModule,
                      agentNodesModule,
                      tasksFederationModule, worklinesModule, feedbackModule)
 # agent_sessions / agent_sftp / agent_upload / agent_share / share_web / agent_skill_files 与 agent_api 共用同一蓝图对象：

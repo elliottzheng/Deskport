@@ -358,7 +358,7 @@ DELETE /api/agent/ssh/sessions/<sid>
   执行点选「本机」时也有「工作目录」输入框，留空即任务目录（此时请求不带
   `cwd` 键）；输入框的占位符与候选取自 `GET /api/ai/config` 的 `workDirs`，
   提示里列出这些根目录。两者的细节见下节；
-- `engine` 字段已移除：传了直接 **400**，不会被忽略或映射；
+- 历史字段 `engine`（早期版本选执行引擎的入参）已移除：传了直接 **400**，不会被忽略或映射；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；
 - `model`（可选）：给执行点选模型（§7）。`GET /api/tasks/nodes` 里每个执行点
@@ -587,6 +587,27 @@ done
 
 Deskport 升级后重新拉取即更新（`files` / `sha256` 判断要不要换本地副本）。
 仓库内 `.agents/skills/deskport/` 是源，包内容说明见 `agent-kit.md`。
+
+## 工具箱（公开端点，无需令牌）
+
+手册只教裸 HTTP，读者还没令牌；工具箱把技能包里三个**不含凭据**的文件公开出来，
+一条 URL 即取（`modules/agent_tools.py`，app.py 显式登记）：
+
+```text
+GET /api/agent/tools            → {"tools": [{"name", "bytes", "sha256"}]}
+GET /api/agent/tools/<name>     → 原文件（.md → text/markdown，.py → text/plain）
+                                  响应头 X-Tools-Sha256 与清单一致
+```
+
+- 白名单三个：`deskport.py`（零依赖单文件客户端）、`driver.py`（主控派活模板）、
+  `COLLABORATION.md`（主控与执行方的分工/验收）。**SKILL.md 不在内**：它是 Kimi
+  技能格式，走需令牌的 `/api/agent/skills/deskport`，两种格式不混；
+- 目录仍是 `.agents/skills/deskport/`（单一来源，不复制文件）；
+- 开关与手册共用 `handbookEnabled`（显式 `false` 时两个端点 404）：工具箱入口写在
+  手册里，手册关掉后这些地址失去被发现路径，独立开关只会造出半开状态；
+- 白名单外一律 404（不列目录内容）：`SKILL.md`、`..`、子目录、不存在的名字不区分；
+- 公开内容安全由 `tests/test_agent_tools.py` 正则把关：命中
+  `token\s*=\s*['"][A-Za-z0-9_-]{16,}` / `password` / `agentTokens` 即失败。
 
 ## 审计
 
