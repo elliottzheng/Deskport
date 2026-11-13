@@ -231,11 +231,18 @@ class KimiAcp:
         if self.model:
             cmd += ['--model', self.model]
         cmd.append('acp')
-        self.proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, encoding='utf-8',
-            errors='replace', bufsize=1, cwd=self.cwd,
-            creationflags=CREATE_NO_WINDOW)
+        if self.cwd and not os.path.isdir(self.cwd):
+            raise AcpError('工作目录不存在: %s' % self.cwd)
+        try:
+            self.proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, encoding='utf-8',
+                errors='replace', bufsize=1, cwd=self.cwd,
+                creationflags=CREATE_NO_WINDOW)
+        except FileNotFoundError:
+            # kimi 已由 _kimiBin 定位成功，失败只可能出在 cwd 或执行环境
+            raise AcpError('启动 kimi 失败（工作目录 %s 不可用或 kimi 无法执行）'
+                           % self.cwd)
         self._reader = threading.Thread(target=self._readLoop, daemon=True)
         self._reader.start()
         self._errReader = threading.Thread(target=self._readStderr, daemon=True)
