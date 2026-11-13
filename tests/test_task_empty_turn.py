@@ -95,3 +95,38 @@ def test_busy_turn_is_not_flagged(env):
     assert task['lastTurn']['tools'] == 1, task.get('lastTurn')
     assert task['lastTurn']['empty'] is False
     assert env.repo.summaryBrief(task)['emptyTurn'] is False
+
+
+def test_silent_turn_is_flagged(env):
+    """P1-4（2026-11-14 中招事件二 + 外部智能体反馈）：调了工具却一句终稿都没落
+    ——"干完活没交报告"（死在写报告前一跳 / 轮次静默断尾）。emptyTurn 覆盖
+    0 工具场景，这是它的补集，列表里也要一眼看见。"""
+    task = _newRunning(env, 'silent')
+    with env.repo.lock:
+        task['status'] = 'running'
+    runner._promptOnce(task, BusyClient(task), '继续', False)
+    brief = env.repo.summaryBrief(task)
+    assert task['lastTurn']['tools'] == 1
+    assert task['lastTurn']['silent'] is True
+    assert brief['silentTurn'] is True and brief['emptyTurn'] is False
+
+
+class ReportingClient(BusyClient):
+    """调了工具也落了终稿：对照组，两个标记都不该亮。"""
+
+    def prompt(self, text, timeout=None):
+        runner._handleAcpUpdate(self.task, {'toolName': 'Bash',
+                                            'toolInput': 'ls',
+                                            'sessionUpdate': 'tool_call'})
+        runner._appendAssistantText(self.task, '干完了，报告在此')
+        return {'stopReason': 'end_turn'}
+
+
+def test_reporting_turn_is_not_flagged(env):
+    task = _newRunning(env, 'reporting')
+    with env.repo.lock:
+        task['status'] = 'running'
+    runner._promptOnce(task, ReportingClient(task), '继续', False)
+    brief = env.repo.summaryBrief(task)
+    assert task['lastTurn']['tools'] == 1
+    assert brief['silentTurn'] is False and brief['emptyTurn'] is False

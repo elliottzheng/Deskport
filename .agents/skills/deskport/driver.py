@@ -250,8 +250,7 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
           queued: list, timeout=TIMEOUT) -> int:
     """跑到本轮结束 / 需要人判断 / 超时。返回退出码：0 DONE、2 超时、3 停下。"""
     end = time.time() + timeout
-    auto = ghost = 0
-    lastStale = None
+    auto, ghost, lastStale = 0, 0, None
     while time.time() < end:
         r = _retry(lambda: task.until(min(60, max(1, int(end - time.time()) + 1))), run)
         if r is None:                                    # 老中枢没有阻塞 wait：不降级轮询
@@ -266,10 +265,8 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
                     task.permission(event.get("requestId"), policy.pick(event, True))
                 except deskport.DeskportError as err:
                     if err.status == 409:
-                        # 审批已失效（2026-11-14 外部智能体反馈：误报 STALE 打死
-                        # 6+ 个驱动窗口）。两种因：竞态（刚被解掉/回放）或会话已死。
-                        # 同一 requestId 反复 409 = 盘上留着死标记，必须停；
-                        # 否则跳过这条，继续等下一个决策点，不误杀窗口
+                        # 审批已失效（2026-11-14 反馈：误报 STALE 打死 6+ 窗口）。
+                        # 竞态/回放→跳过继续等下一个决策点；反复 409=死标记→停
                         rid = event.get("requestId")
                         if rid and rid == lastStale:
                             run.say("STOP 审批 %s 反复失效：任务盘上留着死标记，"
@@ -327,9 +324,12 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
         txt = r.get("finalText") or ""
         run.log("[assistant] " + txt)
         cut = "…(+%d 字，见 log)" % (len(txt) - MAX_TEXT) if len(txt) > MAX_TEXT else ""
-        run.say("DONE %s tools=%s server-auto=%s local-auto=%d errors=%s\n%s%s"
-                % (st, stats.get("tools"), stats.get("autoApproved"), auto,
-                   stats.get("errors"), txt[:MAX_TEXT], cut))
+        # 过期提醒只是warning后缀（2026-11-14 用户明确：不影响任务）：折进DONE行，不拦截、不改退出码
+        stale = (" ｜技能包过期(%s→%s)，重拉 skill.zip" % (s["local"], s["current"])
+                 if (s := dp.skillStale) else "")
+        run.say("DONE %s tools=%s server-auto=%s server-denied=%s local-auto=%d errors=%s%s\n%s%s"
+                % (st, stats.get("tools"), stats.get("autoApproved"), stats.get("autoDenied", 0),
+                   auto, stats.get("errors"), stale, txt[:MAX_TEXT], cut))
         return 0
     run.say("TIMEOUT 任务仍在跑")
     return 2

@@ -85,16 +85,21 @@ def test_example_config_is_valid(env):
 
 
 def test_attachments_are_byte_identical(env):
-    """四个工具就是仓库里的原文件；SKILL.md 只多占位符替换。"""
+    """driver.py / 样例 / 原则就是仓库里的原文件；deskport.py 只多版本盖戳
+    （装配即版本，2026-11-14 用户提议：脚本自带版本，用户零手动）。"""
     z = openPack(env.client.get(PACK))
-    for name in ('deskport.py', 'driver.py', 'driver.example.json', 'COLLABORATION.md'):
+    for name in ('driver.py', 'driver.example.json', 'COLLABORATION.md'):
         with open(os.path.join(SKILL_DIR, name), 'rb') as f:
             assert z.read('deskport/' + name) == f.read(), name
+    with open(os.path.join(SKILL_DIR, 'deskport.py'), 'rb') as f:
+        raw = f.read()
+    packed = z.read('deskport/deskport.py')
+    assert packed == raw.replace(b'__SKILL_VERSION__', meta.BUILD.encode())
+    assert b'__SKILL_VERSION__' not in packed and meta.BUILD.encode() in packed
     with open(os.path.join(SKILL_DIR, 'SKILL.md'), encoding='utf-8') as f:
         raw = f.read()
     packed = z.read('deskport/SKILL.md').decode('utf-8')
-    assert packed == raw.replace('{{BASE}}', 'http://localhost') \
-                        .replace('{{VERSION}}', meta.BUILD)
+    assert packed == raw.replace('{{BASE}}', 'http://localhost')                         .replace('{{VERSION}}', meta.BUILD)
 
 
 def test_outside_names_404(env):
@@ -155,3 +160,17 @@ def test_two_entries_serve_the_same_client(env):
     packed = openPack(env.client.get(PACK)).read('deskport/deskport.py')
     assert tools.get_data() == packed
     assert tools.headers['X-Tools-Sha256'] == hashlib.sha256(packed).hexdigest()
+
+
+def test_skill_version_negotiation_headers(env):
+    """版本协商（2026-11-14 用户提议）：智能体面每个响应带线上版本号；客户端
+    自报的版本对不上时附 stale 标记——driver 每轮 DONE 提醒重拉 skill.zip，
+    旧脚本不用等撞上 breaking change（如 engine 400）才知道自己落后。"""
+    cur = env.client.get(PACK).headers.get('X-Deskport-Skill-Version')
+    assert cur
+    assert 'X-Deskport-Skill-Stale' not in env.client.get(PACK).headers
+    stale = env.client.get(PACK, headers={'X-Deskport-Skill-Version': 'old-build-1'})
+    assert stale.headers.get('X-Deskport-Skill-Stale') == '1'
+    assert 'X-Deskport-Skill-Stale' not in env.client.get(
+        PACK, headers={'X-Deskport-Skill-Version': cur}).headers
+    assert 'X-Deskport-Skill-Version' not in env.client.get('/login').headers

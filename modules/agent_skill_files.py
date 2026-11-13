@@ -37,6 +37,18 @@ _SKILL_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
 _FILE_RE = re.compile(r'^[A-Za-z0-9_-]{1,40}\.(?:example\.)?(?:md|py|json|txt)$')
 MAX_BYTES = 2 * 1024 * 1024
 _EXCLUDED = {'SKILL.md'}          # 手册走 /api/agent/skills/<技能>，这里只发附件
+# deskport.py 自带版本常量，装配时盖成本次构建号（2026-11-14 用户提议的修正：
+# 版本跟着脚本走，不依赖用户手动维护 SKILL.md 里的版本行——不遵守也不完蛋，
+# 因为根本没有"遵守"这个动作）。hub 凭它判定客户端新旧，见 app.skillVersionHeaders。
+VERSION_PLACEHOLDER = '__SKILL_VERSION__'
+VERSION_STAMPED = ('deskport.py',)
+
+
+def stampedTool(name, blob):
+    """工具字节的最终形态：deskport.py 的版本占位符盖成本次构建号，其余原样。"""
+    if name in VERSION_STAMPED and VERSION_PLACEHOLDER.encode() in blob:
+        return blob.replace(VERSION_PLACEHOLDER.encode(), meta.BUILD.encode())
+    return blob
 
 
 def _skillFileEntries(skill):
@@ -73,8 +85,8 @@ def agentSkillFileGet(skill, name):
         return jsonify({'error': '附件不存在', 'skill': skill,
                         'available': [e['name'] for e in entries]}), 404
     path = os.path.join(_skillsDir(), skill, name)
-    with open(path, 'rb') as f:      # sha256 按字节算，与下载后校验一致
-        blob = f.read()
+    with open(path, 'rb') as f:      # sha256 按最终交付字节算，与下载后校验一致
+        blob = stampedTool(name, f.read())
     if request.args.get('raw') in ('1', 'true', 'yes'):
         resp = Response(blob, mimetype='text/plain')
         resp.headers['Content-Type'] = 'text/plain; charset=utf-8'
@@ -122,9 +134,9 @@ def buildSkillZip(skill, manual=None):
     """整包字节与条目数：SKILL.md（manual 给了用渲染后的文本，否则原文件字节）
     + 白名单附件 + 现成的 .deskport.json；技能目录/SKILL.md 不存在返回 None。
 
-    pack.zip（需令牌、原样字节）与 /api/agent/skill.zip（公开、占位符已替换）
-    共用这一处；附件只认 _skillFileEntries 的白名单，__pycache__、子目录、
-    隐藏文件天然进不来。
+    pack.zip（需令牌）与 /api/agent/skill.zip（公开、占位符已替换）共用这一处；
+    附件只认 _skillFileEntries 的白名单，__pycache__、子目录、隐藏文件天然进不来。
+    deskport.py 出版前盖版本号（stampedTool）——装配即版本，客户端零手动。
     """
     root = os.path.join(_skillsDir(), skill)
     manualPath = os.path.join(root, 'SKILL.md')
@@ -138,7 +150,12 @@ def buildSkillZip(skill, manual=None):
         else:
             z.writestr('%s/SKILL.md' % skill, manual)
         for entry in entries:
-            z.write(os.path.join(root, entry['name']), '%s/%s' % (skill, entry['name']))
+            arcname = '%s/%s' % (skill, entry['name'])
+            if entry['name'] in VERSION_STAMPED:
+                with open(os.path.join(root, entry['name']), 'rb') as f:
+                    z.writestr(arcname, stampedTool(entry['name'], f.read()))
+            else:
+                z.write(os.path.join(root, entry['name']), arcname)
         z.writestr('%s/.deskport.json' % skill,
                    json.dumps(_packConfig(), ensure_ascii=False, indent=2) + '\n')
     return buf.getvalue(), len(entries) + 2   # 手册 + 附件 + 配置

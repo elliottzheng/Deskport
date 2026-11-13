@@ -81,10 +81,8 @@ def test_default_mode_is_default_not_auto(env):
 
 
 def test_auto_mode_with_deny_commands_is_400(env):
-    """P0-1（外部智能体反馈 2026-11-14，已实测复现）：mode=auto/yolo 时 hub 让
-    节点侧自行批准一切，policy 漏斗收不到调用，denyCommands 被静默作废——
-    实测同一份 denyCommands:["echo"] 下 default 弹审批、auto 直接放行。
-    建卡时显式拒绝这对矛盾组合，别让"外推前停下来审批"的承诺落空。"""
+    """P0-1（2026-11-14 反馈，已复现）：auto/yolo 下节点自行批准一切，denyCommands
+    被静默作废（实测 default 弹审批、auto 直接放行）——建卡时拒绝这对组合。"""
     policy = {'allowPaths': [], 'allowCommands': [], 'denyCommands': ['git\\s+push'],
               'default': 'ask', 'timeoutSec': 0}
     for mode in ('auto', 'yolo'):
@@ -92,7 +90,6 @@ def test_auto_mode_with_deny_commands_is_400(env):
         assert resp.status_code == 400, mode
         error = resp.get_json()['error']
         assert 'denyCommands' in error and 'default' in error
-    # 只配 allowCommands/allowPaths 不拦：auto 的语义就是全自动，没有安全惊喜
     resp = create(env, {'prompt': 'x', 'mode': 'auto',
                         'policy': {'allowPaths': ['/srv'], 'allowCommands': ['.']}})
     assert resp.status_code == 202
@@ -996,13 +993,16 @@ def test_wait_resume_from_old_seq_no_loss(env):
         task = env.repo.get(tid)
         store.repo.append_event(task, 'tool', name='Bash', args='pwd', callId='c1')
         store.repo.append_event(task, 'auto_approved', callId='c1', rule='allowCommands')
+        store.repo.append_event(task, 'auto_denied', callId='c2', rule='orphan')
         store.repo.append_event(task, 'error', text='一次报错示例')
-        seqAfter = 1   # 跳过建卡事件；后续 3 条都计入
+        seqAfter = 1   # 跳过建卡事件；后续 4 条都计入
         total = task['seq']
     body = env.client.get('/api/tasks/%s/wait?after=%d&timeout=1' % (tid, seqAfter),
                           headers=H).get_json()
     assert body['stats']['events'] == total - seqAfter
     assert body['stats']['errors'] == 1 and body['stats']['autoApproved'] == 1
+    # P0-2（2026-11-14 反馈）：自动拒绝在执行方眼里无声无息，轮末统计要能看见
+    assert body['stats']['autoDenied'] == 1
     assert body['lastSeq'] == total
 
 

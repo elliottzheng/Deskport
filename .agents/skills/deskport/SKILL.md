@@ -18,6 +18,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 - **机器参数用 `node`**（exec/sftp/会话与任务同一套词汇，缺省 `local`）：`host` 是旧名，仍接受；两个都给且不同 → 400
 - **提反馈**：`POST /api/feedback`（令牌通道，实名留痕，详见专节）——撞见平台 bug 时用，别只在报告里带一句
+- **技能版本**：`deskport.py` 自带版本常量（装配技能包时盖成本次构建号），每个请求自动带上；响应带回线上版本号，对不上时附 `X-Deskport-Skill-Stale: 1`——driver.py 每轮 DONE 行提醒重拉 skill.zip（旧脚本不用等撞上 400 才知道落后，你也无需手动配任何东西）
 
 ## 这个包里还有什么（一起拉）
 
@@ -81,6 +82,7 @@ POST /api/agent/ssh/exec
 - `timeoutSec` 1–600，越界 400；命令含 NUL 400；stdin 即时 EOF（读 stdin 的命令不挂死）。
 - 输出上限 2MB；`"encoding": "base64"` 拿 `outB64`/`errB64` 原文字节。
 - 超时：`exit:null` + `reason:"timeout"` + `pid`，远端进程组被整组击杀。
+- **长命令（>600s）**：单条上限 600s 是硬上限。受支持模式 = `nohup cmd > log 2>&1 & echo $!` 起后台，再用普通 exec 轮询（`kill -0 <pid>` / `tail log`）。**别用工具自带的 `run_in_background`**：配了 policy 会被直接拒（"后台任务被禁用"），没配时审批可能晚到轮后、被当幽灵审批自动拒（轮末统计 `server-denied` 能看见次数）。
 - 本机路径双写法（`/e/事项` = `E:\事项`）；本机可加 `"shell": "powershell"|"pwsh"`（默认 bash，退出码已统一）。
 
 ## 持久会话（cd / export / venv 激活都延续）

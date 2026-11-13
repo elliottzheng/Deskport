@@ -48,12 +48,13 @@ blueprint = Blueprint('tools', __name__)
 
 
 def _toolEntry(name):
-    """清单项 {name, bytes, sha256}；按字节算，与下载后校验一致。"""
+    """清单项 {name, bytes, sha256}；按最终交付字节算（deskport.py 盖版本号），
+    与下载后校验一致。"""
     path = os.path.join(TOOLS_DIR, name)
     if not os.path.isfile(path):
         return None
     with open(path, 'rb') as f:
-        blob = f.read()
+        blob = agent_skill_files.stampedTool(name, f.read())
     return {'name': name, 'bytes': len(blob),
             'sha256': hashlib.sha256(blob).hexdigest()}
 
@@ -78,7 +79,7 @@ def agentToolGet(name):
     if entry is None:
         abort(404)
     with open(os.path.join(TOOLS_DIR, name), 'rb') as f:
-        blob = f.read()
+        blob = agent_skill_files.stampedTool(name, f.read())
     mimetype = 'text/markdown' if name.endswith('.md') else 'text/plain'
     resp = Response(blob, mimetype=mimetype)
     resp.headers['Content-Type'] = mimetype + '; charset=utf-8'

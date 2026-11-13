@@ -132,6 +132,9 @@ curl -s -H "X-Agent-Token: $T" "$D/api/tasks/<id>"
 
 响应 `{"task": {...}}`，常用字段：`status`（`queued` / `running` / `waiting` / `failed` / `cancelled` / `closed`）、`finalText`、`error`、`model`、`workspace`、`lastSeq`。
 
+- `paused` = 中枢没在驱动这个任务（服务重启、上一轮异常中断都会进这个态）——**不是失败，更不是死了**：发一条消息（`POST /api/tasks/<id>/message`）就能唤醒续跑，节点侧的会话还在。`canResume` 表示会话可续；`interrupted` 才是真断（没有会话可续，要重建）。
+- 列表与详情的 `emptyTurn` / `silentTurn` 是上一轮的形态标记：`emptyTurn` = 一个工具都没调、一句话都没回就结束轮次；`silentTurn` = 调了工具却一句终稿都没落（"干完活没交报告"）。两种都出现时，别原样再发"请继续"——改写成清单式指令，或换模型。
+
 ### 等结果：GET /api/tasks/&lt;id&gt;/wait
 
 ```bash
@@ -172,6 +175,8 @@ curl -s -X POST "$D/api/tasks/<id>/permission" \
 
 拒绝用 `{"requestId": "<pending.requestId>", "deny": true}`。`optionId` 必须是该请求 `options` 里的值，否则 400；请求已失效返回 409。可带 `"wait": 300` 直接等下一个决策点。
 
+- **一次只批一个 `optionId` 是契约**（不是待修的限制）：执行方的多选问题（如 `AskUserQuestion` 的 multi_select）会串行到达多个审批请求，驱动脚本的自动放行会在同一轮里逐条连批，不需要主控每条手动点；手动驱动时就连点几次，或让 driver 的 `safe` 规则覆盖这类调用。
+
 ### 结束：POST /api/tasks/&lt;id&gt;/close
 
 ```bash
@@ -209,6 +214,8 @@ curl -s -X POST "$D/api/agent/ssh/exec" \
 - `timeoutSec` 1–600；输出上限 2 MiB；命令不允许含 NUL。
 - 响应：`{"exit": 0, "out": "...", "err": "...", "timedOut": false, "reason": "", "pid": 123, "node": "local", "host": "local"}`；本机执行点另回 `shell` 与 `cwd`。
 - 超时返回 `exit: null`、`reason: "timeout"`（被超时杀掉的进程可能仍有 `pid`）。
+
+**长命令（超过 600 秒的活）**：单条 exec 上限 600s，这是硬上限，没有加时档。受支持的模式是「起后台 + 轮询」：用 `nohup <命令> > <日志> 2>&1 & echo $!` 拿到 pid，之后用普通 exec 轮询进度（`kill -0 <pid>` 看存活、`tail -n 50 <日志>` 看输出）——`nohup` 就是普通命令，不触发任何审批特例。**不要**用工具自带的 `run_in_background`：任务配了 policy 时它会被直接拒绝（"后台任务被禁用，请在前台运行"）；没配 policy 时它的审批可能晚到轮后、被当幽灵审批自动拒掉（事件流里留 `auto_denied`，主控能在轮末统计的 `server-denied` 里看见次数）。一批超长活拆成多步、每步可验，比赌一把后台更稳。
 
 ### 文件：POST /api/agent/sftp/{list,get,put}
 
@@ -337,4 +344,5 @@ while True:
 - 名字写错时，响应会带 `availableHosts` / `nodes` / `models` 等提示，直接改用。
 - 指代机器的参数用 `node`（exec / sftp / 会话与任务同一套词汇，缺省 `local`）；
   `host` 是旧名，仍接受，但请用 `node`。
+- **技能版本协商**：`deskport.py` 自带版本常量（装配技能包时由服务端盖成本次构建号），每个请求自动带上 `X-Deskport-Skill-Version`；每个智能体面响应都带回线上版本号，对不上时附 `X-Deskport-Skill-Stale: 1`——`driver.py` 每轮结束会提醒重拉 `skill.zip`，`deskport.py` 首次发现时在 stderr 打一条。版本跟着脚本走，你不需要手动配任何东西；不带版本头的更老客户端只会收到版本号、不会被打标（breaking change 仍靠 400 里的提示兜底）。
 - 如果你恰好是 Kimi Code，上面整包（`skill.zip`）解开就是标准技能目录，放进 `~/.kimi-code/skills/` 即可当技能用；它不是使用本手册的前提。

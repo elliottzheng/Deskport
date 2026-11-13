@@ -217,6 +217,24 @@ def gzipText(resp):
     return resp
 
 
+def skillVersionHeaders(resp):
+    """技能包版本协商（2026-11-14 用户提议）：智能体面每个响应都带线上版本号，
+    客户端（driver.py/deskport.py）在请求头上报自己 SKILL.md 里的「技能版本」——
+    对不上就再附一个 stale 标记。更新频繁的节奏下，旧脚本不用等撞上 breaking
+    change（如 engine 字段移除）才知道自己落后，driver 在每轮 DONE 行提醒重拉
+    skill.zip。不带版本的客户端（更老的脚本）只收版本号，不被打标。"""
+    path = request.path or ''
+    if not (path.startswith('/api/agent/') or path.startswith('/api/tasks')
+            or path.startswith('/api/worklines') or path.startswith('/api/capability/')):
+        return resp
+    current = metaModule.BUILD
+    resp.headers['X-Deskport-Skill-Version'] = current
+    local = (request.headers.get('X-Deskport-Skill-Version') or '').strip()
+    if local and local != current:
+        resp.headers['X-Deskport-Skill-Stale'] = '1'
+    return resp
+
+
 # 显式注册表：蓝图模块与 register(app) 模块分开，新增模块必须在这里登记。
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
@@ -315,6 +333,7 @@ def create_app(pluginRoots=None, pluginNavDir=None):
         app.add_url_rule(route, endpoint='legacy_' + filename.replace('.', '_'),
                          view_func=_makeLegacyHandler(filename, target), methods=['GET'])
     app.after_request(gzipText)
+    app.after_request(skillVersionHeaders)
 
     _registerModules(app, sock, pluginRoots, pluginNavDir)
     sock.init_app(app)

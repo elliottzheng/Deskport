@@ -27,9 +27,12 @@ def env(tmp_path, monkeypatch):
 
 
 def readPack(name):
-    """按字节读：附件端点原样给字节（raw 与 sha256 都以字节为准）。"""
+    """按字节读：附件端点原样给字节（raw 与 sha256 都以字节为准）。
+    deskport.py 出版前盖版本号（装配即版本，2026-11-14）：这里照服务端同一
+    规则比对，否则磁盘原文永远对不上交付字节。"""
+    from modules import agent_skill_files
     with open(os.path.join(SKILL_DIR, name), 'rb') as f:
-        return f.read()
+        return agent_skill_files.stampedTool(name, f.read())
 
 
 def readPackText(name):

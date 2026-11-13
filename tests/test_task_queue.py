@@ -257,7 +257,9 @@ def test_queued_message_survives_restart_and_delivers_on_resume(env, monkeypatch
                         lambda t: makeClient(record2, sid='sess-r2'))
     r = msg(env, tid, {'text': '重启后续聊'})
     assert r.status_code == 202, r.get_json()
-    for _ in range(100):
+    # 轮询预算 30s：全量跑时 CPU 争抢下 resume 线程（session/load + 清积压）
+    # 可能超过 10s——2026-11-14 全量里这个断言 flakes 过一次，单独跑 5/5 过
+    for _ in range(300):
         if len(record2) >= 2:
             break
         time.sleep(0.1)

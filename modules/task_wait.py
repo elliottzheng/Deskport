@@ -64,6 +64,10 @@ def _waitSnapshot(task, after, ignorePending=None):
                  'tools': sum(1 for e in events if e.get('type') == 'tool'),
                  'autoApproved': sum(1 for e in events
                                      if e.get('type') == 'auto_approved'),
+                 # 2026-11-14 外部智能体反馈 P0-2：自动拒绝（含后台幽灵审批）之前
+                 # 在执行方眼里是"无声无息丢一轮"，主控至少要在轮末统计里看见次数
+                 'autoDenied': sum(1 for e in events
+                                   if e.get('type') == 'auto_denied'),
                  'errors': sum(1 for e in events if e.get('type') == 'error')}
         status = task.get('status') or 'queued'
         pendingPerm = task.get('pendingPermission') or ''

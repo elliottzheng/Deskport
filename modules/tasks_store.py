@@ -167,10 +167,9 @@ class TaskRepository:
                 self.tasks.update(raw)
             dirty = False
             for task in self.tasks.values():
-                # P0-3（外部智能体反馈 2026-11-14，已实测复现）：挂起的审批随
-                # 进程死亡而失效（agent/perm 记录只在内存），标记却留在盘上——
-                # 重启后 /wait 把死审批当活的回报，driver attach 一 POST 就 409
-                # 再误判「回放污染」退出。启动时没有任何活的审批发起方，一律清掉。
+                # P0-3（外部智能体反馈 2026-11-14，已复现）：审批记录只在内存，
+                # 进程一死盘上的 pendingPermission 就是死标记——/wait 把它当活的
+                # 回报，driver 一 POST 就 409 再误判 STALE。启动时一律清掉。
                 if task.get('pendingPermission'):
                     task['pendingPermission'] = ''
                     dirty = True
@@ -256,9 +255,10 @@ class TaskRepository:
             'createdAt': task.get('createdAt', 0), 'endedAt': task.get('endedAt', 0),
             'error': task.get('error', ''),
             'lastText': lastText[:200], 'lastTextTruncated': len(lastText) > 200,
-            # 上一轮是不是"空转"（一个工具都没调、一句话都没回就结束）——
-            # 2026-11-13 中招验收方三次早夭就是这个形态，列表里必须看得见
+            # 上一轮形态（2026-11-13 中招验收方三次早夭）：emptyTurn=0 工具 0 文本
+            # 就结束轮次；silentTurn=调了工具却一句终稿都没落（2026-11-14 P1-4）
             'emptyTurn': bool((task.get('lastTurn') or {}).get('empty')),
+            'silentTurn': bool((task.get('lastTurn') or {}).get('silent')),
         }
 
     def summary(self, task) -> contracts.TaskSummary:

@@ -34,6 +34,11 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 
+# 脚本自带版本：服务端装配技能包时把占位符盖成本次构建号——版本跟着脚本走，
+# 用户零手动（2026-11-14 用户提议的修正：不依赖任何人"遵守"配置，旧脚本
+# 自然带着旧版本，hub 比对后标记 stale 并提醒重拉）。见 app.skillVersionHeaders。
+SKILL_VERSION = '__SKILL_VERSION__'
+
 
 class DeskportError(Exception):
     def __init__(self, status: int, message: str):
@@ -120,6 +125,15 @@ class Deskport:
                 self._ctx.check_hostname, self._ctx.verify_mode = False, ssl.CERT_REQUIRED
                 self._ctx.load_verify_locations(cafile=cafile)
         self.http_timeout = http_timeout
+        self.skillVersion, self.lastHeaders, self._staleWarned = SKILL_VERSION, {}, False
+
+    @property
+    def skillStale(self) -> dict | None:
+        """技能包过期：hub 在响应头里打了 X-Deskport-Skill-Stale 标记；None=最新。"""
+        if self.lastHeaders.get('x-deskport-skill-stale') != '1':
+            return None
+        return {'local': self.skillVersion,
+                'current': self.lastHeaders.get('x-deskport-skill-version', '')}
 
     @staticmethod
     def _read_token(token_file) -> str:
@@ -133,11 +147,24 @@ class Deskport:
         return f"Deskport({self.base_url!r})"
 
     # ---- 底层请求 ----
+    def _warnStaleSkill(self):
+        """本地技能包落后线上时提醒一次（2026-11-14 提议：旧脚本要能收到「请更新」）。"""
+        stale = self.skillStale
+        if not stale or self._staleWarned:
+            return
+        self._staleWarned = True
+        import sys
+        print("deskport: 技能包过期（本地 %s → 线上 %s）——重拉：curl -s -k %s/api/agent/"
+              "skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip -d ./deskport-skill/"
+              % (stale['local'], stale['current'], self.base_url), file=sys.stderr)
+
     def _request(self, method: str, path: str, body: dict | None = None,
                  timeout: float | None = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base_url + path, data=data, method=method)
         req.add_header("X-Agent-Token", self._token)
+        if self.skillVersion:
+            req.add_header("X-Deskport-Skill-Version", self.skillVersion)
         if data is not None:
             req.add_header("Content-Type", "application/json")
         try:
@@ -145,6 +172,8 @@ class Deskport:
                 try:
                     with urllib.request.urlopen(req, context=self._ctx,
                                                 timeout=timeout or self.http_timeout) as r:
+                        self.lastHeaders = {k.lower(): v for k, v in r.headers.items()}
+                        self._warnStaleSkill()
                         return json.loads(r.read().decode("utf-8"))
                 except http.client.IncompleteRead:
                     if method != "GET" or attempt == 2:

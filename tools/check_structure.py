@@ -25,7 +25,7 @@ LEGACY = {
     'config.py': 516,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义
     # .agents/skills/deskport/{deskport,driver}.py 是发给外部智能体的「拷一个文件就能跑」
     # 客户端/驱动（零依赖、也能当 CLI），拆分会破坏这个约定——按单文件登记，只许变短。
-    '.agents/skills/deskport/deskport.py': 675,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait
+    '.agents/skills/deskport/deskport.py': 709,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）
     '.agents/skills/deskport/driver.py': 487,     # 单文件驱动模板（见上注）；2026-11-14 +19=审批 409 分类处理（P0-3）
     'agent_node/acp_session.py': 454,             # ACP 会话单文件实现（见上注）
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
