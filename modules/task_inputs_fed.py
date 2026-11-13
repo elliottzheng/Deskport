@@ -18,7 +18,7 @@ from urllib.parse import quote
 import requests
 
 import config
-from modules import federation_write, fsutil
+from modules import federation_write, fsutil, node_path
 from modules.task_inputs_base import DeliverError, memberError
 
 HTTP_TIMEOUT = 30
@@ -30,6 +30,10 @@ class FedTarget:
     def __init__(self, member):
         self.member = member
         self.name = member.get('name') or member.get('id') or ''
+        # 成员机器的路径语义（批次 NODE-OS）：hub 是 Windows、成员是 Linux
+        # 时拿本机 os.path 拼/归一会把对端路径搅乱；os 未知（老成员）保持
+        # 原行为（本机 os.path）
+        self.pm = node_path.pathModule(node_path.nodeOs(self.name), os.path)
         self.created = []      # [(path, isDir)] 本次落的顶层条目
         self._cache = {}
         self._info = None
@@ -64,12 +68,12 @@ class FedTarget:
         return self._info
 
     def join(self, *parts):
-        return os.path.join(*[str(p) for p in parts if str(p)])
+        return self.pm.join(*[str(p) for p in parts if str(p)])
 
     # ---- 远端探测 ----
     def _names(self, directory):
         """目录下一层名字（小写集合）；目录不存在返回 None。按目录缓存。"""
-        key = os.path.normcase(os.path.normpath(directory))
+        key = self.pm.normcase(self.pm.normpath(directory))
         if key in self._cache:
             return self._cache[key]
         status, data = self._call('GET', '/api/files',
@@ -88,8 +92,8 @@ class FedTarget:
         return self._names(path) is not None
 
     def exists(self, path):
-        parent, name = os.path.split(path)
-        names = self._names(parent or '/')
+        parent, name = self.pm.split(path)
+        names = self._names(parent or self.pm.sep)
         return names is not None and name.lower() in names
 
     # ---- 写 ----
@@ -104,14 +108,14 @@ class FedTarget:
         raise memberError(status, data, self.join(parent, name))
 
     def _forget(self, directory):
-        self._cache.pop(os.path.normcase(os.path.normpath(directory)), None)
+        self._cache.pop(self.pm.normcase(self.pm.normpath(directory)), None)
 
     def ensureDir(self, path):
-        path = os.path.normpath(path)
+        path = self.pm.normpath(path)
         if self.exists(path):
             return False
-        parent = os.path.dirname(path)
-        name = os.path.basename(path)
+        parent = self.pm.dirname(path)
+        name = self.pm.basename(path)
         if not parent or not name:
             raise DeliverError('执行点上的路径不合法: %s' % path)
         if not self.exists(parent):
@@ -121,11 +125,11 @@ class FedTarget:
 
     def _unique(self, directory, name, isDir):
         return fsutil.uniquePath(directory, name, isDir=isDir, start=2, sep='',
-                                 pathmod=os.path, exists=self.exists)
+                                 pathmod=self.pm, exists=self.exists)
 
     def mkdirUnique(self, name, directory, track=True):
         target = self._unique(directory, name, True)
-        parent, base = os.path.split(target)
+        parent, base = self.pm.split(target)
         self._mkdir(parent, base)
         if track:
             self.created.append((target, True))
@@ -133,7 +137,7 @@ class FedTarget:
 
     def _upload(self, name, directory, payload, track):
         target = self._unique(directory, name, False)
-        parent, base = os.path.split(target)
+        parent, base = self.pm.split(target)
         status, data = self._call('POST', '/api/files/upload',
                                   data={'path': parent},
                                   files={'file': (base, payload)})
@@ -174,7 +178,7 @@ class FedTarget:
             return left
         left = self._recycle(base)
         if not left and made.get('inputs'):
-            left = self._recycleEmpty(os.path.dirname(base))
+            left = self._recycleEmpty(self.pm.dirname(base))
         return left
 
     def _recycleEmpty(self, path):

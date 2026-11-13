@@ -73,7 +73,7 @@
                         </select>
                     </label>
                     <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
-                           spellcheck="false" placeholder="远端工作目录，如 /mnt/sda1/yinglin/course">
+                           spellcheck="false" :placeholder="remoteCwdPlaceholder">
                     <template v-if="isLocalRun">
                         <label class="task-mode" for="task-local-cwd">工作目录</label>
                         <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
