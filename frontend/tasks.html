@@ -105,13 +105,19 @@
                 <p class="load-error" v-if="error">{{ error }}</p>
             </div>
 
-            <div class="task-list">
+            <div class="leads-filter" id="leads-filter" v-if="leadsState === 'ok' && leads.length">
+                    <button type="button" class="leads-filter-btn" :class="{ active: !leadFilter }" @click="setLeadFilter('')">全部</button>
+                    <button type="button" class="leads-filter-btn" v-for="l in filterItems()" :key="l.id"
+                            :class="{ active: leadFilter === l.id }" @click="setLeadFilter(l.id)">{{ l.name }}</button>
+                </div>
+
+                <div class="task-list">
                 <button type="button" class="task-row" v-for="t in tasks" :key="t.id"
                         :class="{ active: selectedId === t.id }" @click="select(t)">
                     <span class="task-dot" :class="'is-' + t.status"></span>
                     <span class="task-row-main">
                         <span class="task-row-title">{{ t.title || t.prompt }}</span>
-                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}<template v-if="t.node"> · {{ t.node }}</template></span>
+                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}<template v-if="t.node"> · {{ t.node }}</template><template v-if="t.lead"> · {{ leadName(t.lead) }}</template></span>
                     </span>
                     <span class="task-row-count" v-if="t.resultFiles && t.resultFiles.length">{{ t.resultFiles.length }} 个结果</span>
                 </button>
@@ -240,6 +246,7 @@
 <script src="/assets/js/app-shell.js?v=__BUILD__"></script>
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
 <script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>

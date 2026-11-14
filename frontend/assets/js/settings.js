@@ -496,5 +496,5 @@ const app = createApp({
         },
     },
 });
-app.mixin(WPSettingsCapability.mixin());
+app.mixin(WPSettingsCapability.mixin()); app.mixin(WPSettingsLeads.mixin());
 app.mount('#app');

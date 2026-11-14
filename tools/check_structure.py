@@ -127,7 +127,7 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
                   'TermEnv', 'TermSessionUI', 'TermControls',
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
-                  'WPShareForm',
+                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads',  # 批次 S：主管卡片/任务页筛选（纯函数有 node 单测）
                   # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
                   'WPSettingsCapability'}
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。

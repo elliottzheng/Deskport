@@ -93,3 +93,18 @@
 .capability-deny { color: var(--text-3); }
 .capability-deny-text { flex: 0 0 auto; margin-left: auto; color: var(--text-3); }
 .capability-source { flex: 0 0 auto; color: var(--text-3); }
+
+/* 主管卡片（批次 S）：行结构复用 agent-token-row 的计量，仅补主管特有的
+   头部/令牌 chips/动作排布；触控目标沿用 .settings-dir-remove 的 32px 迷你
+   按钮 + 主操作 44px（S4 底线） */
+.leads-row {
+    padding: 10px; margin-bottom: 8px; border-radius: var(--radius-s);
+    background: var(--bg-2);
+}
+.leads-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.leads-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text-1); overflow-wrap: anywhere; }
+.leads-tokens { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.leads-tokens .agent-token-scope { display: inline-flex; align-items: center; gap: 4px; }
+.leads-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.leads-row .select { flex: 1; min-width: 0; margin-bottom: 0; }
+.leads-row .settings-dir-add { margin: 8px 0 0; }

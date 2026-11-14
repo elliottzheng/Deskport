@@ -140,6 +140,64 @@
         <p v-if="agentTokenOk" class="settings-ok">{{ agentTokenOk }}</p>
     </div>
 
+    <div class="card settings-card" id="leads-card">
+        <div class="card-title">主管</div>
+        <p class="settings-note">主管是指挥链里的纵向节点：把一个令牌绑到主管上，用该令牌建的任务就记它的归属——审计分得清"谁派了谁"。停用主管只拦新建任务，已有任务不受影响。</p>
+
+        <p class="settings-hint" id="leads-loading" v-if="leadsState === 'loading'">正在加载主管列表…</p>
+        <p class="settings-hint settings-warn" id="leads-error" v-else-if="leadsState === 'error'">
+            主管列表没加载出来，暂时看不到已有主管——不要据此认为没有主管。请刷新页面重试。
+        </p>
+        <template v-else-if="leadsState === 'ok'">
+            <p class="settings-hint" id="leads-empty" v-if="!leads.length">还没有主管。主管用来给令牌记归属：先在上面「智能体令牌」签发一个令牌，再在下面建主管把它绑上去。</p>
+
+            <div class="leads-row" v-for="l in leads" :key="l.id" :id="'lead-' + l.id">
+                <div class="leads-row-head">
+                    <span class="leads-name">{{ l.name }}</span>
+                    <span class="agent-token-scope" :class="{ 'agent-token-full': l.status === 'active' }">{{ l.statusText }}</span>
+                    <span class="agent-token-meta">{{ l.kind }}</span>
+                </div>
+                <p class="settings-hint" v-if="l.project">项目：{{ l.project }}</p>
+                <p class="settings-hint" id="'lead-meta-' + l.id">
+                    任务 {{ l.total }} · 在跑 {{ l.running }} · 等待 {{ l.waiting }} · {{ l.lastSeenText }}
+                </p>
+                <div class="leads-tokens" v-if="l.tokens.length">
+                    <span class="agent-token-scope" v-for="tn in l.tokens" :key="tn">{{ tn }}
+                        <button type="button" class="btn btn-ghost settings-dir-remove" @click="unbindToken(l, tn)">解绑</button>
+                    </span>
+                </div>
+                <div class="leads-actions">
+                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="l.status === 'active'" @click="setLeadStatus(l, 'paused')">暂停</button>
+                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="l.status === 'paused'" @click="setLeadStatus(l, 'active')">恢复</button>
+                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="l.status !== 'retired'" @click="setLeadStatus(l, 'retired')">停用</button>
+                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="!l.total && !l.tokens.length" @click="deleteLead(l)">删除</button>
+                </div>
+                <div class="settings-dir-add" v-if="bindable(agentTokens, l.id).length">
+                    <select class="select" v-model="leadBindChoice[l.id]" :id="'lead-bind-' + l.id">
+                        <option value="">选择要绑定的令牌…</option>
+                        <option v-for="t in bindable(agentTokens, l.id)" :key="t.id" :value="t.id">{{ t.name }}</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary" @click="bindToken(l)">绑定</button>
+                </div>
+            </div>
+
+            <div class="settings-subhead">新建</div>
+            <input class="input" id="lead-name" v-model.trim="newLeadName"
+                   placeholder="名称，如 talent（1-24 字符，不可重名）" maxlength="24" spellcheck="false">
+            <input class="input" id="lead-project" v-model.trim="newLeadProject"
+                   placeholder="项目标签，可空（≤40 字符）" maxlength="40" spellcheck="false">
+            <p v-if="leadsError" class="load-error" style="margin-top:12px">{{ leadsError }}</p>
+            <button type="button" class="btn btn-primary settings-submit" id="lead-create"
+                    @click="createLead" :disabled="leadsBusy">
+                {{ leadsBusy ? '处理中…' : '建主管' }}
+            </button>
+            <p class="settings-hint" id="lead-howto">
+                建成后怎么用：① 在上面「智能体令牌」卡片签发一个令牌；② 回到本卡片，在这个主管行里选它、点「绑定」；③ 把接入手册地址和该令牌交给对方——它建的任务就会记在这个主管名下。类型暂为「外部接入」，一键建托管主管在后续批次。
+            </p>
+            <p v-if="leadsOk" class="settings-ok">{{ leadsOk }}</p>
+        </template>
+    </div>
+
     <div class="card settings-card" id="capability-card">
         <div class="card-title">我的权限</div>
         <p class="settings-note">当前这个会话能做什么：下面是生效的规则表和几条固定示例判定。只读展示，不能在这里改；吊销令牌或设备在上面的卡片里。</p>
@@ -333,6 +391,7 @@
 <script src="/assets/js/nav.js?v=__BUILD__"></script>
 <script src="/assets/js/app-shell.js?v=__BUILD__"></script>
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
+<script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/settings-capability.js?v=__BUILD__"></script>
 <script src="/assets/js/settings.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>

@@ -132,7 +132,8 @@
             async refresh() {
                 if (document.visibilityState !== 'visible') { return; }
                 try {
-                    const r = await fetch('/api/tasks?full=1');
+                    const url = WPTasksLeads.taskListUrl('/api/tasks?full=1', this.leadFilter);
+                    const r = await fetch(url);
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                     this.tasks = data.tasks || [];
@@ -493,5 +494,7 @@
                     + '/download?path=' + encodeURIComponent(p);
             },
         },
-    }).mount('#app');
+    });
+app.mixin(WPTasksLeads.mixin());
+app.mount('#app');
 })();
