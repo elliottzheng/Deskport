@@ -17,18 +17,18 @@
          之后仍存在输出重定向 >；
        - find 的 -exec / -delete；xargs 后面跟非只读命令（含 xargs 悬空）；
     3. 只读工具（kind=read 或名称白名单）→ allow；
-    4. execute：剔除引号后按两侧带空白的 && || | ; 与换行拆段，每段都命中
-       任一 allowCommands → allow；管道下游的只读消费段（`|` 右侧的
-       head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段
-       仍须整段命中（批次 A 返工：`cd "<工作区>" && python deskport/… 2>&1
-       | head -40` 这种自然形状不该整体挂起；`rm -rf x | head` 的 rm 段
-       照旧 ask；消费段允许带 2>/dev/null / 2>&1，其它重定向仍不豁免）；
+    4. execute：剔除引号后按 && || | ; 裸 `&`（bash 后台分隔符，两侧都执行
+       ——三验返工）与换行拆段，每段都命中任一 allowCommands → allow；管道
+       下游只读消费段（`|` 右侧 head/tail/grep/wc/sort/uniq 且只带普通参数）
+       豁免逐段命中，上游段仍须整段命中（`cd "<工作区>" && python deskport/…
+       2>&1 | head -40` 不该挂；`rm -rf x | head` 照旧 ask；消费段允许带
+       2>/dev/null / 2>&1，其它重定向不豁免）；
     4b. 二次返工（主控拍板）：policy 带 readonlyRoots（一键托管主管：工作区
        + 项目目录 cwd）时，每段都是边界内的只读命令（cat/type/head/tail/
-       ls/dir/find/grep/rg/wc/file/stat，find 不带写执行参数）且所有路径
-       参数（含 cd 目标）规范化后落在根内 → allow（rule=readonly-roots）；
-       `..`、符号链接、绝对路径越界、不可判定、其它重定向一律不放行
-       （判定在 task_policy_readonly）；
+       ls/dir/find/grep/rg/wc/file/stat，旗标只在 task_policy_readonly 的
+       FLAGS 白名单表内）且所有路径参数（含 cd 目标）realpath 解析后落在
+       根内 → allow（rule=readonly-roots）；解析结果再查敏感文件（8.3 短名
+       /链接后的 .agent-token 也逃不掉）；越界/表外旗标/% $ ~ ` ! 不放行；
     5. 写文件工具（edit/delete）的路径（审批请求带出的 paths——Edit/Write 的
        diff 块实测只有 path、args 里没有 + 参数里的路径）全部落在 allowPaths
        下 → allow；
@@ -384,8 +384,12 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
         # segments 判定看不见，不能漏进白名单
         roots = [str(r).strip() for r in policy['readonlyRoots']
                  if str(r or '').strip()]
-        if roots and segmentsReadonly(cmdNoHeredoc, str(cwd or ''), roots):
-            return 'allow', 'readonly-roots'
+        if roots:
+            ok, sensitive = segmentsReadonly(cmdNoHeredoc, str(cwd or ''), roots)
+            if sensitive:   # realpath 展开 8.3/符号链接后命中敏感文件
+                return 'ask', 'deny:sensitive-file'
+            if ok:
+                return 'allow', 'readonly-roots'
 
     if kind in WRITE_KINDS or WRITE_NAMES.match(name or ''):
         writePaths = explicitPaths + list(_pathsInArgs(args))
