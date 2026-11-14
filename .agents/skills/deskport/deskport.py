@@ -294,20 +294,20 @@ class Deskport:
 
     def approve(self, task_id: str, request_id: str, deny: bool = False,
                 option_id: str = "") -> dict:
-        """审批一个挂起的请求（POST /api/tasks/<id>/permission）：主管处理下属
-        escalation 的一行式。deny=True 拒绝；否则没给 option_id 就从该任务的
-        permission_request 事件里取第一个「允许」项（事件流里带着 options）。"""
+        """审批挂起的请求（主管处理下属 escalation 的一行式）：deny=True 拒绝；
+        否则自取 allow_once 选项，取不到就报错（不静默授予会话级授权）走 report。"""
         if not deny and not option_id:
-            events = self._request(
-                "GET", f"/api/tasks/{task_id}/events?types=permission_request"
-            ).get("events") or []
-            for e in events:
+            ev = self._request("GET", f"/api/tasks/{task_id}/events"
+                              "?types=permission_request").get("events") or []
+            for e in ev:
                 if str(e.get("requestId") or "") == str(request_id):
                     for opt in e.get("options") or []:
-                        if opt.get("kind") in ("allow_once", "allow_always"):
+                        if opt.get("kind") == "allow_once":
                             option_id = opt.get("optionId") or ""
                             break
                     break
+            if not option_id:
+                raise ValueError(f"请求 {request_id} 没有 allow_once 选项（不授予会话级授权）——请 report 上交用户")
         return self._request("POST", f"/api/tasks/{task_id}/permission",
                              {"requestId": request_id, "optionId": option_id,
                               "deny": bool(deny)})

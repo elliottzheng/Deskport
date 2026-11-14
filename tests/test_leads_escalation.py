@@ -322,8 +322,10 @@ def test_unbound_task_permission_writes_nothing(env):
 
 
 def test_own_hosted_task_permission_no_escalation(env):
-    """防呆（补 2 同款）：主管自己托管任务（task.lead = 主管）挂审批 →
-    不写收件箱、不唤醒——它等用户直接批。"""
+    """防呆（补 2 同款 + 批次 A 返工）：主管自己托管任务（task.lead = 主管）
+    挂审批 → 不写 up 条目、不唤醒（不能上交给自己）；但补一条 down 方向的
+    用户可见提示（「主管 <名> 自己的命令需要你批准：…」）——老链路在这里
+    静默停摆，用户面板上看不到卡住的原因。"""
     login(env.client)
     tok = newToken(env, 'T1')
     L = newLead(env, '甲')
@@ -340,4 +342,44 @@ def test_own_hosted_task_permission_no_escalation(env):
     task['policy'] = {'timeoutSec': 1}
     value = runner._handleAcpPermission(task, agent, permParams('c-h'), 'req-h')
     assert value is None
-    assert inboxEntries(env, L) == []
+    assert inboxEntries(env, L) == []          # up 侧零条目（不唤醒、不上交）
+    down, _last = leads_inbox.entriesAfter(L, 0, 'down')
+    assert len(down) == 1                       # down 侧一条用户可见提示
+    entry = down[0]
+    assert entry['dir'] == 'down' and entry['kind'] == 'notice'
+    assert entry['text'].startswith('主管 甲 自己的命令需要你批准：Bash ')
+    assert '「{"command": "rm -rf build"}」' in entry['text']   # 参数摘要≤80字
+    assert entry['ref'] == {'task': H}
+
+
+def test_handed_over_notice_no_promise_when_lead_retired(env):
+    """返工（独立验收：停用=吊销令牌）：主管 retired 后"仍可补批"不成立
+    （审批调用只会 401）——上交 notice 文案改为「主管已停用，请你直接处理」，
+    用户从面板批准后任务继续（by=面板）。"""
+    login(env.client)
+    env.monkeypatch.setattr(configMod, 'getLeadApprovalGraceSec', lambda: 1)
+    L, _tid, _agent, tok = hostedLead(env)
+    task, agent = subordinate(env, L, tok)
+    task['policy'] = {'timeoutSec': 30}
+    env.repo.save()
+    assert call(env, 'patch', '/api/settings/leads/%s' % L,
+                {'status': 'retired'}).status_code == 200
+    th = hangPermission(env, task, agent, 'req-r', 'c-r')
+
+    entries = waitEntries(env, L, 2)
+    assert [e['kind'] for e in entries] == ['escalation', 'notice']
+    assert '已上交用户' in entries[1]['text'] and 'req-r' in entries[1]['text']
+    assert '主管已停用，请你直接处理' in entries[1]['text']
+    assert '仍可补批' not in entries[1]['text']
+    # 吊销后主管令牌批不了（401）；用户从面板批准 → 继续
+    resp = call(env, 'post', '/api/tasks/%s/permission' % task['id'],
+                {'requestId': 'req-r', 'optionId': 'opt-allow'}, token=tok['token'])
+    assert resp.status_code == 401, resp.get_json()
+    resp = call(env, 'post', '/api/tasks/%s/permission' % task['id'],
+                {'requestId': 'req-r', 'optionId': 'opt-allow'})
+    assert resp.status_code == 200, resp.get_json()
+    th.join(timeout=10)
+    assert not th.is_alive()
+    results = [e for e in env.repo.get(task['id'])['events']
+               if e.get('type') == 'permission_result']
+    assert results[-1]['status'] == 'approved' and results[-1]['by'] == '面板'

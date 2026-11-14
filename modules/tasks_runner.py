@@ -371,8 +371,8 @@ def _handleAcpPermission(task, agent, params, requestId):
             agent['perm']['seq'] = ev.get('seq')
     # 批次 A（A4-1）：有主管的下属任务——审批请求立刻上交主管（escalation
     # 条目 + 立即唤醒，与用户发话同一条旁路），替换 P3 里同一位置的 notice
-    # （不要两条都写）。主管自己的托管任务与没绑主管的任务不写（前者等用户
-    # 直接批，后者行为与现在逐字一致）
+    # （不要两条都写）。主管自己的托管任务与没绑主管的任务不写（前者另由
+    # leads_escalation 补 down 用户可见提示；后者行为与现在逐字一致）
     escLead = leads_escalation.escalatePermission(task, title, argsForEvent,
                                                   str(requestId))
     try:

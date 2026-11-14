@@ -478,7 +478,12 @@ DELETE /api/agent/ssh/sessions/<sid>
   selected / cancelled 两种 outcome，带不了原因文字）；② 轮次之间收到的
   审批若 callId 在本任务 tool 事件里查不到（后台幽灵审批），自动拒绝
   （`auto_denied rule=orphan`），不挂起、不挡 message。没有 policy 的
-  任务两条都不生效，行为不变；
+  任务两条都不生效，行为不变。命令按 `&& || | ;` 拆段后每段都命中
+  `allowCommands` 才放行；**管道下游的只读消费段**（`|` 右侧的
+  head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段仍须
+  整段命中（`cat .agent-token | head`、`rm -rf x | head` 照旧 ask）——
+  托管主管的自然形状 `cd "<工作区>" && python deskport/deskport.py --help
+  2>&1 | head -40` 不断链；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
   都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
   用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -809,12 +814,19 @@ policy 判定为「需要询问」时：
    令牌对子树任务直接可调（无需额外放开）。
 3. 主管在 `leadApprovalGraceSec`（config，默认 300 秒）内没有决定：审批**仍
    挂着、不自动拒绝**，进入用户的「等你处理」（按 `pendingPermission` 列出），
-   并往收件箱补一条 `notice`「审批已上交用户」。主管事后仍可补批。
+   并往收件箱补一条 `notice`「审批已上交用户」。主管事后仍可补批；主管被停用
+   （retired）时令牌已吊销、补批只会 401，notice 文案改为「主管已停用，请你
+   直接处理」。
 4. 留痕：事件流里 `permission_result` 结果事件带 `by`（主管令牌名 / 面板）；
    超时与取消没有决定者，不带这个键。
 5. 时间窗：节点侧审批 900 秒兜底超时不变（节点协议不动）——**主管 + 用户合计
    有约 15 分钟处理窗口**；`taskPermissionTimeoutSec`（默认 1800s）到点仍按
    超时拒绝，与以前逐字一致。
+
+主管**自己**的托管任务撞审批（返工项）：不上交、不唤醒（不能当自己的下属），
+但往该主管箱里写一条 `dir='down', kind='notice'` 的用户可见提示——「主管 <名>
+自己的命令需要你批准：<工具名> <参数摘要≤80字>」——指挥台/设置页因此看得见
+卡住的原因；没绑主管的任务仍零条目。
 
 ## 重启语义（如实版）
 

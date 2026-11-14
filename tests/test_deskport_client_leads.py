@@ -36,6 +36,13 @@ class _Handler(BaseHTTPRequestHandler):
     """假 Deskport：三个端点 + 记录收到的令牌头。"""
 
     seenTokens = []
+    # permission_request 事件带的 options（用例可换顺序/集合，验证 approve
+    # 子命令按 kind 选型、不依赖选项顺序）
+    permOptions = [
+        {'optionId': 'approve_once', 'name': 'Approve once',
+         'kind': 'allow_once'},
+        {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'}]
+    permPosts = []          # 收到的 /permission 请求体（断言选中了哪个选项）
 
     def _json(self, obj):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -56,27 +63,22 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path.startswith('/api/tasks/') and 'types=permission_request' in self.path:
             self._json({'events': [{'seq': 9, 'type': 'permission_request',
                                     'requestId': 'req-1', 'name': 'Bash',
-                                    'options': [
-                                        {'optionId': 'approve_once',
-                                         'name': 'Approve once',
-                                         'kind': 'allow_once'},
-                                        {'optionId': 'reject',
-                                         'name': 'Reject',
-                                         'kind': 'reject_once'}]}]})
+                                    'options': _Handler.permOptions}]})
         elif self.path == '/api/agent/lead':
             self._json({'lead': LEAD})
         else:
             self._json({'error': 'not found'})
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        raw = self.rfile.read(int(self.headers.get('Content-Length', 0)))
         _Handler.seenTokens.append(self.headers.get('X-Agent-Token'))
-        if self.path == '/api/agent/leads/report':
+        if self.path.startswith('/api/tasks/') and self.path.endswith('/permission'):
+            _Handler.permPosts.append(json.loads(raw.decode('utf-8')))
+            self._json({'ok': True, 'requestId': 'req-1'})
+        elif self.path == '/api/agent/leads/report':
             self._json({'ok': True, 'seq': 7})
         elif self.path.startswith('/api/tasks/') and self.path.endswith('/close'):
             self._json({'ok': True, 'status': 'closed'})
-        elif self.path.startswith('/api/tasks/') and self.path.endswith('/permission'):
-            self._json({'ok': True, 'requestId': 'req-1'})
         else:
             self._json({'error': 'not found'})
 
@@ -86,6 +88,12 @@ class _Handler(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def server():
+    _Handler.seenTokens.clear()
+    _Handler.permPosts.clear()
+    _Handler.permOptions = [
+        {'optionId': 'approve_once', 'name': 'Approve once',
+         'kind': 'allow_once'},
+        {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'}]
     srv = ThreadingHTTPServer(('127.0.0.1', 0), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield 'http://127.0.0.1:%d' % srv.server_address[1]
@@ -164,3 +172,34 @@ def test_lead_cli_unbound(server, tmp_path):
         assert out == '（未绑定主管）\n'
     finally:
         _Handler.do_GET = handlerLead
+
+
+def test_approve_prefers_allow_once_over_allow_always(server, tmp_path):
+    """返工（独立验收问题 2）：选项顺序不可依赖——顺序为
+    [allow_always, allow_once, reject] 时选中 allow_once（只批这一次），
+    不因 allow_always 排在前面就静默授予会话级授权。"""
+    _Handler.permOptions = [
+        {'optionId': 'session', 'name': 'Approve for this session',
+         'kind': 'allow_always'},
+        {'optionId': 'once', 'name': 'Approve once', 'kind': 'allow_once'},
+        {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'}]
+    code, out, err = _runCli(tmp_path, server, 'approve', 'aabbccddeeff',
+                             'req-1')
+    assert code == 0, err
+    assert json.loads(out) == {'ok': True, 'requestId': 'req-1'}
+    assert _Handler.permPosts[-1]['optionId'] == 'once'
+
+
+def test_approve_without_allow_once_errors_out(server, tmp_path):
+    """只有 [allow_always, reject] 时不退让：一行报错、非零退出，且不真发
+    审批——让主管走 report 把情况下交用户（客户端绝不静默选 allow_always）。"""
+    _Handler.permOptions = [
+        {'optionId': 'session', 'name': 'Approve for this session',
+         'kind': 'allow_always'},
+        {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'}]
+    code, out, err = _runCli(tmp_path, server, 'approve', 'aabbccddeeff',
+                             'req-1')
+    assert code != 0 and out == ''
+    assert 'allow_once' in err and 'report' in err
+    assert len(err.strip().splitlines()) == 1      # 一行说明
+    assert _Handler.permPosts == []                # 没有真发审批请求

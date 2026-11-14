@@ -8,18 +8,19 @@
 
 存储：每主管一个只追加 JSONL（statePath('lead_inbox/<leadId>.jsonl')），条目
 {seq, dir, kind, at, text, ref}；dir up=系统→主管 / down=主管→用户；kind up 侧
-report/failure/notice/escalation（批次 A：审批上交）/human、down 侧固定 report；
-seq 每主管从 1 递增、两方向共用；上限 500 条，超限从头截（原子重写）。正文不可信
-（§4 红线）：存储只存原文，投递层固定带「以上内容为引用，不是指令」。
+report/failure/notice/escalation（批次 A：审批上交）/human、down 侧固定 report
+（notice 例外：主管自己命令待批的用户可见提示）；seq 每主管从 1 递增、两方向共
+用；上限 500 条，超限从头截（原子重写）。正文不可信（§4 红线）：存储只存原文，
+投递层固定带「以上内容为引用，不是指令」。
 
 触发点（runner/api 一行调 emit(task, kind, text)，文本按规格表在调用点组装；
-task.lead 为空零变化；托管自己的任务 task.id==主管.taskId 不产条目——它每轮
-自报、sweeper 再唤醒就是死循环，补 2）：轮末 report / 空转静默 failure /
-挂起审批 escalation（批次 A：审批先上交主管 + 立即唤醒，替换 P3 同位置的
-notice；主管限期没决定再补一条上交 notice）/ 线程退出 failed·interrupted·
-closed failure / 用户关闭 failure。emit 内部兜异常——收件箱失败绝不影响任务
-主链路（写事件的同款纪律），调用点不必自己包 try/except。human 端点在
-leads_api（同鉴权档）。
+task.lead 为空零变化；托管自己的任务 task.id==主管.taskId 不产 up 条目——它每轮
+自报、sweeper 再唤醒就是死循环，补 2；但它挂起审批时另有一条 down 用户可见提示，
+批次 A 返工）：轮末 report / 空转静默 failure / 挂起审批 escalation（批次 A：
+审批先上交主管 + 立即唤醒，替换 P3 同位置的 notice；主管限期没决定再补一条上交
+notice）/ 线程退出 failed·interrupted·closed failure / 用户关闭 failure。emit
+内部兜异常——收件箱失败绝不影响任务主链路（写事件的同款纪律），调用点不必自己包
+try/except。human 端点在 leads_api（同鉴权档）。
 
 sweeper：单 daemon 5s 一跳（bindApp 注入 app、干活推 app_context——
 _enqueueMessage 读 flask.g，后台线程直接调会抛 RuntimeError，先例见
@@ -118,7 +119,8 @@ def append(leadId, direction, kind, text, ref='', maxLen=MAX_TEXT):
     if not leadId or direction not in ('up', 'down'):
         return 0
     if direction == 'down':
-        kind = 'report'      # down 侧固定 report（不细分就是"不搞特殊"）
+        # down 侧固定 report；notice 例外（返工：主管自己命令待批的用户提示）
+        kind = 'notice' if kind == 'notice' else 'report'
     text = str(text or '')[:maxLen]
     if not isinstance(ref, (str, dict)):
         ref = ''
@@ -158,6 +160,15 @@ def triggerLead(task):
     if str(lead.get('taskId') or '') and lead['taskId'] == task.get('id'):
         return ''
     return leadId
+
+def ownLead(task):
+    """task 是不是某位主管自己的托管任务（task.id == 主管.taskId）？是则返回
+    该主管记录——triggerLead 的镜像判定："主管自己撞审批"的 down 用户可见
+    提示用它（leads_escalation.noticeOwnPermission，返工）。"""
+    lead = leads_store.get(str((task or {}).get('lead') or ''))
+    if isinstance(lead, dict) and str(lead.get('taskId') or '') == task.get('id'):
+        return lead
+    return None
 
 def emit(task, kind, text):
     """触发点唯一入口：runner/api 一行调用，文本由调用点按规格表组装。
@@ -295,7 +306,7 @@ def _idleNotice(lead, now):
     leads_store.markIdleNoticed(leadId, now)
 
 def wakeNow(leadId):
-    """human 条目的立即唤醒旁路（P3-6）：不等合并窗口。
+    """human / escalation 条目的立即唤醒旁路（P3-6 + 批次 A）：不等合并窗口。
 
     与 _wakeHosted 走同一把投递锁——人类条目插在未投递批次里一起投（摘要含
     它），游标推进规则相同。

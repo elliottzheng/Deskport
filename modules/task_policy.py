@@ -18,7 +18,11 @@
        - find 的 -exec / -delete；xargs 后面跟非只读命令（含 xargs 悬空）；
     3. 只读工具（kind=read 或名称白名单）→ allow；
     4. execute：剔除引号后按两侧带空白的 && || | ; 与换行拆段，每段都命中
-       任一 allowCommands → allow；
+       任一 allowCommands → allow；管道下游的只读消费段（`|` 右侧的
+       head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段
+       仍须整段命中（批次 A 返工：`cd "<工作区>" && python deskport/… 2>&1
+       | head -40` 这种自然形状不该整体挂起；`rm -rf x | head` 的 rm 段
+       照旧 ask）；
     5. 写文件工具（edit/delete）的路径（审批请求带出的 paths——Edit/Write 的
        diff 块实测只有 path、args 里没有 + 参数里的路径）全部落在 allowPaths
        下 → allow；
@@ -31,6 +35,8 @@
 import json
 import os
 import re
+
+from modules import task_policy_pipe
 
 READONLY_KINDS = {'read'}
 WRITE_KINDS = {'edit', 'delete'}
@@ -46,7 +52,6 @@ DANGER_SUBST = re.compile(r'\$\(|`')
 STRIP_DQ = re.compile(r'"[^"]*"')
 STRIP_SQ = re.compile(r"'[^']*'")
 REDIRECT_EXEMPT = ('2>&1', '>/dev/null', '2>/dev/null', '1>/dev/null')
-SEGMENT_SPLIT = re.compile(r'\s*(?:&&|\|\||\||;)\s*|\n')
 FIND_UNSAFE = re.compile(r'(?:^|[\s;&|])-(?:exec|delete)\b')
 XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
@@ -352,7 +357,7 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
                 return 'ask', 'danger:redirect'
         if FIND_UNSAFE.search(stripped):
             return 'ask', 'danger:find'
-        segments = [s for s in SEGMENT_SPLIT.split(stripped) if s.strip()]
+        segments = [s for s, _ in task_policy_pipe.splitSegments(stripped)]
         if XARGS.search(stripped):
             # xargs 的消费命令：同段后继词，或（悬空时）下一个段的首词；
             # 拿不到消费命令、或消费命令非只读 → ask
@@ -380,7 +385,10 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
         return 'allow', 'read-only'
 
     if cmd.strip() and segments and allowRes:
-        if all(any(r.search(seg) for r in allowRes) for seg in segments):
+        # 批次 A 返工：管道下游的只读消费段豁免逐段命中（主管的自然形状
+        # `cd "<工作区>" && python deskport/deskport.py --help 2>&1 | head -40`
+        # 不该整体挂起等人工）；上游段仍须整段命中 allowCommands
+        if task_policy_pipe.segmentsAllowed(stripped, cmdNoHeredoc, allowRes):
             return 'allow', 'allowCommands'
 
     if kind in WRITE_KINDS or WRITE_NAMES.match(name or ''):

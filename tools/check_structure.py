@@ -93,8 +93,8 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('feedback', 'feedback_store'),
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
-    # leads_hosted（批次 A 一键托管主管，编排层：建任务核心/技能包/令牌名额/吊销入口）+ leads_escalation（A4 审批上交的条目写入，判定与投递走 leads_inbox 公开面；tasks_runner 审批处一行调它）
-    ('leads_hosted', 'tasks_api'), ('leads_hosted', 'tasks_store'), ('leads_hosted', 'agent_skill_files'), ('leads_hosted', 'agent_tokens'), ('leads_hosted', 'agent_api'), ('leads_hosted', 'leads_store'), ('leads_api', 'leads_hosted'), ('leads_escalation', 'leads_inbox'), ('tasks_runner', 'leads_escalation'),    # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
+    # leads_hosted（批次 A 一键托管主管，编排层：建任务核心/技能包/令牌名额/吊销入口）+ leads_escalation（A4 审批上交的条目写入，判定与投递走 leads_inbox 公开面；tasks_runner 审批处一行调它；返工：读 leads_store 判主管是否已停用——令牌吊销后"仍可补批"不成立，notice 文案改请用户直接处理）
+    ('leads_hosted', 'tasks_api'), ('leads_hosted', 'tasks_store'), ('leads_hosted', 'agent_skill_files'), ('leads_hosted', 'agent_tokens'), ('leads_hosted', 'agent_api'), ('leads_hosted', 'leads_store'), ('leads_api', 'leads_hosted'), ('leads_escalation', 'leads_inbox'), ('leads_escalation', 'leads_store'), ('tasks_runner', 'leads_escalation'),    # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
     ('tasks_api', 'agent_nodes'),     # 执行点存在性校验/寻址/模型声明
     ('tasks_api', 'task_cwd'),        # cwd 前置校验（远端 cwdRoots, 批次 B3）
     ('tasks_api', 'task_node'),       # 执行点语义

@@ -15,20 +15,24 @@ P3 里同一位置的 notice（不要两条都写）。
 
 只对 task.lead 非空、且不是该主管自己托管任务的下属任务生效
 （leads_inbox.triggerLead 的判定）；没绑主管的任务行为与现在逐字一致。
+主管**自己**的托管任务撞审批走 noticeOwnPermission：triggerLead 对它不写
+（不能上交给自己），老链路于是静默停摆——补一条 down 方向的用户可见提示，
+指挥台/设置页能看见卡住的原因（批次 A 返工，不唤醒、不上交）。
 正文不可信（§4 红线）：参数摘要一律引用形态（「」包起来）。
 """
 import json
 import logging
 
-from modules import leads_inbox
+from modules import leads_inbox, leads_store
 
 log = logging.getLogger('leads_escalation')
 
 MAX_ARGS_SUMMARY = 200     # 审批参数摘要上限（规格 A4-1：≤200 字，引用形态）
+OWN_ARGS_SUMMARY = 80      # 主管自己命令的摘要上限（给用户看一眼，比 200 短）
 
 
-def _argsSummary(args):
-    """审批参数摘要：对象/字符串统一成 ≤200 字的引用形态。
+def _argsSummary(args, cap=MAX_ARGS_SUMMARY):
+    """审批参数摘要：对象/字符串统一成 ≤cap 字的引用形态。
 
     引用形态 = 包一层「」——收件箱里的下属内容一律是引用不是指令（§4 红线），
     主管读到时不会把参数文本当成给自己的命令。
@@ -37,7 +41,7 @@ def _argsSummary(args):
         text = json.dumps(args, ensure_ascii=False)
     else:
         text = str(args or '')
-    text = ' '.join(text.split())[:MAX_ARGS_SUMMARY]
+    text = ' '.join(text.split())[:cap]
     return '「%s」' % text if text else '「(无参数)」'
 
 
@@ -46,10 +50,15 @@ def escalatePermission(task, title, args, requestId):
 
     内部兜异常——收件箱失败绝不影响任务主链路（写事件的同款纪律），调用点
     （tasks_runner._handleAcpPermission）不需要自己包 try/except。
+
+    triggerLead 不写有两种：没绑主管（行为与老链路逐字一致）与主管自己的
+    托管任务（不能上交给自己）——后者补一条 down 方向的用户可见提示
+    （noticeOwnPermission，批次 A 返工），否则链路静默停摆。
     """
     try:
         leadId = leads_inbox.triggerLead(task)
         if not leadId:
+            noticeOwnPermission(task, title, args)
             return ''
         text = '任务 %s 请求审批：%s，参数 %s（requestId %s）' % (
             str(task.get('id') or '')[:8], str(title or '工具调用')[:60],
@@ -68,10 +77,47 @@ def escalationHandedOver(task, requestId, graceSec):
     """主管限期没决定（A4-3）：补一条 notice「审批已上交用户」。
 
     审批本身仍挂着、不自动拒绝；这条 notice 只是让主管知道时限过了、用户
-    已经能看见它。
+    已经能看见它。停用（retired）主管的令牌已吊销（规格 A1 末段，
+    leads_hosted.revokeLeadTokens）——那种情况下不再承诺"仍可补批"（吊销后
+    审批调用只会 401），文案改成请用户直接处理；记录被删同样不能批。
     """
     leads_inbox.emit(task, 'notice',
                      '任务 %s 的审批已上交用户（requestId %s，主管 %d 秒未'
-                     '决定；你仍可补批）'
+                     '决定；%s）'
                      % (str((task or {}).get('id') or '')[:8],
-                        str(requestId or '')[:40], int(graceSec or 0)))
+                        str(requestId or '')[:40], int(graceSec or 0),
+                        _handOverTail(task)))
+
+
+def _handOverTail(task):
+    """上交 notice 的结尾文案：只有主管确实还能批才承诺"仍可补批"。"""
+    lead = leads_store.get(str((task or {}).get('lead') or ''))
+    if not isinstance(lead, dict) or str(lead.get('status') or '') == 'retired':
+        return '主管已停用，请你直接处理'
+    return '你仍可补批'
+
+
+def noticeOwnPermission(task, title, args):
+    """主管自己的托管任务撞审批（批次 A 返工）：写一条 down 方向的用户可见
+    提示——「主管 <名> 自己的命令需要你批准：<工具名> <参数摘要≤80字>」。
+
+    为什么需要：这种任务 triggerLead 不写（不能上交给自己），老链路于是
+    不写收件箱、不唤醒任何人，用户面板上看不到卡住的原因（例 11 的静默
+    停摆点）。down 条目在指挥台/设置页可见（leads_inbox.append 的 notice
+    例外）；这里不唤醒、不上交——等用户直接批。内部兜异常，不影响任务
+    主链路。返回写进的 seq（0 = 没写：不是主管自己的托管任务）。
+    """
+    try:
+        lead = leads_inbox.ownLead(task)
+        if not lead:
+            return 0
+        return leads_inbox.append(
+            str(lead.get('id') or ''), 'down', 'notice',
+            '主管 %s 自己的命令需要你批准：%s %s'
+            % (str(lead.get('name') or lead.get('id') or '')[:24],
+               str(title or '工具调用')[:40],
+               _argsSummary(args, OWN_ARGS_SUMMARY)),
+            {'task': str(task.get('id') or '')})
+    except Exception as e:
+        log.warning('lead own-permission notice failed: %s', e)
+        return 0
