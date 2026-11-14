@@ -36,12 +36,12 @@ LEGACY = {
                                                   # 下一步把主机解析与入参归一拆成独立小模块
     'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
-    'modules/tasks_api.py': 966,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）
+    'modules/tasks_api.py': 981,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）
     'modules/tasks_runner.py': 752,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）
     'modules/tasks_store.py': 442,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
-    'tests/test_tasks_api.py': 1581,              # 任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）
+    'tests/test_tasks_api.py': 1620,              # 任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）
 }
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码

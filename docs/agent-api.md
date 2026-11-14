@@ -566,7 +566,10 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 - 超时返回 `status: running`——带上 `lastSeq` 再调一次即可；断线/换端/重启
   后续接也一样：只保存 lastSeq，`wait?after=lastSeq` 不丢、不重；
 - `POST /api/tasks`、`/message`、`/permission` 都支持 `"wait": <秒>`，
-  发完直接按同样语义阻塞返回，省一次往返；
+  发完直接按同样语义阻塞返回，省一次往返；`"wait"` 字段 0/非数字 = 不等待
+  （2026-11-14 P3b 起字符串 `"0"` 不再等 1 秒——原先落进 max(1, …) 白等 1s）；
+- `/wait` 端点的 `timeout` **查询参**契约不变：缺省/非数字 300，0/负数等
+  1 秒（调用方拿 `timeout=0` 当快速探针用），上限 600；
 - 实现：服务端条件变量驱动（Flask threaded 模式，每个等待占一个工作线程，
   无忙等）；SSE 与轮询端点保留作备用。
 

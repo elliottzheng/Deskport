@@ -27,7 +27,8 @@ from modules import leads_inbox, leads_store
 from modules import model_availability
 from modules import events
 from modules import task_inputs
-from modules.task_wait import _blockWait, _parseWaitSeconds, _waitSnapshot
+from modules.task_wait import (_blockWait, _parseWaitSeconds, _waitSnapshot,
+                               parseWaitSeconds)
 
 blueprint = Blueprint('tasks', __name__)
 log = logging.getLogger('tasks')
@@ -367,6 +368,23 @@ def getTask(task, taskId):
     return jsonify({'task': out})
 
 
+def _waitTimeoutSec(value):
+    """/wait 的 timeout 解析：缺省/非数字 300；0/负数等 1 秒。
+
+    与 wait 字段（0/非数字 = 不等待，P3b）刻意不同：timeout 的对外契约自
+    R4 起就是「0/负数 → max(1, …) 等 1s」，调用方拿 timeout=0 当快速探针；
+    parseWaitSeconds 把 0/负数归并成 None 后，这里显式补回老行为——否则
+    `or 300` 会把探针变成挂住 5 分钟（P3b 退回整改实测复现）。
+    """
+    secs = parseWaitSeconds(value)
+    if secs:
+        return secs
+    try:
+        return 1 if int(value) <= 0 else 300
+    except (TypeError, ValueError):
+        return 300
+
+
 @blueprint.route('/api/tasks/<taskId>/wait')
 @taskRoute
 def taskWait(task, taskId):
@@ -374,7 +392,7 @@ def taskWait(task, taskId):
         after = int(request.args.get('after') or 0)
     except ValueError:
         after = 0
-    timeout = _parseWaitSeconds(request.args.get('timeout'), cap=600) or 300
+    timeout = _waitTimeoutSec(request.args.get('timeout'))
     return jsonify(_blockWait(task, after, timeout))
 
 
