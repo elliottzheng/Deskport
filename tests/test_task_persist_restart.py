@@ -327,3 +327,38 @@ def test_double_patch_last_one_wins(env):
     assert all(e['type'] != 'tool_args_patch' for e in body['events'])
     tool = next(e for e in body['events'] if e.get('callId') == 'c1')
     assert tool['args'] == '{"command": "second"}'
+
+
+def test_fragment_first_frame_args_backfilled(env):
+    """流式首帧残片（独立验收 2026-11-15）：tool 事件 args 只记到 "{"——
+    残片也触发回填，补丁行照常写 jsonl；内存与重启后（/events 与
+    /event/<seq>）都是完整参数。"""
+    task, toolSeq = _toolEventNoArgs(env)
+    with env.repo.lock:
+        task['events'][-1]['args'] = '{'          # 首帧残片（旧守卫会停在这）
+    tasks_api.runner._backfillToolArgs(task, 'c1', '{"command": "ls -la /home"}')
+    before = [dict(e) for e in task['events']]
+    assert before[-1]['args'] == '{"command": "ls -la /home"}'
+    patchLines = [json.loads(l) for l in
+                  (env.tmp / 'logs' / (task['id'] + '.jsonl'))
+                  .read_text(encoding='utf-8').splitlines()
+                  if 'tool_args_patch' in l]
+    assert len(patchLines) == 1 and patchLines[0]['targetSeq'] == toolSeq
+    _restart(env)
+    after = env.client.get('/api/tasks/%s/events?after=0' % task['id'],
+                           headers=H).get_json()['events']
+    assert after == before
+    resp = env.client.get('/api/tasks/%s/event/%d' % (task['id'], toolSeq),
+                          headers=H).get_json()
+    assert resp['event']['args'] == '{"command": "ls -la /home"}'
+
+
+def test_needs_backfill_predicate():
+    """残片判定：空/None/"{"/"["/纯空白 → 需回填；"{}"/"[]"/完整 JSON/
+    非 JSON 普通字符串 → 不回填（不被迟到的参数盖掉）。"""
+    needs = tasks_api.runner._needsBackfill
+    assert needs('') and needs(None) and needs('   ')
+    assert needs('{') and needs('{"') and needs('[') and needs('"]')
+    assert not needs('{}') and not needs('[]') and not needs('{ }')
+    assert not needs('{"command": "ls"}')
+    assert not needs('ls -la')                    # 非 JSON 但 >2 字：不当残片
