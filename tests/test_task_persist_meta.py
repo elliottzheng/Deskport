@@ -297,6 +297,37 @@ def test_read_log_tail_caps_and_skips_chunks(tmp_path):
     assert task_events.readLogTail(str(tmp_path / 'missing.jsonl'), 10) == []
 
 
+def test_read_log_tail_with_patches(tmp_path):
+    """readLogTailWithPatches：事件与 tool_args_patch 补丁行分流——事件同
+    readLogTail，补丁行（不带 seq）按文件顺序收集；applyArgPatches 按
+    targetSeq 应用（同一目标多次补丁以最后一次为准），补丁不进窗口。"""
+    path = tmp_path / 't.jsonl'
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps({'seq': 1, 'at': 1, 'type': 'status',
+                            'text': 'e1'}, ensure_ascii=False) + '\n')
+        f.write(json.dumps({'seq': 2, 'at': 1, 'type': 'tool', 'name': 'Bash',
+                            'args': '', 'text': '', 'truncated': False,
+                            'callId': 'c1'}, ensure_ascii=False) + '\n')
+        f.write(json.dumps({'type': 'tool_args_patch', 'targetSeq': 2,
+                            'args': '{"command": "a"}', 'truncated': True,
+                            'at': 2}, ensure_ascii=False) + '\n')
+        f.write(json.dumps({'type': 'tool_args_patch', 'targetSeq': 2,
+                            'args': '{"command": "b"}', 'truncated': False,
+                            'at': 3}, ensure_ascii=False) + '\n')
+        f.write(json.dumps({'seq': 3, 'at': 1, 'type': 'status',
+                            'text': 'e3'}, ensure_ascii=False) + '\n')
+    events, patches = task_events.readLogTailWithPatches(str(path), 10)
+    assert [e['seq'] for e in events] == [1, 2, 3]
+    assert [p['args'] for p in patches] == ['{"command": "a"}',
+                                            '{"command": "b"}']
+    assert [e['seq'] for e in task_events.readLogTail(str(path), 10)] == [1, 2, 3]
+    hydrated = task_events.applyArgPatches(
+        [task_events.eventFromLog(e) for e in events], patches)
+    assert all(e['type'] != 'tool_args_patch' for e in hydrated)
+    assert hydrated[1]['args'] == '{"command": "b"}'      # 最后一次为准
+    assert hydrated[1]['truncated'] is False
+
+
 def test_hydration_marker_stays_out_of_snapshot(tmp_path):
     """_eventsHydrated 回填标记只放内存：回填过的任务再 save 也不落盘。"""
     storePath = tmp_path / 'tasks.json'

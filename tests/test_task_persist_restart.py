@@ -235,3 +235,95 @@ def test_seq_corrected_from_jsonl_after_crash(env):
             (env.tmp / 'logs' / (tid + '.jsonl')).read_text(encoding='utf-8').splitlines()]
     assert seqs.count(11) == 1
     assert len(seqs) == len(set(seqs))
+
+
+# ---------------------------------------------------------------- 补丁行：流式参数后到的 tool.args 跨重启不丢
+
+def _toolEventNoArgs(env):
+    """流式形状（真实 Kimi）：tool_call 先落卡、参数未到（args 为空），
+    参数随后在 tool_call_update 里补。返回 (task, toolSeq)。"""
+    tid = _create(env)
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        store.repo.append_event(task, 'tool', name='Bash', args='', full='',
+                                truncated=False, callId='c1', status='pending')
+        return task, task['events'][-1]['seq']
+
+
+def test_late_tool_args_survive_restart(env):
+    """主控 2026-11-15 决定：流式参数后到回填的 tool.args 不随重启丢失。
+
+    _backfillToolArgs 回填时往 jsonl 追加一行不带 seq 的 tool_args_patch
+    补丁记录（targetSeq=被补事件的 seq），重启回填按它还原——/events 与
+    /event/<seq> 里该 tool 事件的 args 与重启前逐字相等。
+    """
+    task, toolSeq = _toolEventNoArgs(env)
+    tasks_api.runner._backfillToolArgs(task, 'c1', '{"command": "ls -la /home"}')
+    before = [dict(e) for e in task['events']]
+    beforeResp = env.client.get('/api/tasks/%s/event/%d' % (task['id'], toolSeq),
+                                headers=H).get_json()
+    _restart(env)
+    after = env.client.get('/api/tasks/%s/events?after=0' % task['id'],
+                           headers=H).get_json()['events']
+    afterResp = env.client.get('/api/tasks/%s/event/%d' % (task['id'], toolSeq),
+                               headers=H).get_json()
+    assert after == before, '重启后 /events 里回填的 tool.args 丢失'
+    assert afterResp == beforeResp, '重启后 /event/<seq> 与重启前不一致'
+    assert afterResp['event']['args'] == '{"command": "ls -la /home"}'
+
+
+def test_patch_line_keeps_seq_correction(env):
+    """补丁行不带 seq：seq 校正只数事件行——快照 seq 落后时重启后
+    task['seq'] = jsonl 最大事件 seq，新事件 seq 不重复。"""
+    task, _seq = _toolEventNoArgs(env)
+    with env.repo.lock:
+        for i in range(4):
+            store.repo.append_event(task, 'status', text='e%d' % i)
+        task['seq'] = 2                    # 模拟崩溃：快照 seq 落后 jsonl
+        env.repo.save()
+    tasks_api.runner._backfillToolArgs(task, 'c1', '{"command": "pwd"}')
+    repo2 = _restart(env)
+    repo2.load()
+    task2 = repo2.get(task['id'])
+    assert task2['seq'] == 6               # = jsonl 最大事件 seq（建卡 1 + tool + 4）
+    ev = store.repo.append_event(task2, 'status', text='崩溃后第一条')
+    assert ev['seq'] == 7
+    eventSeqs = [s for s in
+                 (json.loads(line).get('seq') for line in
+                  (env.tmp / 'logs' / (task['id'] + '.jsonl'))
+                  .read_text(encoding='utf-8').splitlines())
+                 if s is not None]
+    assert eventSeqs.count(7) == 1
+    assert len(eventSeqs) == len(set(eventSeqs))
+
+
+def test_event_endpoint_never_returns_patch_line(env):
+    """/event/<seq> 按 seq 扫描：补丁行不带 seq，永远不会被当成事件返回
+    （每个 seq 命中的都是事件本身；不存在的 seq 仍 404）。"""
+    task, toolSeq = _toolEventNoArgs(env)
+    tasks_api.runner._backfillToolArgs(task, 'c1', '{"command": "pwd"}')
+    _restart(env)
+    for s in range(1, toolSeq + 1):
+        body = env.client.get('/api/tasks/%s/event/%d' % (task['id'], s),
+                              headers=H).get_json()
+        assert body['event']['seq'] == s
+        assert body['event']['type'] != 'tool_args_patch'
+    miss = env.client.get('/api/tasks/%s/event/99999' % task['id'], headers=H)
+    assert miss.status_code == 404
+
+
+def test_double_patch_last_one_wins(env):
+    """同一 targetSeq 两次补丁：以最后一次为准；补丁行本身不进事件窗口。"""
+    task, toolSeq = _toolEventNoArgs(env)
+    logPath = env.tmp / 'logs' / (task['id'] + '.jsonl')
+    with open(logPath, 'a', encoding='utf-8') as f:
+        for args in ('{"command": "first"}', '{"command": "second"}'):
+            f.write(json.dumps({'type': 'tool_args_patch', 'targetSeq': toolSeq,
+                                'args': args, 'truncated': False, 'at': 1},
+                               ensure_ascii=False) + '\n')
+    _restart(env)
+    body = env.client.get('/api/tasks/%s/events?after=0' % task['id'],
+                          headers=H).get_json()
+    assert all(e['type'] != 'tool_args_patch' for e in body['events'])
+    tool = next(e for e in body['events'] if e.get('callId') == 'c1')
+    assert tool['args'] == '{"command": "second"}'

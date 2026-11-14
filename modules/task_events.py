@@ -6,6 +6,11 @@
 回填（tasks_store）必须走同一套截断规则，否则"重启后 /events 返回的旧事件"
 与"重启前同一事件"字节不同——对外是契约漂移，故规则收敛在本模块。
 
+流水里还可能出现**不带 seq** 的 tool_args_patch 补丁行（流式参数后到时
+_backfillToolArgs 追加的回填记录）：它不占事件序号、本身不是事件，回填与
+/event/<seq> 按 targetSeq 把它应用到对应 tool 事件上（最后一次为准）——
+否则重启后任务卡上的工具调用看不到命令（主控 2026-11-15 决定不接受丢失）。
+
 本模块是共享内核：不 import flask / 不 import 特性层，只做纯字典与文件。
 """
 import datetime
@@ -85,12 +90,31 @@ def _parseLine(raw):
     return obj
 
 
-def readLogTail(path, want):
-    """读 jsonl 尾部最后 want 条非 chunk 事件（坏行跳过，与读取端容错一致）。
+def _parsePatch(raw):
+    """一行 jsonl → tool_args_patch 补丁 dict；不是补丁行/坏行返回 None。
 
-    只从文件尾部倒序抓够 want 条即停，不回放全文件；开头的半行按坏行跳过。
+    补丁行由 _backfillToolArgs 追加（流式参数后到的回填记录），**不带 seq**
+    ——不占事件序号：seq 校正、/event/<seq> 的按 seq 扫描都按无 seq 行跳过。
+    """
+    try:
+        obj = json.loads(raw.strip().decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(obj, dict) or obj.get('type') != 'tool_args_patch':
+        return None
+    return obj
+
+
+def readLogTailWithPatches(path, want):
+    """读 jsonl 尾部：返回 (事件列表, 补丁列表)，供回填路径分流。
+
+    事件同 readLogTail（坏行/chunk 跳过）；补丁行按文件顺序（旧→新）收集，
+    交给 applyArgPatches 应用。补丁总在目标事件之后落盘，倒序扫描先遇到补丁、
+    后遇到目标——目标在窗口内则其补丁必然也已被扫到；目标被 MAX_EVENTS 挤出
+    时补丁自然落空。只从文件尾部倒序抓够 want 条即停，不回放全文件。
     """
     events = []
+    patches = []
     try:
         with open(path, 'rb') as f:
             f.seek(0, os.SEEK_END)
@@ -109,14 +133,103 @@ def readLogTail(path, want):
                         events.append(obj)
                         if len(events) >= want:
                             break
+                    else:
+                        patch = _parsePatch(raw)
+                        if patch is not None:
+                            patches.append(patch)
             if pos == 0 and len(events) < want:
                 obj = _parseLine(partial)
                 if obj is not None:
                     events.append(obj)
+                else:
+                    patch = _parsePatch(partial)
+                    if patch is not None:
+                        patches.append(patch)
     except OSError:
-        return []
+        return [], []
     events.reverse()
+    patches.reverse()
+    return events, patches
+
+
+def readLogTail(path, want):
+    """读 jsonl 尾部最后 want 条非 chunk 事件（坏行跳过，与读取端容错一致）。
+
+    只从文件尾部倒序抓够 want 条即停，不回放全文件；开头的半行按坏行跳过。
+    补丁行不进事件列表（要补丁走 readLogTailWithPatches）。
+    """
+    events, _patches = readLogTailWithPatches(path, want)
     return events
+
+
+def applyArgPatches(events, patches):
+    """把 jsonl 补丁行应用到回填事件上（同一 targetSeq 多次补丁以最后一次为准）。
+
+    补丁行不进窗口；targetSeq 不在窗口里（被 MAX_EVENTS 挤出）时自然落空。
+    args 以 jsonl 补丁行为准：真实 Kimi 的流式形状（先 tool_call 后参数）下，
+    补丁是重启后唯一还能看到命令的地方（_backfillToolArgs 只改内存不够）。
+    """
+    if not patches:
+        return events
+    last = {}
+    for patch in patches:
+        target = patch.get('targetSeq')
+        if target is not None:
+            last[target] = patch
+    for event in events:
+        patch = last.get(event.get('seq'))
+        if patch is None:
+            continue
+        if 'args' in patch:
+            event['args'] = patch['args']
+        if 'truncated' in patch:
+            event['truncated'] = patch['truncated']
+    return events
+
+
+def eventBySeq(path, seq):
+    """按 seq 从 jsonl 取单条事件（/api/tasks/<id>/event/<seq> 用）。
+
+    与旧的内联扫描行为一致：坏行跳过、assistant_chunk 不返回、首个命中即取。
+    补丁行（tool_args_patch，不带 seq）不是事件、永不当事件返回，但会按
+    targetSeq 应用到命中的 tool 事件上（同目标多次补丁以最后一次为准）——
+    流式参数后到的 args 经 /event/<seq> 重启后也看得见。文件缺失/读失败/
+    seq 不存在返回 None（调用方回落内存窗口）。
+    """
+    target = None
+    patch = None
+    try:
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if target is not None and 'tool_args_patch' not in line:
+                    continue   # 目标已到手：只剩它的补丁行还要看（预筛省解析）
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get('type') == 'tool_args_patch':
+                    if obj.get('targetSeq') == seq:
+                        patch = obj
+                    continue
+                if target is None and obj.get('seq') == seq \
+                        and obj.get('type') != 'assistant_chunk':
+                    target = obj
+                    if obj.get('type') != 'tool':
+                        break      # 补丁只落 tool 事件，其余提前收手
+    except OSError:
+        return None
+    if target is None:
+        return None
+    if patch is not None:
+        target = dict(target)
+        if 'args' in patch:
+            target['args'] = patch['args']
+        if 'truncated' in patch:
+            target['truncated'] = patch['truncated']
+    return target
 
 
 def _seqOf(value):
@@ -131,13 +244,19 @@ def hydrateEvents(task, logPath):
     """惰性回填（批 PS1）：快照没有 events 的任务，首次被访问时从 jsonl 尾部
     补回最近 MAX_EVENTS 条；seq 与 jsonl 最大 seq 取大校正（覆盖"jsonl 写了、
     快照没写"的崩溃中间态，新事件 seq 不重复）。_eventsHydrated 标记只放内存，
-    不落盘。旧格式快照（events 已在字典里）只做 seq 校正，不重建窗口。"""
+    不落盘。旧格式快照（events 已在字典里）只做 seq 校正，不重建窗口。
+
+    补丁行（tool_args_patch）在回填时按 targetSeq 应用到对应事件上（最后一次
+    为准），本身不进窗口——流式参数后到的 tool.args 重启后不丢；seq 校正只数
+    事件行（补丁不带 seq），不受影响。
+    """
     if not isinstance(task, dict) or task.get('_eventsHydrated'):
         return
     task['_eventsHydrated'] = True
-    tail = readLogTail(logPath, MAX_EVENTS)
+    tail, patches = readLogTailWithPatches(logPath, MAX_EVENTS)
     if 'events' not in task:
-        task['events'] = [eventFromLog(e) for e in tail]
+        task['events'] = applyArgPatches([eventFromLog(e) for e in tail],
+                                         patches)
     maxSeq = max((_seqOf(e.get('seq')) for e in tail), default=0)
     if maxSeq > _seqOf(task.get('seq')):
         task['seq'] = maxSeq

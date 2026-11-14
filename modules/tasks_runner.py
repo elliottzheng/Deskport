@@ -112,7 +112,17 @@ def _rememberLateArgs(task, update):
 
 
 def _backfillToolArgs(task, callId, argsText):
-    """把后到的参数补进已落卡的 tool 事件（写入前同样脱敏，R5-2）。"""
+    """把后到的参数补进已落卡的 tool 事件（写入前同样脱敏，R5-2）。
+
+    只改内存不够：批 PS1 起窗口从 jsonl 回填，而 jsonl 该行是参数未到时写
+    的（args 为空），重启后回填看到的还是空——真实 Kimi 正是这种流式形状
+    （_rememberLateArgs），主控 2026-11-15 决定不接受"重启后看不到命令"。
+    故回填时往 jsonl 追加一行**不带 seq** 的 tool_args_patch 补丁记录
+    （targetSeq=被补事件的 seq，args 与内存落卡逐字一致），重启回填与
+    /event/<seq> 按它还原；补丁不占事件序号，seq 校正不受影响。
+    落盘的 agent_tasks.json 已剥离 events，store.repo.save() 对回填是空转
+    （批 1 起删除）——args 以 jsonl 补丁行为准。
+    """
     if not callId or not argsText:
         return
     text = sensitive_values.redactText(argsText)
@@ -125,7 +135,10 @@ def _backfillToolArgs(task, callId, argsText):
                 return
             event['args'] = text
             event['truncated'] = flag
-            store.repo.save()
+            store.repo.log_write(task, {'type': 'tool_args_patch',
+                                        'targetSeq': event.get('seq'),
+                                        'args': text, 'truncated': flag,
+                                        'at': store._now()})
             return
 
 
