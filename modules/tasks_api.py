@@ -69,12 +69,12 @@ def listTasks():
     running = sum(1 for t in items if t.get('status') == 'running')
     queued = sum(1 for t in items if t.get('status') == 'queued')
     if leadArg:
-        # 先筛再截前 50 条；running/queued 仍是全局口径（与不带 lead 一致）
+        # 先筛再截前 50 条（truncated 告知截断了、还有更多）；running/queued 仍是全局口径（与不带 lead 一致）
         items = [t for t in items if (t.get('lead') or '') == leadArg]
     tasks = [store.repo.summary(t) if full else store.repo.summaryBrief(t)
              for t in items[:50]]
     return jsonify({'tasks': tasks, 'running': running, 'queued': queued,
-                    'limit': runner.maxRunning(),
+                    'limit': runner.maxRunning(), 'truncated': len(items) > 50,
                     'countScope': 'all callers (全局)'})
 
 
