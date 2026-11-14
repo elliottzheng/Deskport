@@ -123,6 +123,14 @@ def _blockWait(task, after, timeout, ignorePendingRequestId=None):
         if remaining <= 0:
             if snap['status'] in ('queued', 'running'):
                 snap['status'] = 'running'
+            # 超时未等到结束点：游标停在调用方的 after，不推进展。快照的
+            # lastSeq 若已越过"终稿已落、状态仍 running"的隙（终稿→WAITING
+            # 有结构性间隙，2026-11-14 调查实测 P90 2.8s、最大 9.4s），下次
+            # wait 的 after 会跳过终稿 seq，_lastAssistantAfter 找不到
+            # assistant——主控拿到空 finalText 把健康任务当丢稿 close 掉
+            # （实测 b025c78c2f85；约 2% 轮次期望踩中）。事件不丢不重：
+            # 客户端带原 after 再来，窗口照旧重算
+            snap['lastSeq'] = after
             return snap
         with store.repo.lock:
             store.repo.evCond.wait(remaining)   # 放锁休眠，事件到达即醒

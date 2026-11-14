@@ -954,6 +954,31 @@ def test_wait_blocks_until_wake_not_busy_timeout(env):
     assert elapsed < 10   # timeout=15 没等满 → 条件变量唤醒生效
 
 
+def test_wait_timeout_does_not_leapfrog_unfinished_turn(env):
+    """2026-11-14 外部主管调查 §8 实测：终稿→WAITING 有结构性间隙（P90 2.8s），
+    窗口在隙里超时时快照 lastSeq 会推过终稿，下次 wait 跳过终稿 → 主控拿到空
+    finalText 把健康任务当丢稿 close（实测 b025c78c2f85，约 2% 轮次踩中）。
+    修法：超时不推进游标，带原 after 再来终稿还在。"""
+    tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['status'] = 'running'
+        store.repo.append_event(task, 'assistant', text='最终报告全文', full='最终报告全文')
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
+                          headers=H).get_json()
+    assert body['status'] == 'running'
+    assert body['lastSeq'] == 0, '超时未等到结束点：游标不得推过还没判结束的窗口'
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task_state.transition(task, task_state.TaskState.WAITING)
+        store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+        store.repo.save()
+    body2 = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
+                           headers=H).get_json()
+    assert body2['status'] == 'waiting'
+    assert body2['finalText'] == '最终报告全文'
+
+
 def test_wait_timeout_maps_running(env):
     resp = create(env, {'prompt': 'x'})   # _startTask 打桩 → 恒 queued
     tid = resp.get_json()['task']['id']
@@ -962,7 +987,8 @@ def test_wait_timeout_maps_running(env):
     body = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
                           headers=H).get_json()
     assert body['status'] == 'running'    # 规格：超时映射 running
-    assert body['lastSeq'] == seq
+    # 2026-11-14 起超时不推进游标（leapfrog 修复）：lastSeq 停在 after
+    assert body['lastSeq'] == 0
 
 
 def test_wait_reports_pending_permission_with_args(env):
@@ -1003,7 +1029,8 @@ def test_wait_resume_from_old_seq_no_loss(env):
     assert body['stats']['errors'] == 1 and body['stats']['autoApproved'] == 1
     # P0-2（2026-11-14 反馈）：自动拒绝在执行方眼里无声无息，轮末统计要能看见
     assert body['stats']['autoDenied'] == 1
-    assert body['lastSeq'] == total
+    # 超时未等到结束点：游标停在 after（2026-11-14 leapfrog 修复），不推进展
+    assert body['lastSeq'] == seqAfter
 
 
 def test_message_wait_returns_waiting(env):
@@ -1088,7 +1115,7 @@ def test_create_wait_maps_running_when_queued(env):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body['status'] == 'running'
-    assert body['lastSeq'] >= 1
+    assert body['lastSeq'] == 0   # 超时不推进游标（2026-11-14 leapfrog 修复）
 
 
 # ---- R4 验收回归：真实事件形状（JSON 字符串 rawInput + 权限请求缺 rawInput）----
