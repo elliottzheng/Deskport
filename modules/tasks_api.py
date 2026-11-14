@@ -23,6 +23,7 @@ from modules import tasks_store as store
 from modules import worklines_store
 from modules import fsutil, node_path, staging, task_cwd, task_node
 from modules import agent_nodes
+from modules import leads_store
 from modules import model_availability
 from modules import events
 from modules import task_inputs
@@ -54,10 +55,20 @@ def _agentOnBehalfOf():
 def listTasks():
     store.repo.load()
     full = request.args.get('full') == '1'
+    leadArg = (request.args.get('lead') or '').strip()
+    if leadArg == 'me':
+        # 按调用令牌绑定的主管筛；没绑（含网页会话）→ 400，不静默回全量
+        leadArg = str(getattr(g, 'agentLead', '') or '')
+        if not leadArg:
+            return jsonify({'error': 'lead=me 需要当前令牌先绑定主管；'
+                                     '没绑就传 lead=<主管id> 或不带 lead'}), 400
     with store.repo.lock:
         items = sorted(store.repo.list(), key=lambda x: -x.get('createdAt', 0))
     running = sum(1 for t in items if t.get('status') == 'running')
     queued = sum(1 for t in items if t.get('status') == 'queued')
+    if leadArg:
+        # 先筛再截前 50 条；running/queued 仍是全局口径（与不带 lead 一致）
+        items = [t for t in items if (t.get('lead') or '') == leadArg]
     tasks = [store.repo.summary(t) if full else store.repo.summaryBrief(t)
              for t in items[:50]]
     return jsonify({'tasks': tasks, 'running': running, 'queued': queued,
@@ -103,6 +114,19 @@ def createTaskResponse(data):
     """
     store.repo.load()
     data = dict(data or {})
+    # 批次 Q：令牌绑了主管时，建任务自动记归属（task.lead）。主管停用或
+    # 记录缺失（悬空绑定）只拦建任务——对已有任务的读/等/续聊/审批/关闭
+    # 照常（规格 Q5），所以闸门放在这里而不是任务路由上。
+    leadId = str(getattr(g, 'agentLead', '') or '')
+    if leadId:
+        lead = leads_store.get(leadId)
+        if lead is None or (lead.get('status') or '') != 'active':
+            label = (lead or {}).get('name') or leadId
+            why = ('不存在（令牌绑定的主管记录缺失）' if lead is None
+                   else '已停用（%s）' % (lead.get('status') or ''))
+            return ({'error': '主管 %s %s，不能再派活' % (label, why),
+                     'lead': leadId,
+                     'status': (lead or {}).get('status') or ''}), 403
     if (legacy := task_node.rejectLegacyEngine(data)):
         return {'error': legacy}, 400
     worklineId = str(data.get('workline') or data.get('worklineId') or '').strip()
@@ -279,6 +303,8 @@ def createTaskResponse(data):
         'kimiSessionId': kimiSessionId,
         'kimiSessionFork': kimiSessionFork,
         'owner': getattr(g, 'agentTokenName', '') or '面板',
+        # 批次 Q：派活的主管（令牌绑定）；没绑为 ''，老任务加载时也没有这个键
+        'lead': leadId,
         'mode': mode, 'model': model, 'modelEffective': modelEffective,
         'policy': policy,
         'resume': False, 'closedByUser': False,
