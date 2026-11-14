@@ -202,7 +202,7 @@ task-back { display: none; }
 /* 按主管筛（批次 S）：一排横滚 chips，手机首屏不抢高度；隐藏时任务列表照常 */
 .leads-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .leads-filter-btn {
-    min-height: 32px; padding: 0 12px; border: 1px solid var(--line, #d8dee9);
+    min-height: 44px; padding: 0 12px; border: 1px solid var(--line, #d8dee9);
     border-radius: 999px; background: var(--bg-2); color: var(--text-2);
     font-size: 12px; cursor: pointer;
 }

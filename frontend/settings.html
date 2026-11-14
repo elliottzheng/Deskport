@@ -158,26 +158,26 @@
                     <span class="agent-token-meta">{{ l.kind }}</span>
                 </div>
                 <p class="settings-hint" v-if="l.project">项目：{{ l.project }}</p>
-                <p class="settings-hint" id="'lead-meta-' + l.id">
+                <p class="settings-hint" :id="'lead-meta-' + l.id">
                     任务 {{ l.total }} · 在跑 {{ l.running }} · 等待 {{ l.waiting }} · {{ l.lastSeenText }}
                 </p>
                 <div class="leads-tokens" v-if="l.tokens.length">
                     <span class="agent-token-scope" v-for="tn in l.tokens" :key="tn">{{ tn }}
-                        <button type="button" class="btn btn-ghost settings-dir-remove" @click="unbindToken(l, tn)">解绑</button>
+                        <button type="button" class="btn btn-ghost leads-action-btn" @click="unbindToken(l, tn)">解绑</button>
                     </span>
                 </div>
                 <div class="leads-actions">
-                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="l.status === 'active'" @click="setLeadStatus(l, 'paused')">暂停</button>
-                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="l.status === 'paused'" @click="setLeadStatus(l, 'active')">恢复</button>
-                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="l.status !== 'retired'" @click="setLeadStatus(l, 'retired')">停用</button>
-                    <button type="button" class="btn btn-ghost settings-dir-remove" v-if="!l.total && !l.tokens.length" @click="deleteLead(l)">删除</button>
+                    <button type="button" class="btn btn-ghost leads-action-btn" v-if="l.status === 'active'" @click="setLeadStatus(l, 'paused')">暂停</button>
+                    <button type="button" class="btn btn-ghost leads-action-btn" v-if="l.status === 'paused'" @click="setLeadStatus(l, 'active')">恢复</button>
+                    <button type="button" class="btn btn-ghost leads-action-btn" v-if="l.status !== 'retired'" @click="setLeadStatus(l, 'retired')">停用</button>
+                    <button type="button" class="btn btn-ghost leads-action-btn" v-if="!l.total && !l.tokens.length" @click="deleteLead(l)">删除</button>
                 </div>
                 <div class="settings-dir-add" v-if="bindable(agentTokens, l.id).length">
                     <select class="select" v-model="leadBindChoice[l.id]" :id="'lead-bind-' + l.id">
                         <option value="">选择要绑定的令牌…</option>
                         <option v-for="t in bindable(agentTokens, l.id)" :key="t.id" :value="t.id">{{ t.name }}</option>
                     </select>
-                    <button type="button" class="btn btn-secondary" @click="bindToken(l)">绑定</button>
+                    <button type="button" class="btn btn-secondary leads-action-btn" @click="bindToken(l)">绑定</button>
                 </div>
             </div>
 

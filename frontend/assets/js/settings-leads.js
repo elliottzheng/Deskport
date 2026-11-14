@@ -71,6 +71,9 @@
                 this.loadLeads();
             },
             methods: {
+                // 模板直接调 bindable(...)（settings.html 可绑令牌下拉），必须暴露成
+                // 实例方法——复用同一个纯函数，不复制实现
+                bindable: bindable,
                 async loadLeads() {
                     try {
                         const r = await fetch('/api/settings/leads');
