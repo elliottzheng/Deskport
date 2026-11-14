@@ -2,8 +2,7 @@
 """代码结构门禁：文件预算、存量例外、重复工具、横向 import、window 全局、
 跨模块私有接缝、执行点字段（对外只认 node/cwd）。
 
-用法: python tools/check_structure.py [--strict]
-退出码: 预算/存量增长/未定义名/横向 import/跨模块私有名违规 → 1；其它为 warning。
+用法: python tools/check_structure.py [--strict]；退出码: 预算/存量增长/未定义名/横向 import/跨模块私有名违规 → 1，其它为 warning。
 """
 import argparse
 import ast
@@ -39,7 +38,7 @@ LEGACY = {
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
     'modules/tasks_api.py': 961,                  # 任务 API 面最大，拆分需配回归
     'modules/tasks_runner.py': 711,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）
-    'modules/tasks_store.py': 440,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）
+    'modules/tasks_store.py': 442,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
     'tests/test_tasks_api.py': 1554,              # 任务 API 回归集（面最大）；2026-11-14 +15=P0-1 建卡闸门测试
@@ -50,8 +49,8 @@ FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp'
             'agent_sftp_write', 'agent_sessions', 'agent_share', 'agent_skill_files',
             'agent_tunnel', 'command', 'control', 'feedback', 'feedback_store',
             'files', 'files_archive', 'files_base', 'files_browse', 'files_federation',
-            'files_pins', 'files_transfer', 'screen', 'ssh', 'task_cwd', 'task_node',
-            'tasks', 'tasks_api', 'tasks_runner', 'tasks_store', 'terminal',
+            'files_pins', 'files_transfer', 'leads_api', 'leads_store', 'screen', 'ssh',
+            'task_cwd', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store', 'terminal',
             'worklines_api', 'worklines_store'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
@@ -93,6 +92,8 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('files_transfer', 'files_base'), # 家族底座
     # —— feedback（路由 → 存储, 同 tasks_api → tasks_store 的形状）——
     ('feedback', 'feedback_store'),
+    # leads（批次 Q）主管家族: leads_api → 自己的存储; agent_api=GET /api/agent/lead 复用令牌解析; tasks_store=主管列表任务计数; tasks_api→leads_store=建任务读主管记录(g.agentLead 闸门 + task.lead)
+    ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'),
     # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
     ('tasks_api', 'agent_nodes'),     # 执行点存在性校验/寻址/模型声明
     ('tasks_api', 'task_cwd'),        # cwd 前置校验（远端 cwdRoots, 批次 B3）
@@ -210,7 +211,6 @@ def scan_budget(errors, warnings):
                     errors.append('%s 变长: %d > %d（存量只减不增）' % (rel, n, cap))
             elif n > BUDGET[ext]:
                 errors.append('%s 超预算: %d > %d' % (rel, n, BUDGET[ext]))
-    return
 
 
 def scan_duplicate_helpers(warnings):

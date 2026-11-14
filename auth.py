@@ -9,6 +9,7 @@ from flask import g, request, session, redirect, jsonify
 
 import config
 from modules import events
+from modules import leads_store
 
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 60
@@ -139,6 +140,8 @@ def register(app):
             from modules.agent_api import federationTokenName
             g.agentTokenName = federationTokenName()
             g.agentOnBehalfOf = ''
+            # 批次 Q：联邦身份不参与指挥链，没有主管
+            g.agentLead = ''
             return None
         if isAuthenticated():
             return None
@@ -161,6 +164,9 @@ def register(app):
             if agent is not None:
                 g.agentTokenName = agent.get('name') or ''
                 g.agentOnBehalfOf = str(agent.get('onBehalfOf') or '')
+                g.agentLead = str(agent.get('lead') or '')
+                if g.agentLead:
+                    leads_store.touch(g.agentLead)
                 return None
             # 没令牌 → 落到下方 /api/ 统一 401（与网页未登录一致）
         if path.startswith('/api/agent/') or path.startswith('/api/tasks') \
@@ -182,6 +188,12 @@ def register(app):
                 g.agentTokenName = agent.get('name') or ''
                 # 批次 H：令牌可绑定「代表谁」，写操作审计随事件落下
                 g.agentOnBehalfOf = str(agent.get('onBehalfOf') or '')
+                # 批次 Q：令牌可绑主管——建任务记 task.lead、按主管筛任务、
+                # /api/agent/lead 自查都读它；没绑为 ''（网页会话同样不设）
+                g.agentLead = str(agent.get('lead') or '')
+                if g.agentLead:
+                    # 主管最近活跃（Q7）：同一主管 60 秒内最多写盘一次
+                    leads_store.touch(g.agentLead)
                 return None
             if path.startswith('/api/agent/'):
                 return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401

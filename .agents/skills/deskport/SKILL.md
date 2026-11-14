@@ -180,6 +180,10 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
 - 并发上限 `taskMaxRunning` 可配置（config.json，缺省 8，0=不限，改完热
   生效无需重启）；超限 429 响应带 `{limit, running, holders}`（谁占着名额）；
   202 是受理不是完成。
+- 主管归属（指挥链 P1）：令牌可绑主管（设置页管理），建的任务自动记 `task.lead`；
+  `GET /api/agent/lead` 自查绑没绑（没绑 `{"lead": null}`）。
+- 按主管筛任务：`GET /api/tasks?lead=me`（按自己令牌绑的主管筛，没绑 400）
+  或 `?lead=<主管id>`；主管被停用时建任务 403，已有任务的读/续聊/审批/关闭照常。
 
 ## 给平台提反馈（撞见 Deskport 自身的 bug 时）
 

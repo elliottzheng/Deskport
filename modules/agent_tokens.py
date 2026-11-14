@@ -71,11 +71,16 @@ def _cleanScopes(raw):
 
 
 def _public(entry):
-    """列表视图：绝不含 tokenHash，明文签发后永不回显。"""
+    """列表视图：绝不含 tokenHash，明文签发后永不回显。
+
+    lead（批次 Q）：绑定的主管 id；没绑为 ''。键一直都在——没绑主管的
+    令牌行为零变化，只是多一个空串字段。
+    """
     scopes = entry.get('scopes')
     return {'id': entry.get('id'), 'name': entry.get('name'),
             'scopes': [str(s) for s in scopes] if isinstance(scopes, list) else None,
-            'createdAt': entry.get('createdAt') or ''}
+            'createdAt': entry.get('createdAt') or '',
+            'lead': entry.get('lead') or ''}
 
 
 @blueprint.route('/api/settings/agent-tokens', methods=['GET'])

@@ -246,6 +246,7 @@ class TaskRepository:
             'id': task['id'], 'title': task.get('title', ''),
             'status': task.get('status', ''),
             'owner': task.get('owner') or '',
+            'lead': task.get('lead') or '',   # 批次 Q：派活的主管（老任务没有这个键时为 ''）
             'node': task_node.of(task),
             'model': task.get('model') or '',
             'modelEffective': task.get('modelEffective') or '',
@@ -270,6 +271,7 @@ class TaskRepository:
             'id': task['id'], 'title': task.get('title', ''), 'prompt': task.get('prompt', ''),
             'status': status, 'createdAt': task.get('createdAt', 0),
             'owner': task.get('owner') or '',
+            'lead': task.get('lead') or '',   # 批次 Q：派活的主管（老任务没有这个键时为 ''）
             'createdLabel': _iso(task.get('createdAt', 0)),
             'startedAt': task.get('startedAt', 0), 'endedAt': task.get('endedAt', 0),
             # 非本机任务展示执行目录（本机 workspace 目录对调用方毫无意义）

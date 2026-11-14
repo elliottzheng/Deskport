@@ -118,11 +118,12 @@ def test_created_token_works_immediately(env):
                           headers={'X-Agent-Token': body['token']})
     assert resp.status_code == 200
     assert resp.get_json()['tokenName'] == 'Kimi'
-    # 列表只含 {id, name, scopes, createdAt}, 全权令牌 scopes 为 null
+    # 列表只含 {id, name, scopes, createdAt, lead}, 全权令牌 scopes 为 null
     rows = listed(env.client)
     assert [t['name'] for t in rows] == ['Kimi']
-    assert set(rows[0]) == {'id', 'name', 'scopes', 'createdAt'}
+    assert set(rows[0]) == {'id', 'name', 'scopes', 'createdAt', 'lead'}
     assert rows[0]['scopes'] is None and rows[0]['createdAt']
+    assert rows[0]['lead'] == ''   # 批次 Q：没绑主管为空串（键一直都在）
 
 
 def test_plaintext_appears_only_in_create_response(env):

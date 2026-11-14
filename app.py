@@ -29,6 +29,7 @@ from modules import control as controlModule  # noqa: E402
 from modules import settings as settingsModule  # noqa: E402
 from modules import capability_api as capabilityApiModule  # noqa: E402
 from modules import agent_tokens as agentTokensModule  # noqa: E402
+from modules import leads_api as leadsApiModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
@@ -239,7 +240,7 @@ def skillVersionHeaders(resp):
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      capabilityApiModule,
-                     agentTokensModule,
+                     agentTokensModule, leadsApiModule,
                      pluginsModule, agentApiModule, agentHandbookModule,
                      agentToolsModule,
                      agentNodesModule,

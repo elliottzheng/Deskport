@@ -616,6 +616,75 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 
 压缩是异步的：/compact 发出后等 status=waiting 且 lastText 出现压缩摘要即可继续。
 
+## 主管（lead，批次 Q P1）
+
+主管 = 指挥链里的纵向节点：**令牌绑到主管**，用该令牌建的任务自动记
+`task.lead`——审计分得清"谁派了谁"。设计全文见
+[plan/agent-chain-of-command.md](plan/agent-chain-of-command.md)；本批只做
+P1（记录 + 绑定 + 归属 + 按主管筛选），界面、收件箱、权限收窄是后续批次。
+**没绑主管的令牌和网页会话，行为零变化。**
+
+管理面（只认网页会话，与「智能体令牌」卡片同一档；智能体/设备令牌打
+这些接口一律 401）：
+
+```text
+GET    /api/settings/leads                          → {"leads": [记录 + tokens + tasks]}
+POST   /api/settings/leads    {name, project?, kind?}        → 201 {"lead": 记录}
+PATCH  /api/settings/leads/<id>  {name?, project?, status?}  → {"lead": 记录}
+DELETE /api/settings/leads/<id>                      → 有任务引用或还绑着令牌 409
+                                                    （文案说明原因并建议改 retired）；否则 {"ok": true}
+POST   /api/settings/leads/<id>/tokens {tokenId}     → 绑定；令牌不存在 404；已绑别的主管 409（先解绑）
+DELETE /api/settings/leads/<id>/tokens/<tokenId>     → 解绑
+```
+
+- 记录形状：`{id: "ld_<8位hex>", name, project, kind: "external"|"hosted",
+  parent: "human", status: "active"|"paused"|"retired", taskId, workline,
+  ceiling, createdAt, updatedAt, lastSeenAt}`；`taskId`/`workline`/`ceiling`
+  本批只占位，恒空；
+- `name` 1–24 字符、字符限制与令牌名相同、非 retired 的主管里不重名；
+  `project` ≤40 字符可空；入参错误一律 400 且文案含字段名；
+- 一个令牌最多绑一个主管，一个主管可绑多个令牌；**吊销令牌自然解绑**；
+- 列表里每条带 `tokens`（绑定的令牌名）与 `tasks`
+  （`{total, running, waiting}`，该主管名下的任务计数）；
+- 审计 `lead.created` / `lead.updated` / `lead.deleted` /
+  `lead.token.bound` / `lead.token.unbound`。
+
+令牌通道自查（任何有效令牌，不要求 full）：
+
+```text
+GET /api/agent/lead
+→ {"lead": {"id","name","project","kind","parent","status"}}
+  没绑主管（含绑定悬空：记录被手删）→ {"lead": null}
+```
+
+建任务记归属：
+
+- 绑了主管的令牌建任务 → 任务卡带 `lead` = 主管 id（列表 `summaryBrief`、
+  详情 `summary`、`?wait` 响应都带；**老任务没有这个键时为 `""`**）；
+- 主管 `status != active` 或记录缺失（悬空绑定）→ **403**，不建任务：
+
+```text
+→ 403 {"error": "主管 <名或id> 已停用（<status>），不能再派活",
+       "lead": "<主管id>", "status": "<paused|retired|''(悬空)>"}
+```
+
+- **只拦建任务**：被停用主管的令牌，对已有任务的读 / 等 / 续聊 / 审批 /
+  关闭照常；
+- 全部建任务入口共用同一闸门：`POST /api/tasks`、
+  `POST /api/worklines/<id>/tasks`（新开分支）、`POST /api/worklines/<id>/rotate`、
+  `POST /api/agent/share` 与 `/api/share/submit` 的新建去处。
+
+按主管筛任务：
+
+```text
+GET /api/tasks?lead=<主管id>    # 只列该主管的任务（先筛再截前 50 条）
+GET /api/tasks?lead=me          # 按调用令牌绑定的主管筛；调用方没绑主管 → 400
+```
+
+不带 `lead` 参数时响应与以前逐字一致；`running`/`queued` 计数仍是全局口径
+（`countScope` 不变）。主管的 `lastSeenAt` 由绑定的令牌每次通过鉴权时刷新，
+同一主管 60 秒内最多写盘一次。
+
 ## 重启语义（如实版）
 
 ## 重启语义（如实版）
