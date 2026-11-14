@@ -107,7 +107,7 @@ class TaskRepository:
         self.agents = {}
         self.loaded = False
         self._saveSeq = 0        # 落盘快照序号（捕获时发号，防旧快照覆新）
-        self._savedSeq = 0       # 已落盘的最新序号
+        self._savedGate = store_io.SeqGate()   # 已落盘序号（锁内持有，P1）
 
     # ---- 公开访问器：上层不再直接摸私有容器 ----
     def get(self, taskId):
@@ -190,7 +190,9 @@ class TaskRepository:
     def save(self):
         # 序列化必须在锁内完成：json.dump 遍历活字典，任何无锁写入都会触发
         # "dictionary changed size during iteration"。锁内只生成字符串并发
-        # 序号，写盘（含并发互斥与旧快照门）放锁外，由 store_io 串行
+        # 序号；读 savedSeq→比较→写盘→更新 savedSeq 整段收在 store_io 的
+        # _IO_LOCK 内完成（SeqGate），锁外不再读写 savedSeq——否则旧序号
+        # save 拿锁外读到的旧值进门，把已落盘的新快照盖掉（验收-R P1）
         with self.lock:
             try:
                 payload = json.dumps(self.tasks, ensure_ascii=False)
@@ -199,8 +201,7 @@ class TaskRepository:
                 return
             self._saveSeq += 1
             seq = self._saveSeq
-        self._savedSeq = store_io.saveSnapshot(self.store_path, payload, seq,
-                                               self._savedSeq)
+        store_io.saveSnapshot(self.store_path, payload, seq, self._savedGate)
 
     def log_path(self, task):
         return os.path.join(self.log_dir, task['id'] + '.jsonl')
