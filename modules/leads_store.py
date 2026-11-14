@@ -18,6 +18,13 @@
     {"id": "ld_<8位hex>", "name": "...", "project": "", "kind": "external",
      "parent": "human", "status": "active", "taskId": "", "workline": "",
      "ceiling": {}, "createdAt": <秒>, "updatedAt": <秒>, "lastSeenAt": 0}
+
+批次 P3 追加的键都是懒键（记录建成时不带，首次写入才出现——Q 批的测试钉死
+了建记录的键集，不能为占位键破坏它）：
+    inboxSeq/readSeq/reportSeq：收件箱游标（setCursor 推进，只增不减）；
+    idleNoticedAt：无动静提示的单次标记（P3-5）。
+绑定托管任务（补 1）改 kind/taskId 两个键，走 bindTask/unbindTask——
+不进 update() 的 PATCH_KEYS（避免出现 hosted 却没有 taskId 的状态）。
 """
 import json
 import secrets
@@ -211,3 +218,79 @@ def touch(leadId):
             return
         lead['lastSeenAt'] = now
         _save(data)
+
+
+def setCursor(leadId, inboxSeq=None, readSeq=None, reportSeq=None):
+    """推进主管收件箱游标（批次 P3）；只改给了值的键，且只增不减（max）。
+
+    inboxSeq=up 侧已投递给托管任务的高水位；readSeq=外部方已读；
+    reportSeq=用户已读的 down 侧高水位（P4 的未读数用它）。
+    返回 (record, error)：NOT_FOUND 表示记录没了。
+    """
+    leadId = str(leadId or '')
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        for key, value in (('inboxSeq', inboxSeq), ('readSeq', readSeq),
+                           ('reportSeq', reportSeq)):
+            if value is None:
+                continue
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+            lead[key] = max(int(lead.get(key) or 0), value)
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+def markIdleNoticed(leadId, at=None):
+    """记一次无动静提示（批次 P3 P3-5）：同一主管每 leadIdleSec 最多一条。"""
+    leadId = str(leadId or '')
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        lead['idleNoticedAt'] = float(at) if at is not None else _now()
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+def bindTask(leadId, taskId):
+    """绑定托管任务（补 1）：kind 置 hosted、taskId 置该任务。
+
+    「一个任务最多被一个主管绑定」由调用方查重（要翻全表）；本函数只落键。
+    返回 (record, error)：NOT_FOUND 表示记录没了。
+    """
+    leadId = str(leadId or '')
+    taskId = str(taskId or '').strip()
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        lead['kind'] = 'hosted'
+        lead['taskId'] = taskId
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+def unbindTask(leadId):
+    """解绑托管任务（补 1）：taskId 清空、kind 回 external；幂等。"""
+    leadId = str(leadId or '')
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        lead['kind'] = 'external'
+        lead['taskId'] = ''
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''

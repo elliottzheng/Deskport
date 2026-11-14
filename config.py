@@ -334,6 +334,38 @@ def getTaskMaxRunning():
     return value
 
 
+def getLeadWakeMergeSec():
+    """托管唤醒的合并窗口（批次 P3，秒）：缺省 20，0=立即。
+
+    最老未投递条目的年龄达到窗口才唤醒托管主管——避免每个下属结束都唤醒它
+    一次；human 条目（用户说的话）走立即旁路，不受窗口限制。负数回退缺省。
+    """
+    value = load().get('leadWakeMergeSec')
+    if value is None:
+        return 20
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 20
+    return value if value >= 0 else 20
+
+
+def getLeadIdleSec():
+    """主管无动静提示阈值（批次 P3，设计 §4 防呆，秒）：缺省 900，0=关闭。
+
+    主管有下属在跑、却老于这个阈值没有任何事件 → 收件箱一条 notice；同一
+    主管每阈值最多一条。负数回退缺省。
+    """
+    value = load().get('leadIdleSec')
+    if value is None:
+        return 900
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 900
+    return value if value >= 0 else 900
+
+
 def getPhoneUploadDir():
     r"""手机分享上传的落盘根目录; 缺失 = <fallbackDir>\手机上传。"""
     path = load().get('phoneUploadDir')

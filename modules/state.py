@@ -74,6 +74,16 @@ class _FileLock:
                 pass
 
 
+def fileLock(path):
+    """跨进程排它锁（appendJsonl 内部用的就是它）。
+
+    「读-改-写」要横跨多次文件操作的调用方（如主管收件箱：append 与超上限
+    截头重写必须放在同一把锁里，否则并发写在重写窗口里丢条目）走这个公开
+    入口，别复制一份 msvcrt 逻辑。
+    """
+    return _FileLock(path)
+
+
 def appendJsonl(path, obj):
     _ensureDir(path)
     line = json.dumps(obj, ensure_ascii=False)

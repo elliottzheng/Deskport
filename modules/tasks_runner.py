@@ -11,7 +11,7 @@ import threading
 import time
 
 import config
-from modules import sensitive_values
+from modules import leads_inbox, sensitive_values
 from modules import tasks_store as store
 from modules import task_state, task_node
 from modules import task_engines
@@ -363,6 +363,11 @@ def _handleAcpPermission(task, agent, params, requestId):
     with store.repo.lock:
         if agent.get('perm'):
             agent['perm']['seq'] = ev.get('seq')
+    # 批次 P3 触发点（2026-11-14）：挂起审批 → 主管收件箱 notice（纯提醒，
+    # 审批沿链上行是 P5）
+    leads_inbox.emit(task, 'notice', '任务 %s 挂起审批：%s（requestId %s）'
+                                    '——纯提醒，路由在 P5'
+                     % (task['id'][:8], title, requestId))
     try:
         timeoutSec = int((policy or {}).get('timeoutSec')
                          if (policy or {}).get('timeoutSec') is not None
@@ -464,21 +469,41 @@ def _promptOnce(task, client, text, first=False):
             task_state.transition(task, task_state.TaskState.WAITING)
             task['awaitingAnswer'] = store._detectQuestion(store._lastAssistantText(task))
         store.repo.save()
+    if not task.get('closedByUser'):
+        # 批次 P3 触发点（2026-11-14）：轮次正常结束 → 主管收件箱 report
+        turn = task.get('lastTurn') or {}
+        report = '任务 %s（%s）本轮结束：工具 %d 个' % (
+            task['id'][:8], (task.get('title') or '')[:40],
+            int(turn.get('tools') or 0))
+        if int(turn.get('finalLen') or 0):
+            report += '，终稿 %d 字' % int(turn.get('finalLen'))
+        leads_inbox.emit(task, 'report', report)
 
 
 def _markTurnKind(task, seq0):
     """本轮形态（2026-11-13 早夭事件 + 2026-11-14 事件二/P1-4 反馈）：empty =
     0 工具 0 文本就结束（反复空转）；silent = 调了工具却一句终稿都没落（"干完
     活没交报告"）。text 看本轮窗口内的 assistant 事件——chunk 在流但没 flush
-    出来对调用方就是没有终稿（lastText 跨轮残留，不能用）。"""
+    出来对调用方就是没有终稿（lastText 跨轮残留，不能用）。finalLen 给主管
+    收件箱的轮末汇报用（批次 P3：有终稿才报字数）。"""
     with store.repo.lock:
         evs = [e for e in task.get('events') or [] if int(e.get('seq') or 0) > seq0]
         tools = sum(1 for e in evs if e.get('type') == 'tool')
         said = any(e.get('type') == 'assistant' and (e.get('text') or '').strip() for e in evs)
-        task['lastTurn'] = {'tools': tools, 'empty': tools == 0 and not said
+        final = next((e.get('text') or '' for e in reversed(evs)
+                      if e.get('type') == 'assistant'), '')
+        task['lastTurn'] = {'tools': tools, 'finalLen': len(final),
+                            'empty': tools == 0 and not said
                             and not (task.get('lastText') or '').strip(),
                             'silent': tools > 0 and not said, 'at': store._now()}
         store.repo.save()
+    # 批次 P3 触发点（2026-11-14）：空转/静默轮 → 主管收件箱 failure
+    if not task.get('closedByUser') and (task['lastTurn']['empty']
+                                          or task['lastTurn']['silent']):
+        leads_inbox.emit(task, 'failure', '任务 %s 上一轮%s'
+                         % (task['id'][:8],
+                            '空转（0 工具 0 文本）' if task['lastTurn']['empty']
+                            else '静默（有工具无终稿）'))
 
 
 def _popQueuedMessage(task):
@@ -581,7 +606,10 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             if item.get('type') == 'message':
                 text = (item.get('text') or '').strip()
                 if text:
-                    store.repo.append_event(task, 'user', text=text)
+                    # 补 4：收件箱唤醒的消息显式记 by（不能落成"面板"——那会让
+                    # 人以为是用户说的）；缺省不带这个键，行为不变
+                    store.repo.append_event(task, 'user', text=text,
+                                            **({'by': item['by']} if item.get('by') else {}))
                     _promptOnce(task, client, text)
                     store.repo.append_event(task, 'status', text='这轮结束，等你继续')
             # 任何唤醒（message/drain 信号）后先清持久化队列（R5-5）
@@ -627,6 +655,17 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                 task['lastActiveAt'] = store._now()
             task['resultFiles'] = store._scanResults(task['workspace'])
             store.repo.save()
+        # 批次 P3 触发点（2026-11-14）：会话线程退出且 failed/interrupted/closed
+        # → 主管收件箱 failure。closedByUser 的关闭由 closeTaskCore 报（不重复
+        # 两条）；web 重启把在飞任务打 paused 不在这——每次部署给所有在飞下属
+        # 刷一条没有意义（设计 §4 的 failure 清单也没有它）
+        status = task.get('status') or ''
+        if status in ('failed', 'interrupted') \
+                or (status == 'closed' and not task.get('closedByUser')):
+            err = (task.get('error') or '').strip()
+            leads_inbox.emit(task, 'failure', '任务 %s %s%s' % (
+                task['id'][:8], status,
+                '：' + err.splitlines()[0][:120] if err else ''))
 
 
 def _denyPendingPermission(agent):

@@ -164,6 +164,15 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 事件类型：`status` / `user` / `assistant`（Kimi 的回答终版）/ `tool` / `tool_result` /
 `plan` / `permission_request`（**带 `callId` 与 `args`**，能对回具体调用）/ `error`。
 
+**主管通信（令牌绑了主管才有）**：
+
+- 收下属事件：`GET /api/agent/leads/inbox?after=<seq>&wait=<秒>`（长轮询，
+  语义同任务 wait；没绑主管 → 400，提示先用 `/api/settings/leads` 建主管并绑令牌）。
+- 主动向用户汇报：`POST /api/agent/leads/report {"text": "..."}`——怎么送到
+  用户眼前由 Deskport 决定（v1 设置页可见），主管只见这一个工具。
+- 用户对主管说的话走 `POST /api/settings/leads/<id>/inbox`（网页会话），
+  托管主管会被立即唤醒。
+
 **关键操作**：
 
 ```text

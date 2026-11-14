@@ -23,7 +23,7 @@ from modules import tasks_store as store
 from modules import worklines_store
 from modules import fsutil, node_path, staging, task_cwd, task_node
 from modules import agent_nodes
-from modules import leads_store
+from modules import leads_inbox, leads_store
 from modules import model_availability
 from modules import events
 from modules import task_inputs
@@ -521,13 +521,15 @@ def taskMessage(task, taskId):
     return jsonify(payload), code
 
 
-def deliverMessage(task, text, mode='queue', waitSec=None):
+def deliverMessage(task, text, mode='queue', waitSec=None, by=''):
     """投递一条消息到任务（/message 与工作线自动路由共用）。
 
     R5-5 轮中插话：queue（默认）= 本轮结束后自动投递（服务端持久化，web
     重启不丢）；steer = 插队首并打断当前轮（stopReason=cancelled 落卡后
     立即投递）；reject = 保留旧行为（轮中 409）。mode 只在会 409 的场景
     生效：waiting 直接投、paused 走续聊唤醒，均不受影响。
+    by（批次 P3 补 4）：发信人记名——sweeper 投收件箱摘要时传 '收件箱'，
+    不能落成"面板"（那会让人以为是用户说的）；缺省空 = 现有行为。
     返回 (payload, status)。
     """
     taskId = task.get('id') or ''
@@ -547,7 +549,7 @@ def deliverMessage(task, text, mode='queue', waitSec=None):
             if mode == 'reject':
                 return ({'error': '这一轮还在执行，等结束或先点停止'}), 409
             steer = mode == 'steer'
-            item, pos = _enqueueMessage(task, text, steer)
+            item, pos = _enqueueMessage(task, text, steer, by=by)
             if steer:
                 # 插话语义：打断当前轮，队首消息在轮停止后立即投递。
                 # 与 /cancel 同链路：先拒掉挂起审批再 cancel，防止旧审批
@@ -574,13 +576,16 @@ def deliverMessage(task, text, mode='queue', waitSec=None):
         if pending:
             # waiting 但有轮间挂起审批（后台调用残响，R4-3c）：入持久化队列，
             # 审批落定后由 runner 的唤醒信号投递（闸门见 _popQueuedMessage）
-            item, pos = _enqueueMessage(task, text)
+            item, pos = _enqueueMessage(task, text, by=by)
             store.repo.append_event(task, 'status',
                          text='消息已排队（等审批落定后投递，第 %d 位）' % pos)
             agent['queue'].put({'type': 'drain'})
             return ({'queued': True, 'position': pos, 'steered': False,
                      'messageId': item.get('id') or ''}), 202
-        agent['queue'].put({'type': 'message', 'text': text})
+        wake = {'type': 'message', 'text': text}
+        if by:
+            wake['by'] = by       # 补 4：runner 落 user 事件时记发信人
+        agent['queue'].put(wake)
         with store.repo.lock:
             task_state.transition(task, task_state.TaskState.RUNNING)
             task['awaitingAnswer'] = False
@@ -608,13 +613,15 @@ def deliverMessage(task, text, mode='queue', waitSec=None):
     return ({'ok': True, 'status': 'queued'}), 202
 
 
-def _enqueueMessage(task, text, steer=False):
+def _enqueueMessage(task, text, steer=False, by=''):
     """消息入持久化队列（R5-5）：steer 插队首，其余追加队尾。
 
     队列挂在 task dict 上，随 repo.save() 落盘——web 重启后 resume 时由
-    runner 清队投递，主控客户端不再需要自己排队。返回 (item, position)。"""
+    runner 清队投递，主控客户端不再需要自己排队。by（批次 P3 补 4）：显式
+    发信人（sweeper 传 '收件箱'）；缺省空 = 按调用方令牌名/面板，行为不变。
+    返回 (item, position)。"""
     item = {'id': uuid.uuid4().hex[:12], 'text': text, 'at': store._now(),
-            'by': getattr(g, 'agentTokenName', '') or '面板',
+            'by': by or (getattr(g, 'agentTokenName', '') or '面板'),
             'steer': bool(steer)}
     with store.repo.lock:
         mq = task.setdefault('messageQueue', [])
@@ -714,6 +721,8 @@ def closeTaskCore(task):
     """结束会话（/close 与工作线轮换共用）。返回 (payload, status)。"""
     taskId = task.get('id') or ''
     forced = False
+    # 批次 P3：重复关闭（进来就已是终态）不重复报收件箱（触发点 5）
+    wasEnded = (task.get('status') or '') in ('closed', 'cancelled')
     with store.repo.lock:
         agent = store.repo.agentOf(taskId)
         task['closedByUser'] = True
@@ -781,6 +790,9 @@ def closeTaskCore(task):
     payload = {'ok': True, 'status': task.get('status')}
     if forced:
         payload['forced'] = True
+    # 批次 P3 触发点（2026-11-14）：用户关闭下属任务 → 主管收件箱 failure
+    if not wasEnded:
+        leads_inbox.emit(task, 'failure', '任务 %s 被关闭' % task['id'][:8])
     return payload, 200
 
 

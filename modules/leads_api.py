@@ -10,13 +10,19 @@
 绑定存在 config.agentTokens[].lead（Q2）：一个令牌最多绑一个主管，一个
 主管可绑多个令牌；吊销令牌自然解绑（条目没了）。审计 lead.created /
 lead.updated / lead.deleted / lead.token.bound / lead.token.unbound。
+
+批次 P3 起本模块还管两件收件箱相关的事（存储/令牌端点/sweeper 在
+modules/leads_inbox.py）：托管任务绑/解（补 1，kind/taskId 两个键的唯一写
+入口——update() 的 PATCH_KEYS 故意不含它们，避免 hosted 却没有 taskId 的
+状态）；用户→主管的 human 条目（P3-6，管理面同鉴权档）。审计 lead.task.bound
+/ lead.task.unbound / lead.inbox.human。
 """
 import json
 
 from flask import Blueprint, jsonify, request
 
 import config
-from modules import agent_api, events, leads_store, tasks_store
+from modules import agent_api, events, leads_inbox, leads_store, tasks_store
 
 blueprint = Blueprint('leads', __name__)
 
@@ -171,6 +177,84 @@ def unbindToken(lid, tokenId):
                    request.remote_addr)
     # 本来就没绑：幂等成功（解绑是收敛操作，不报错）
     return jsonify({'lead': lead})
+
+
+@blueprint.route('/api/settings/leads/<lid>/task', methods=['POST'])
+def bindLeadTask(lid):
+    """绑定托管任务（补 1）：该主管的托管会话 = 这个任务（kind 置 hosted）。
+
+    只认网页会话（同 /api/settings/leads*）；任务不存在 404；已 closed/
+    cancelled 400；已被别的主管绑定 409（一个任务最多一个主管）。任务自己的
+    lead 等于本主管也允许绑——自唤醒死循环在触发点统一拦（补 2），不在入口拦。
+    """
+    lead = leads_store.get(lid)
+    if lead is None:
+        return jsonify({'error': '主管不存在: %s' % lid}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    taskId = str(data.get('taskId') or '').strip()
+    if not taskId:
+        return jsonify({'error': '缺少 taskId（要绑到该主管的任务 id）'}), 400
+    tasks_store.repo.load()
+    task = tasks_store.repo.get(taskId)
+    if task is None:
+        return jsonify({'error': '任务不存在: %s' % taskId}), 404
+    if (task.get('status') or '') in ('closed', 'cancelled'):
+        return jsonify({'error': '任务 %s 已结束（%s），不能绑成托管任务'
+                       % (taskId, task.get('status'))}), 400
+    for other in leads_store.list():
+        if other.get('id') != lid and str(other.get('taskId') or '') == taskId:
+            return jsonify({'error': '任务 %s 已绑到主管 %s——一个任务最多被一个'
+                                     '主管绑定，先从那边解绑'
+                           % (taskId, other.get('name') or other.get('id'))}), 409
+    updated, err = leads_store.bindTask(lid, taskId)
+    if err == leads_store.NOT_FOUND:
+        return jsonify({'error': '主管不存在: %s' % lid}), 404
+    if err:
+        return jsonify({'error': err}), 400
+    events.log('lead.task.bound', updated.get('name') or lid, 'ok',
+               'task=%s' % taskId, request.remote_addr)
+    return jsonify({'lead': updated})
+
+
+@blueprint.route('/api/settings/leads/<lid>/task', methods=['DELETE'])
+def unbindLeadTask(lid):
+    """解绑托管任务（补 1）：taskId 清空、kind 回 external；幂等。"""
+    lead = leads_store.get(lid)
+    if lead is None:
+        return jsonify({'error': '主管不存在: %s' % lid}), 404
+    updated, err = leads_store.unbindTask(lid)
+    if err == leads_store.NOT_FOUND:
+        return jsonify({'error': '主管不存在: %s' % lid}), 404
+    if err:
+        return jsonify({'error': err}), 400
+    if str(lead.get('taskId') or ''):
+        events.log('lead.task.unbound', updated.get('name') or lid, 'ok',
+                   'task=%s' % lead.get('taskId'), request.remote_addr)
+    return jsonify({'lead': updated})
+
+
+@blueprint.route('/api/settings/leads/<lid>/inbox', methods=['POST'])
+def humanInbox(lid):
+    """用户→主管（P3-6）：网页会话说话，落一条 dir='up', kind='human' 条目。
+
+    托管主管立即唤醒（不等合并窗口——人类的话优先，leads_inbox.wakeNow）；
+    外部主管下次长轮询自然看到。审计 lead.inbox.human。
+    """
+    lead = leads_store.get(lid)
+    if lead is None:
+        return jsonify({'error': '主管不存在: %s' % lid}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'error': '请求体必须是 JSON 对象'}), 400
+    text = str(data.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'text 不能为空'}), 400
+    seq = leads_inbox.append(lid, 'up', 'human', text, '',
+                             maxLen=leads_inbox.HUMAN_MAX_TEXT)
+    events.log('lead.inbox.human', lead.get('name') or lid, 'ok',
+               text[:120], request.remote_addr)
+    leads_inbox.wakeNow(lid)
+    return jsonify({'ok': True, 'seq': seq})
 
 
 @blueprint.route('/api/agent/lead')

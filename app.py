@@ -30,6 +30,7 @@ from modules import settings as settingsModule  # noqa: E402
 from modules import capability_api as capabilityApiModule  # noqa: E402
 from modules import agent_tokens as agentTokensModule  # noqa: E402
 from modules import leads_api as leadsApiModule  # noqa: E402
+from modules import leads_inbox as leadsInboxModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
@@ -240,7 +241,7 @@ def skillVersionHeaders(resp):
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      capabilityApiModule,
-                     agentTokensModule, leadsApiModule,
+                     agentTokensModule, leadsApiModule, leadsInboxModule,
                      pluginsModule, agentApiModule, agentHandbookModule,
                      agentToolsModule,
                      agentNodesModule,
@@ -278,6 +279,9 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
 
     # 联邦: 刷新线程据此把远端广播、且 remotes[].apps 白名单允许的应用挂进来
     federationModule.bindApp(app)
+
+    # 主管收件箱: sweeper 据此唤醒托管主管（合并窗口内的未投递条目）并发无动静提示
+    leadsInboxModule.bindApp(app)
 
 
 def _installApiJsonErrors(app):
