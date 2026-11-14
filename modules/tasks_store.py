@@ -13,7 +13,7 @@ import threading
 import time
 
 import config
-from modules import contracts, fsutil, task_state, task_cwd, task_node
+from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node
 from modules import sensitive_values
 from modules.staging import safeAttachmentName
 
@@ -106,6 +106,8 @@ class TaskRepository:
         self.running = {}
         self.agents = {}
         self.loaded = False
+        self._saveSeq = 0        # 落盘快照序号（捕获时发号，防旧快照覆新）
+        self._savedSeq = 0       # 已落盘的最新序号
 
     # ---- 公开访问器：上层不再直接摸私有容器 ----
     def get(self, taskId):
@@ -158,11 +160,9 @@ class TaskRepository:
             if self.loaded:
                 return
             self.loaded = True
-            try:
-                with open(self.store_path, encoding='utf-8') as f:
-                    raw = json.load(f)
-            except (OSError, ValueError):
-                raw = {}
+            # 瞬时共享冲突（并发 save 正在 replace）由 store_io 重试；文件
+            # 真缺失/损坏才按空处理——不能把锁冲突当"无状态"丢全部任务
+            raw = store_io.loadSnapshot(self.store_path)
             if isinstance(raw, dict):
                 self.tasks.update(raw)
             dirty = False
@@ -189,21 +189,18 @@ class TaskRepository:
 
     def save(self):
         # 序列化必须在锁内完成：json.dump 遍历活字典，任何无锁写入都会触发
-        # "dictionary changed size during iteration"。锁内只生成字符串，写盘放锁外。
+        # "dictionary changed size during iteration"。锁内只生成字符串并发
+        # 序号，写盘（含并发互斥与旧快照门）放锁外，由 store_io 串行
         with self.lock:
             try:
                 payload = json.dumps(self.tasks, ensure_ascii=False)
             except (TypeError, ValueError) as e:
                 log.warning('serialize tasks failed: %s', e)
                 return
-        try:
-            os.makedirs(os.path.dirname(self.store_path), exist_ok=True)
-            tmp = self.store_path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                f.write(payload)
-            os.replace(tmp, self.store_path)
-        except OSError as e:
-            log.warning('save tasks failed: %s', e)
+            self._saveSeq += 1
+            seq = self._saveSeq
+        self._savedSeq = store_io.saveSnapshot(self.store_path, payload, seq,
+                                               self._savedSeq)
 
     def log_path(self, task):
         return os.path.join(self.log_dir, task['id'] + '.jsonl')

@@ -21,7 +21,7 @@ import paramiko
 from flask import Blueprint, jsonify
 
 import config
-from modules import node_path, task_engines, task_node
+from modules import agent_busy, node_path, task_engines, task_node
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 blueprint = Blueprint('agent_nodes', __name__)
@@ -229,15 +229,19 @@ def _nodeRequestOnce(node, method, path, payload, timeout):
 
 # ---------------------------------------------------------------- 客户端
 
-class RemoteAcpClient:
-    """KimiAcp 的 HTTP 传输版本：接口一致，任务层零改动复用。"""
+class RemoteAcpClient(agent_busy.BusyPromptMixin):
+    """KimiAcp 的 HTTP 传输版本：接口一致，任务层零改动复用。
+
+    回合投递与 409 撞忙重投在 agent_busy.BusyPromptMixin（策略单独成模块）。
+    """
 
     def __init__(self, cwd, on_update=None, on_permission=None,
                  mode='auto', prompt_timeout=1800, node='', model='',
-                 kimi_session_id='', fork=True):
+                 kimi_session_id='', fork=True, on_status=None):
         self.cwd = cwd
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or self._defaultPermission
+        self.on_status = on_status or (lambda text: None)
         self.mode = mode
         self.model = str(model or '').strip()
         self.kimi_session_id = str(kimi_session_id or '').strip()
@@ -253,6 +257,7 @@ class RemoteAcpClient:
         self._turnEvent = threading.Event()
         self._stopReason = ''
         self._closed = False
+        self._cancelAsked = False
         self._lock = threading.Lock()
 
     @staticmethod
@@ -400,12 +405,12 @@ class RemoteAcpClient:
     def prompt(self, text, timeout=None, _reattached=False):
         self._turnEvent.clear()
         self._stopReason = ''
-        node = self._node()
-        status, data = nodeRequest(
-            node, 'POST', '/api/sessions/%s/prompt' % self.node_sid,
-            {'text': text}, timeout=30)
+        self._cancelAsked = False
+        status, data = self.postPrompt(text)
         if status == 409:
-            raise RuntimeError('远端会话正在执行，请稍候')
+            # 节点上旧回合还在跑（重启续接典型形态，调查 §3 形态 A）：
+            # 先跟完旧回合再投，不判失败
+            return self.promptWhenBusy(text, timeout)
         if status == 410 and not _reattached:
             # node 空闲回收了进程（R4-5 余项 B）：自动 session/load 接续后
             # 重试本轮，任务不 failed、不向调用方暴露 410
@@ -414,14 +419,7 @@ class RemoteAcpClient:
         if status != 202:
             raise RuntimeError('远端派活失败(%s): %s'
                                % (status, data.get('error') or data))
-        wait = timeout or self.prompt_timeout or None
-        if wait == 0:
-            wait = None   # 常驻会话：不限时等待回合结束
-        if not self._turnEvent.wait(wait):
-            raise RuntimeError('远端回合超时')
-        if self.exit_code is not None and not self._stopReason:
-            raise RuntimeError('远端 ACP 进程已退出 (code=%s)' % self.exit_code)
-        return {'stopReason': self._stopReason}
+        return self.awaitTurn(timeout)
 
     def _ensureLive(self):
         """进程被回收后自动 session/load 接续：新建 node 会话（回放走
@@ -447,6 +445,8 @@ class RemoteAcpClient:
                                % (status, data.get('error') or data))
 
     def cancel(self):
+        # 置位本地停止标记：续接等待中被 close/cancel 时必须立刻跳出等待
+        self._cancelAsked = True
         try:
             nodeRequest(self._node(), 'POST',
                         '/api/sessions/%s/cancel' % self.node_sid,
@@ -496,7 +496,8 @@ def remoteClientFactory(task):
                                mode=mode, prompt_timeout=prompt_timeout,
                                node=node, model=taskModel,
                                kimi_session_id=kimiSessionId,
-                               fork=kimiSessionFork)
+                               fork=kimiSessionFork,
+                               on_status=agent_busy.taskStatusEmitter(task))
     return factory
 
 
@@ -552,7 +553,8 @@ def clientFactoryFor(task):
                                    on_update=on_update,
                                    on_permission=on_permission,
                                    mode=mode, prompt_timeout=prompt_timeout,
-                                   node=nodeName, model=taskModel)
+                                   node=nodeName, model=taskModel,
+                                   on_status=agent_busy.taskStatusEmitter(task))
         return factory
 
     def stdioFactory(cwd, on_update=None, on_permission=None,
