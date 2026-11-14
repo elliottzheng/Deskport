@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """批次 U 指挥台：overview 分组/裁剪、pending 三类、reports-read 只增不减、
-鉴权只认网页会话、响应体积。全部桩化：config.statePath 与任务仓储指到 tmp，
-后台扫掠线程在夹具里换成空操作（照 test_leads_inbox_api.py）。
+鉴权只认网页会话、响应体积；U 返工追加：停用主管名字（retiredLeads）与
+「更多」截断标记（/api/tasks truncated）。全部桩化：config.statePath 与任务
+仓储指到 tmp，后台扫掠线程在夹具里换成空操作（照 test_leads_inbox_api.py）。
 """
 import json
 import time
@@ -304,6 +305,37 @@ def test_retired_lead_not_on_board(env):
     data = overview(env)
     assert data['leads'] == []
     assert data['unassigned']['count'] == 0
+
+
+def test_retired_lead_name_still_available(env):
+    """U 返工：停用主管不上卡片，但 retiredLeads 带出 id→名字——名下刚失败的
+    任务仍进「等你处理」，前端据此补主管名；详情面板显示「已停用的主管」。"""
+    login(env.client)
+    lead = newLead(env, '老甲')
+    putTask(env, 't1', lead=lead, status='failed', error='连接超时',
+            endedAt=NOW - 600)
+    leads_store.update(lead, {'status': 'retired'})
+    data = overview(env)
+    assert data['leads'] == []
+    assert data['retiredLeads'] == {lead: '老甲'}
+    rows = [p for p in data['pending'] if p['kind'] == 'problem']
+    assert len(rows) == 1 and rows[0]['leadId'] == lead
+    assert data['unassigned']['count'] == 0        # 有主的任务不落「其它任务」
+
+
+def test_more_tasks_truncated_flag(env):
+    """U 返工：「更多」拉的 /api/tasks?full=1&lead= 截前 50 条时带
+    truncated=true（前端显示置灰「仅显示最近 50 条」，不静默消失）；
+    旧字段一个不改。"""
+    login(env.client)
+    lead = newLead(env, '甲')
+    for i in range(55):
+        putTask(env, 't%03d' % i, lead=lead, status='waiting')
+    data = call(env, 'get', '/api/tasks?full=1&lead=' + lead).get_json()
+    assert len(data['tasks']) == 50 and data['truncated'] is True
+    assert set(data) >= {'tasks', 'running', 'queued', 'limit', 'countScope'}
+    small = call(env, 'get', '/api/tasks?full=1&lead=ld_none').get_json()
+    assert small['tasks'] == [] and small['truncated'] is False
 
 
 # ---------------------------------------------------------------- 鉴权与体积

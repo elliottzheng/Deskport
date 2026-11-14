@@ -77,9 +77,10 @@
     }
 
     // 后端 pending 三类 → 显示行：补 kindText、主管名（找不到退回 id）、稳定
-    // key，并按时间倒序（规格：一条按时间倒序的清单）。
-    function pendingRows(pending, leadsById) {
+    // key，并按时间倒序（规格：一条按时间倒序的清单）；retiredById=停用主管 id→名字。
+    function pendingRows(pending, leadsById, retiredById) {
         var byId = leadsById || {};
+        var retired = retiredById || {};
         var rows = (Array.isArray(pending) ? pending : []).map(function (p) {
             var kind = p.kind || '';
             var lead = byId[p.leadId] || null;
@@ -93,7 +94,8 @@
                 at: p.at || 0,
                 taskId: p.taskId || '',
                 leadId: p.leadId || '',
-                leadName: lead ? (lead.name || '未命名') : '',
+                leadName: lead ? (lead.name || '未命名')
+                               : (retired[p.leadId] || ''),
                 requestId: p.requestId || '',
                 options: Array.isArray(p.options) ? p.options : [],
                 seq: p.seq || 0,
@@ -169,6 +171,7 @@
                     speakText: '',
                     speakBusy: false,
                     speakError: '',
+                    rowErrors: {}, leadErrors: {}, moreCapped: {},
                 };
             },
             computed: {
@@ -180,7 +183,7 @@
                 },
                 pendingRows() {
                     return pendingRows(this.overview && this.overview.pending,
-                                       this.leadsById);
+                                       this.leadsById, (this.overview && this.overview.retiredLeads) || {});
                 },
                 leadCards() {
                     var self = this;
@@ -246,8 +249,9 @@
                 kindTextOf: kindTextOf,
                 fmtAgo: function (ts) { return ago(ts); },
                 leadNameOf(leadId) {
-                    var lead = this.leadsById[leadId];
-                    return lead ? (lead.name || leadId) : (leadId || '');
+                    // 停用/悬空的主管不露原始 id：详情里显示「已停用的主管」
+                    var lead = this.leadsById[leadId || ''];
+                    return leadId ? (lead ? (lead.name || leadId) : '已停用的主管') : '';
                 },
                 async loadOverview() {
                     if (document.visibilityState !== 'visible') { return; }
@@ -314,8 +318,9 @@
                         const data = await r.json();
                         if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                         await this.loadOverview();
+                        WPCommon.clearError(this, 'leadErrors', lead.id);
                     } catch (err) {
-                        this.error = err.message;
+                        WPCommon.flashError(this, 'leadErrors', lead.id, err.message);
                     }
                 },
                 speakToLead(leadId) {
@@ -363,7 +368,7 @@
                     }
                     return null;
                 },
-                async openTask(taskId) {
+                async openTask(taskId, row) {
                     var hit = this.findTask(taskId);
                     if (hit) {
                         await this.select(hit);
@@ -377,11 +382,12 @@
                         if (r.ok && data.task) {
                             await this.select(data.task);
                         } else {
-                            this.error = (data && data.error)
-                                || ('HTTP ' + r.status);
+                            this.error = (data && data.error) || ('HTTP ' + r.status);
+                            if (row) { WPCommon.flashError(this, 'rowErrors', row.key, this.error); }
                         }
                     } catch (err) {
                         this.error = err.message;
+                        if (row) { WPCommon.flashError(this, 'rowErrors', row.key, err.message); }
                     }
                 },
                 async resolvePendingPermission(row, option) {
@@ -400,8 +406,9 @@
                         const data = await r.json();
                         if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                         await this.loadOverview();
+                        WPCommon.clearError(this, 'rowErrors', row.key);
                     } catch (err) {
-                        this.error = err.message;
+                        WPCommon.flashError(this, 'rowErrors', row.key, err.message);
                     }
                 },
                 async markReportRead(row) {
@@ -417,8 +424,9 @@
                         const data = await r.json();
                         if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                         await this.loadOverview();
+                        WPCommon.clearError(this, 'rowErrors', row.key);
                     } catch (err) {
-                        this.error = err.message;
+                        WPCommon.flashError(this, 'rowErrors', row.key, err.message);
                     }
                 },
                 async closeProblemTask(row) {
@@ -434,8 +442,9 @@
                         const data = await r.json();
                         if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                         await this.loadOverview();
+                        WPCommon.clearError(this, 'rowErrors', row.key);
                     } catch (err) {
-                        this.error = err.message;
+                        WPCommon.flashError(this, 'rowErrors', row.key, err.message);
                     }
                 },
                 async loadMoreTasks(lead) {
@@ -448,8 +457,11 @@
                         if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                         this.moreTasks[lead.id] =
                             mergeMoreTasks(lead.tasks, data.tasks || []);
+                        // 拉满 50 条被截断：按钮换成置灰提示，不静默消失
+                        this.moreCapped[lead.id] = !!data.truncated;
+                        WPCommon.clearError(this, 'leadErrors', lead.id);
                     } catch (err) {
-                        this.error = err.message;
+                        WPCommon.flashError(this, 'leadErrors', lead.id, err.message);
                     }
                 },
                 gotoLead(leadId) {

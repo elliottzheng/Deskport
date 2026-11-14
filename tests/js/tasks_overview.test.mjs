@@ -116,6 +116,19 @@ test('pendingRows: 空/坏数据不抛', () => {
     assert.deepEqual(pendingRows([{}], {}).map(r => r.kindText), ['待办']);
 });
 
+test('pendingRows: 停用主管的名字从 retiredById 带回（U 返工）', () => {
+    const rows = pendingRows([
+        {kind: 'problem', at: 100, taskId: 't1', leadId: 'ld_old',
+         title: '旧任务', detail: '崩了'},
+        {kind: 'problem', at: 90, taskId: 't2', leadId: '',
+         title: '无主任务', detail: '崩了'},
+    ], {}, {ld_old: '老甲'});
+    assert.equal(rows[0].leadName, '老甲');   // 停用主管不上卡片，名字照常带出
+    assert.equal(rows[1].leadName, '');        // 无主任务仍为空
+    assert.deepEqual(pendingRows([{kind: 'problem', leadId: 'ld_x'}], null, null)
+        .map(r => r.leadName), ['']);          // 两边都缺不抛
+});
+
 test('mergeMoreTasks: 按 id 去重合并，保留原顺序', () => {
     const current = [{id: 'a', title: 'A'}, {id: 'b', title: 'B'}];
     const more = [{id: 'b', title: 'B2'}, {id: 'c', title: 'C'}];

@@ -16,6 +16,9 @@
         前端据此决定显不显示「更多」（草图的 tasks 只有裁剪后的 5 条，看不出
         还有没有）；brief 由 tasks_store.summaryBrief 加一个 lastActiveAt
         （行内「最近活跃」要它，summaryBrief 本身不带这个键）。
+    retiredLeads——停用主管的 id→名字（U 返工：停用主管的任务仍会进「等你
+        处理」的问题行，主管卡片又没有它，名字从这里补；详情面板据此显示
+        「已停用的主管」而不是原始 id）。
 
 响应体积：253 个合成任务 < 200KB（tests/test_command_view.py 钉住）。
 """
@@ -248,11 +251,13 @@ def overview():
         byLead.setdefault(str(task.get('lead') or ''), []).append(task)
 
     leadRows, pending = [], []
+    retiredLeads = {}                     # 停用主管 id→名字（见模块 docstring）
     for lead in sorted(leads_store.list(),
                        key=lambda l: _int(l.get('createdAt'))):
-        if (lead.get('status') or '') == 'retired':
-            continue                      # 停用的主管不上指挥台
         leadId = str(lead.get('id') or '')
+        if (lead.get('status') or '') == 'retired':
+            retiredLeads[leadId] = str(lead.get('name') or '')
+            continue                      # 停用的主管不上指挥台
         own = byLead.get(leadId, [])
         entries, _last = leads_inbox.entriesAfter(
             leadId, _int(lead.get('reportSeq')), 'down')
@@ -272,6 +277,7 @@ def overview():
     unassigned = byLead.get('', [])
     briefs, closedHidden = _splitTasks(unassigned)
     return {'pending': pending, 'leads': leadRows,
+            'retiredLeads': retiredLeads,
             'unassigned': {'count': len(unassigned),
                            'running': sum(1 for t in unassigned
                                           if (t.get('status') or '')

@@ -52,7 +52,7 @@
                             <button type="button" class="btn btn-ghost"
                                     @click="resolvePendingPermission(p, null)">拒绝</button>
                             <button type="button" class="btn btn-ghost"
-                                    @click="openTask(p.taskId)">查看</button>
+                                    @click="openTask(p.taskId, p)">查看</button>
                         </template>
                         <template v-else-if="p.kind === 'report'">
                             <button type="button" class="btn btn-secondary"
@@ -62,11 +62,12 @@
                         </template>
                         <template v-else>
                             <button type="button" class="btn btn-ghost"
-                                    @click="openTask(p.taskId)">查看</button>
+                                    @click="openTask(p.taskId, p)">查看</button>
                             <button type="button" class="btn btn-ghost"
                                     @click="closeProblemTask(p)">关闭</button>
                         </template>
                     </div>
+                    <p class="cmd-row-error" v-if="rowErrors[p.key]">{{ rowErrors[p.key] }}</p>
                 </div>
             </section>
 
@@ -94,6 +95,7 @@
                             {{ l.status === 'paused' ? '恢复' : '暂停' }}
                         </button>
                     </div>
+                    <p class="cmd-row-error" v-if="leadErrors[l.id]">{{ leadErrors[l.id] }}</p>
                     <div class="cmd-lead-tasks" v-if="l.expanded" @click.stop>
                         <button type="button" class="cmd-task-row" v-for="t in l.tasks"
                                 :key="t.id" @click="openTask(t.id)">
@@ -110,6 +112,7 @@
                                 @click="loadMoreTasks(l)">
                             更多（还有 {{ l.closedHidden }} 条已关闭）
                         </button>
+                        <p class="cmd-more-hint" v-if="moreCapped[l.id]">仅显示最近 50 条</p>
                     </div>
                 </div>
                 <p class="empty-tip" v-if="overview && !leadCards.length">还没有主管——点右上角「新建」建一个外部主管。</p>
@@ -160,7 +163,7 @@
                         <option value="plan">只读规划</option>
                         <option value="yolo">全部放行</option>
                     </select>
-                    <button type="button" class="btn btn-ghost task-back" @click="backToList()">← 返回</button>
+                    <button type="button" class="btn btn-ghost task-back cmd-detail-back" @click="backToList()">← 返回</button>
                     <a class="btn btn-ghost" :href="logUrl" title="下载完整 jsonl 日志">日志</a>
                     <button type="button" class="btn btn-ghost" v-if="isRunning" @click="cancel">停止本轮</button>
                     <button type="button" class="btn btn-ghost" v-if="canEnd" @click="closeSession">结束会话</button>
@@ -342,7 +345,7 @@
                         <span class="task-hint">{{ isLocalRun
                             ? '在独立工作区执行；输入文件复制一份，不改原件。'
                             : '在所选节点的远端目录执行；直接使用远端已有文件。' }}</span>
-                        <button type="button" class="btn btn-primary" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
+                        <button type="button" class="btn btn-primary cmd-start-btn" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
                             {{ busy ? '创建中…' : '开始任务' }}
                         </button>
                     </div>

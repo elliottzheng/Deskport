@@ -219,14 +219,19 @@ task-back { display: none; }
 .cmd-kind-report { color: var(--brand); }
 .cmd-kind-problem { color: var(--err); }
 .cmd-pending-main { min-width: 0; flex: 1; }
-.cmd-pending-title { font-size: 13px; font-weight: 500; }
+.cmd-pending-title { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .cmd-pending-lead { color: var(--text-3); font-weight: 400; }
 .cmd-pending-sub {
     font-size: 12px; color: var(--text-3); margin-top: 2px;
     word-break: break-all;
 }
-.cmd-pending-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.cmd-pending-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex-shrink: 1; }
 .cmd-pending-actions .btn { min-height: 44px; }
+/* 行动失败的就地错误条（U 返工）：占满一行，几秒后或下次成功时消失 */
+.cmd-row-error {
+    flex-basis: 100%; margin: 4px 0 0; font-size: 12px;
+    color: var(--err); word-break: break-all;
+}
 
 /* ---- 2 主管卡片 ---- */
 .cmd-leads { display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -300,6 +305,9 @@ task-back { display: none; }
 /* ---- 详情面板：所属主管行 + 手机全屏 sheet ---- */
 .task-detail-lead { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 .task-detail-lead a { color: var(--brand); text-decoration: none; cursor: pointer; }
+/* 新界面主动按钮 ≥44px（U 返工）：只加专用类，不动全局 .btn */
+.cmd-detail-back { min-height: 44px; }
+.cmd-start-btn { min-height: 44px; }
 
 /* ---- 新建 / 发话 sheet ---- */
 .cmd-sheet { width: min(640px, 100%); }
@@ -346,4 +354,6 @@ task-back { display: none; }
     .cmd-sheet .task-options .select,
     .cmd-sheet .task-path-add .input { font-size: 16px; min-height: 44px; }
     .cmd-sheet .task-path-item { min-height: 44px; }
+    /* 手机：待办行动作整组换到下一行，不把行撑出横向滚动（U 返工） */
+    .cmd-pending-actions { flex-basis: 100%; }
 }
