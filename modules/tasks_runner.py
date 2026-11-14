@@ -13,7 +13,7 @@ import time
 import config
 from modules import leads_inbox, sensitive_values
 from modules import tasks_store as store
-from modules import task_state, task_node
+from modules import task_events, task_state, task_node
 from modules import task_engines
 from modules import worklines_store
 from modules.kimi_acp import KimiAcp, extractText
@@ -48,8 +48,8 @@ def _flushAssistant(task):
         buf = task.pop('_assistantBuf', '') or ''
     if not buf:
         return
-    store.repo.append_event(task, 'assistant', text=buf[:store.MAX_TEXT],
-                            full=buf, truncated=len(buf) > store.MAX_TEXT)
+    text, truncated = task_events.truncateEvent('assistant', buf)
+    store.repo.append_event(task, 'assistant', text=text, full=buf, truncated=truncated)
 
 
 def _argsText(args):
@@ -115,7 +115,8 @@ def _backfillToolArgs(task, callId, argsText):
     """把后到的参数补进已落卡的 tool 事件（写入前同样脱敏，R5-2）。"""
     if not callId or not argsText:
         return
-    text = sensitive_values.redactText(argsText)[:store.MAX_TEXT]
+    text = sensitive_values.redactText(argsText)
+    text, flag = task_events.truncateEvent('tool', text)
     with store.repo.lock:
         for event in reversed(task.get('events') or []):
             if event.get('type') != 'tool' or event.get('callId') != callId:
@@ -123,7 +124,7 @@ def _backfillToolArgs(task, callId, argsText):
             if event.get('args'):
                 return
             event['args'] = text
-            event['truncated'] = len(argsText) > store.MAX_TEXT
+            event['truncated'] = flag
             store.repo.save()
             return
 
@@ -166,11 +167,10 @@ def _handleAcpUpdate(task, update):
             # 主控可观测（R4-8）：执行方正在跑的工具，tool_result 到达即清
             task['_currentTool'] = {'name': update.get('title') or '',
                                     'since': store._now()}
+        args, truncated = task_events.truncateEvent('tool', argsText)
         store.repo.append_event(task, 'tool',
                      name=update.get('title') or update.get('kind') or 'tool',
-                     args=argsText[:store.MAX_TEXT],
-                     full=argsText,
-                     truncated=len(argsText) > store.MAX_TEXT,
+                     args=args, full=argsText, truncated=truncated,
                      callId=callId, status=update.get('status') or '')
         return
     if kind == 'tool_call_update':
@@ -184,22 +184,21 @@ def _handleAcpUpdate(task, update):
         rawText = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
         with store.repo.lock:
             task['_currentTool'] = None   # 工具收尾（R4-8 currentTool 清空）
+        text, truncated = task_events.truncateEvent('tool_result', rawText)
         store.repo.append_event(task, 'tool_result',
-                     text=rawText[:store.MAX_TOOL_RESULT],
-                     full=rawText,
-                     truncated=len(rawText) > store.MAX_TOOL_RESULT,
+                     text=text, full=rawText, truncated=truncated,
                      callId=update.get('toolCallId') or '',
                      name=update.get('title') or '')
         return
     if kind == 'plan':
-        entries = update.get('entries') or []
         lines = []
-        for item in entries:
+        for item in update.get('entries') or []:
             if isinstance(item, dict):
                 lines.append('%s %s' % (item.get('status') or '', item.get('content') or ''))
             else:
                 lines.append(str(item))
-        store.repo.append_event(task, 'plan', text='\n'.join(lines)[:store.MAX_TEXT])
+        planText, _ = task_events.truncateEvent('plan', '\n'.join(lines))
+        store.repo.append_event(task, 'plan', text=planText)
         return
     if kind == 'available_commands_update':
         # R4-8：只存名字列表进任务详情（commands），其余忽略

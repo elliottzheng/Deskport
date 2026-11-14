@@ -774,7 +774,12 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
   `message` 接手（`canResume`）；仅 web 内 stdio 回退（未启用 node）时任务
   中断（`interrupted`），重发 message 会明确 409，请重新建任务；
 - 重启进行中事件轮询会拿到 frp 的 502 原文——服务不可用期间任何服务端都
-  无法返回 JSON，恢复后一切照旧。
+  无法返回 JSON，恢复后一切照旧；
+- **进行中工具调用的审批可能从自动放行退回询问**（批次 PS1）：policy 判定
+  要回查流式参数（`_toolArgs` / `_toolArgText` 这些运行时缓存不落盘），
+  web 重启后查不到，只能按缺省 `ask` 挂起等人工。方向上更保守（不会更不
+  安全）；事件窗口本身不丢（`agent_logs/<id>.jsonl` 是唯一真相，重启后惰性
+  回填，与重启前逐字段一致），`/event/<seq>` 全文照旧可取。
 
 ## 技能分发（URL 自举）
 
