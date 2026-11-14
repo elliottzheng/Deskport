@@ -46,7 +46,7 @@ LEGACY = {
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码
 FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp', 'agent_sftp_write',
-            'agent_sessions', 'agent_share', 'agent_skill_files', 'agent_tunnel', 'command', 'control',
+            'agent_sessions', 'agent_share', 'agent_skill_files', 'agent_tunnel', 'command', 'command_view', 'control',
             'feedback', 'feedback_store', 'files', 'files_archive', 'files_base', 'files_browse',
             'files_federation', 'files_pins', 'files_transfer', 'leads_api', 'leads_inbox', 'leads_store',
             'screen', 'ssh', 'task_cwd', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
@@ -93,6 +93,7 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('feedback', 'feedback_store'),
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
+    ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
     # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
     ('tasks_api', 'agent_nodes'),     # 执行点存在性校验/寻址/模型声明
     ('tasks_api', 'task_cwd'),        # cwd 前置校验（远端 cwdRoots, 批次 B3）
@@ -126,7 +127,7 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
                   'TermEnv', 'TermSessionUI', 'TermControls',
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
-                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads',  # 批次 S：主管卡片/任务页筛选（纯函数有 node 单测）
+                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads', 'WPTasksOverview',  # 批次 S 主管卡片/任务页筛选 + 批次 U 指挥台一屏（纯函数有 node 单测）
                   # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
                   'WPSettingsCapability'}
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。

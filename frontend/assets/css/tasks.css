@@ -199,15 +199,151 @@ task-back { display: none; }
         background: var(--surface); padding-bottom: env(safe-area-inset-bottom, 0);
     }
 }
-/* 按主管筛（批次 S）：一排横滚 chips，手机首屏不抢高度；隐藏时任务列表照常 */
-.leads-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.leads-filter-btn {
-    min-height: 44px; padding: 0 12px; border: 1px solid var(--line, #d8dee9);
-    border-radius: 999px; background: var(--bg-2); color: var(--text-2);
-    font-size: 12px; cursor: pointer;
+/* ====== 指挥台（批次 U）：等你处理 / 主管卡片 / 其它任务 / 新建 sheet ====== */
+.cmd-new-btn { flex-shrink: 0; min-height: 44px; }
+.cmd-load-error { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.cmd-sec-title { font-size: 13px; color: var(--text-3); margin: var(--sp-2) 0; }
+
+/* ---- 1 等你处理 ---- */
+.cmd-pending { padding: var(--sp-3) var(--sp-4); }
+.cmd-pending-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 0; border-top: 1px solid var(--border);
 }
-.leads-filter-btn.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cmd-pending-row:first-of-type { border-top: 0; }
+.cmd-kind {
+    flex-shrink: 0; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; background: var(--bg-2); color: var(--text-2);
+}
+.cmd-kind-permission { color: var(--warn); }
+.cmd-kind-report { color: var(--brand); }
+.cmd-kind-problem { color: var(--err); }
+.cmd-pending-main { min-width: 0; flex: 1; }
+.cmd-pending-title { font-size: 13px; font-weight: 500; }
+.cmd-pending-lead { color: var(--text-3); font-weight: 400; }
+.cmd-pending-sub {
+    font-size: 12px; color: var(--text-3); margin-top: 2px;
+    word-break: break-all;
+}
+.cmd-pending-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.cmd-pending-actions .btn { min-height: 44px; }
+
+/* ---- 2 主管卡片 ---- */
+.cmd-leads { display: flex; flex-direction: column; gap: var(--sp-2); }
+.cmd-lead-card { padding: var(--sp-3) var(--sp-4); cursor: pointer; }
+.cmd-lead-card.open { border-color: var(--brand); }
+.cmd-lead-head {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    min-height: 44px;
+}
+.cmd-lead-name { font-size: 15px; font-weight: 600; }
+.cmd-lead-kind { font-size: 11px; color: var(--text-3); }
+.cmd-lead-unread { font-size: 11px; color: var(--brand); }
+.cmd-badge {
+    padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    background: var(--bg-2); color: var(--text-2);
+}
+.cmd-badge-busy { background: var(--brand-bg); color: var(--brand); }
+.cmd-badge-waiting_you { background: var(--err-bg); color: var(--err); }
+.cmd-badge-asleep { color: var(--text-3); }
+.cmd-badge-paused { color: var(--warn); }
+.cmd-lead-sub {
+    display: flex; flex-wrap: wrap; gap: 2px 12px;
+    font-size: 12px; color: var(--text-3); margin-top: 4px;
+}
+.cmd-lead-report {
+    min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-lead-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cmd-lead-actions .btn { min-height: 44px; }
+.cmd-lead-tasks {
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 2px;
+}
+
+/* 下属/无主任务行（主管卡片与「其它任务」同一种行） */
+.cmd-task-row {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    min-height: 44px; padding: 8px; border: 0; border-radius: var(--radius-s);
+    background: transparent; color: var(--text-1); font-family: inherit;
+    font-size: inherit; text-align: left; cursor: pointer;
+}
+.cmd-task-row:hover { background: var(--bg-2); }
+.cmd-task-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.cmd-task-title {
+    font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-task-sub {
+    font-size: 11px; color: var(--text-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-task-status { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+.cmd-more { align-self: flex-start; min-height: 44px; }
+.cmd-more-hint { font-size: 11px; color: var(--text-3); margin: 4px 0 0; }
+
+/* ---- 3 其它任务（折叠组） ---- */
+.cmd-unassigned { padding: 0; overflow: hidden; }
+.cmd-unassigned-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; width: 100%; min-height: 44px; padding: 10px var(--sp-4);
+    border: 0; background: transparent; color: var(--text-1);
+    font-family: inherit; font-size: 13px; font-weight: 500;
+    text-align: left; cursor: pointer;
+}
+.cmd-unassigned-caret { color: var(--text-3); transition: transform .15s ease; }
+.cmd-unassigned-caret.open { transform: rotate(180deg); }
+.cmd-unassigned .cmd-lead-tasks {
+    margin: 0; padding: 4px var(--sp-3) var(--sp-3); border-top: 1px solid var(--border);
+}
+
+/* ---- 详情面板：所属主管行 + 手机全屏 sheet ---- */
+.task-detail-lead { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.task-detail-lead a { color: var(--brand); text-decoration: none; cursor: pointer; }
+
+/* ---- 新建 / 发话 sheet ---- */
+.cmd-sheet { width: min(640px, 100%); }
+.cmd-sheet-choice { display: flex; flex-direction: column; gap: var(--sp-2); }
+.cmd-choice {
+    display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+    min-height: 44px; padding: var(--sp-4);
+    border: 1px solid var(--border); border-radius: var(--radius-m);
+    background: var(--surface); color: var(--text-1);
+    font-family: inherit; text-align: left; cursor: pointer;
+}
+.cmd-choice:hover { border-color: var(--brand); background: var(--brand-bg); }
+.cmd-choice-title { font-size: 15px; font-weight: 600; }
+.cmd-choice-hint { font-size: 12px; color: var(--text-3); }
+.cmd-sheet-back { margin-bottom: var(--sp-2); min-height: 44px; padding: 0; }
+.cmd-kind-row { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.cmd-kind-opt {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+    padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius-m); background: var(--surface);
+}
+.cmd-kind-opt.is-on { border-color: var(--brand); background: var(--brand-bg); }
+.cmd-kind-opt.is-off { opacity: .5; }
+.cmd-kind-title { font-size: 13px; font-weight: 600; }
+.cmd-kind-hint { font-size: 11px; color: var(--text-3); }
+.cmd-sheet .field { margin-bottom: var(--sp-3); }
+.cmd-sheet .task-composer { border: 0; padding: 0; background: transparent; }
+.cmd-ok { color: var(--ok); font-size: 13px; margin: var(--sp-2) 0 0; }
+.cmd-speak { width: min(480px, 100%); }
+.cmd-speak-input { width: 100%; box-sizing: border-box; }
+.cmd-speak-foot { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }
+
 @media (max-width: 640px) {
-    .leads-filter { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .leads-filter-btn { flex: 0 0 auto; }
+    /* 手机：任务详情是全屏 sheet；底栏（z 100）仍压在它上面，底部留出空间 */
+    .tasks-layout.show-detail .task-detail {
+        position: fixed; inset: 0; z-index: 90;
+        max-height: none; border: 0; border-radius: 0;
+        padding-bottom: calc(64px + env(safe-area-inset-bottom, 0));
+    }
+    .tasks-layout.show-detail .task-detail .task-chat { min-height: 0; max-height: none; }
+    /* 派活 sheet 里的控件：手机上字号 ≥16px（防 iOS 聚焦放大）、触控 ≥44px；
+       桌面仍用原来的紧凑尺寸（12px/32px，行为不变） */
+    .cmd-sheet .task-options .input,
+    .cmd-sheet .task-options .select,
+    .cmd-sheet .task-path-add .input { font-size: 16px; min-height: 44px; }
+    .cmd-sheet .task-path-item { min-height: 44px; }
 }

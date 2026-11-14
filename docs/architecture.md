@@ -118,7 +118,7 @@ for module in BLUEPRINT_MODULES:
 | 路由 | 文件 | 行为 |
 |---|---|---|
 | `/app` | `frontend/app.html` | 单壳入口，多视图 iframe 常驻（`shell.js`） |
-| `/tasks` | `frontend/tasks.html` | 任务页直出（也可在壳内以 iframe 打开） |
+| `/tasks` | `frontend/tasks.html` | 指挥台直出（原任务页；也可在壳内以 iframe 打开） |
 | `/m/share` | `frontend/m-share.html` | 手机分享表单：`?ticket=` 读暂存文件，三选一提交（见 [m-share.md](m-share.md)） |
 | `/`、`/terminal`、`/ssh`、`/files`、`/screen`、`/command`、`/settings` | 旧页面 | 302 到 `/app?view=...`（`/ssh` → `view=session&kind=ssh`） |
 | `/inbox` | — | 302 到 `/app?view=files&loc=inbox` |
