@@ -111,19 +111,18 @@ def _rememberLateArgs(task, update):
     return callId, argsText
 
 
-def _needsBackfill(args):
-    """落卡的 tool args 是否只是残片（需要回填）：空，或去空白后 ≤2 且不是
-    合法的完整 JSON。
+def _needsBackfill(args, argsText):
+    """是否把后到的参数补进已落卡的 tool 事件（主控 2026-11-15 定规则）。
 
-    流式模型下 tool 事件首帧往往只记到 "{"（独立验收 2026-11-15 发现）——
-    旧守卫"args 非空即不补"会让这些事件永远停在残片。≤2 字长是安全边界：
-    完整的 "{}"/"[]" 与非 JSON 的普通字符串（如 "ls -la"）都不算残片，
-    不会被迟到的参数盖掉。
+    已落卡的 args 为空、或不是合法完整 JSON（流式首帧残片，如 "{"、
+    "{\"command\": "——U 批验收实测的形状），且后到的 argsText 是合法完整
+    JSON → 回填。后到的参数本来就是权威值；已落卡是合法完整 JSON 时不覆盖
+    （先落的完整参数同样是权威值）。后到的不是合法 JSON 时也不回填——流式
+    中途残片盖过去只会把事件卡在半截参数上。
     """
-    text = (args or '').strip()
-    if not text:
-        return True
-    return len(text) <= 2 and _parseArgs(args) is None
+    if _parseArgs(args) is not None:
+        return False        # 已落卡完整：不覆盖
+    return _parseArgs(argsText) is not None
 
 
 def _backfillToolArgs(task, callId, argsText):
@@ -138,8 +137,8 @@ def _backfillToolArgs(task, callId, argsText):
     落盘的 agent_tasks.json 已剥离 events，store.repo.save() 对回填是空转
     （批 1 起删除）——args 以 jsonl 补丁行为准。
 
-    回填判定（独立验收 2026-11-15 追加）：args 为空**或只是残片**（首帧
-    "{" 这种，见 _needsBackfill）都要补——否则流式首帧残片永远停在 "{"。
+    回填判定（独立验收 2026-11-15 追加）：残片首帧（含 U 批实测的
+    "{\"command\": " 这种 11 字半截 JSON）也要补，规则见 _needsBackfill。
     """
     if not callId or not argsText:
         return
@@ -149,7 +148,7 @@ def _backfillToolArgs(task, callId, argsText):
         for event in reversed(task.get('events') or []):
             if event.get('type') != 'tool' or event.get('callId') != callId:
                 continue
-            if not _needsBackfill(event.get('args')):
+            if not _needsBackfill(event.get('args'), argsText):
                 return
             event['args'] = text
             event['truncated'] = flag

@@ -330,12 +330,12 @@ def test_double_patch_last_one_wins(env):
 
 
 def test_fragment_first_frame_args_backfilled(env):
-    """流式首帧残片（独立验收 2026-11-15）：tool 事件 args 只记到 "{"——
-    残片也触发回填，补丁行照常写 jsonl；内存与重启后（/events 与
-    /event/<seq>）都是完整参数。"""
+    """流式首帧残片（独立验收 2026-11-15 + U 批实测）：tool 事件 args 只记到
+    "{\"command\": " 这种 11 字残片——残片也触发回填，补丁行照常写 jsonl；
+    内存与重启后（/events 与 /event/<seq>）都是完整参数。"""
     task, toolSeq = _toolEventNoArgs(env)
     with env.repo.lock:
-        task['events'][-1]['args'] = '{'          # 首帧残片（旧守卫会停在这）
+        task['events'][-1]['args'] = '{"command": '   # 首帧残片（旧守卫会停在这）
     tasks_api.runner._backfillToolArgs(task, 'c1', '{"command": "ls -la /home"}')
     before = [dict(e) for e in task['events']]
     assert before[-1]['args'] == '{"command": "ls -la /home"}'
@@ -353,12 +353,39 @@ def test_fragment_first_frame_args_backfilled(env):
     assert resp['event']['args'] == '{"command": "ls -la /home"}'
 
 
+def test_complete_recorded_args_not_overwritten(env):
+    """已落卡是合法完整 JSON（{"a":1}）时不被后到参数覆盖，也不写补丁行。"""
+    task, _toolSeq = _toolEventNoArgs(env)
+    with env.repo.lock:
+        task['events'][-1]['args'] = '{"a":1}'
+    tasks_api.runner._backfillToolArgs(task, 'c1', '{"command": "ls"}')
+    assert task['events'][-1]['args'] == '{"a":1}'
+    lines = (env.tmp / 'logs' / (task['id'] + '.jsonl')) \
+        .read_text(encoding='utf-8').splitlines()
+    assert not any('tool_args_patch' in l for l in lines)
+
+
+def test_incomplete_late_args_not_backfilled(env):
+    """后到的参数不是合法完整 JSON（流式中途残片）→ 不回填、不写补丁行，
+    已落卡的残片原样保留（等完整那次再补）。"""
+    task, _toolSeq = _toolEventNoArgs(env)
+    with env.repo.lock:
+        task['events'][-1]['args'] = '{'
+    tasks_api.runner._backfillToolArgs(task, 'c1', '{"comm')
+    assert task['events'][-1]['args'] == '{'
+    lines = (env.tmp / 'logs' / (task['id'] + '.jsonl')) \
+        .read_text(encoding='utf-8').splitlines()
+    assert not any('tool_args_patch' in l for l in lines)
+
+
 def test_needs_backfill_predicate():
-    """残片判定：空/None/"{"/"["/纯空白 → 需回填；"{}"/"[]"/完整 JSON/
-    非 JSON 普通字符串 → 不回填（不被迟到的参数盖掉）。"""
+    """回填判定：已落卡为空/非法 JSON 且后到合法 JSON → 回填；已落卡合法
+    完整 JSON 不覆盖；后到的不是合法 JSON 不回填。"""
     needs = tasks_api.runner._needsBackfill
-    assert needs('') and needs(None) and needs('   ')
-    assert needs('{') and needs('{"') and needs('[') and needs('"]')
-    assert not needs('{}') and not needs('[]') and not needs('{ }')
-    assert not needs('{"command": "ls"}')
-    assert not needs('ls -la')                    # 非 JSON 但 >2 字：不当残片
+    assert needs('', '{"a":1}') and needs(None, '{"a":1}')
+    assert needs('{', '{"a":1}') and needs('{"command": ', '{"command": "ls"}')
+    assert not needs('{"a":1}', '{"command": "ls"}')   # 已落卡完整：不覆盖
+    assert not needs('{}', '{"a":1}')                  # 空对象也是完整 JSON
+    assert not needs('{', '{"comm')                    # 后到不完整
+    assert not needs('{', 'ls -la')                    # 后到非 JSON
+    assert needs('ls -la', '{"a":1}')                  # 已落卡非 JSON：可覆盖
