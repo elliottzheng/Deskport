@@ -172,6 +172,15 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
   用户眼前由 Deskport 决定（v1 设置页可见），主管只见这一个工具。
 - 用户对主管说的话走 `POST /api/settings/leads/<id>/inbox`（网页会话），
   托管主管会被立即唤醒。
+- CLI 一行版（托管主管照这个用）：`python deskport/deskport.py lead`（我绑的
+  主管）、`python deskport/deskport.py inbox [--after N] [--wait 秒]`（收件箱
+  条目，一行一条，末尾 `lastSeq=`）、`python deskport/deskport.py report "<一句话>"`、
+  `python deskport/deskport.py close <任务id>`（干完了关掉，回收进程）、
+  `python deskport/deskport.py approve <任务id> <requestId> [--deny]`（审批下属
+  的 escalation：批准 / 拒绝）。
+- 下属卡审批时先找你：收件箱里会出现 `escalation` 条目（含 requestId 与参数
+  摘要）并立即唤醒你；在边界内就用该任务的 `permission` 批准，不在或拿不准就
+  拒绝并 `report` 向用户说明。约 5 分钟没决定，审批自动上交用户（仍可补批）。
 
 **关键操作**：
 

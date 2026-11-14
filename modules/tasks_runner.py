@@ -11,7 +11,7 @@ import threading
 import time
 
 import config
-from modules import leads_inbox, sensitive_values
+from modules import leads_escalation, leads_inbox, sensitive_values
 from modules import tasks_store as store
 from modules import task_state, task_node
 from modules import task_engines
@@ -277,8 +277,14 @@ def _handleAcpPermission(task, agent, params, requestId):
     # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，字符串
     # 统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉。
     # 流式形状（模型在 tool_call 之后才吐参数）下按 callId 记下的可能是空串：
-    # 空的不认，退回审批自带/流式文本里的真参数（R5-9：旧的"空也认"会盖掉它）
-    if callId and byCall:
+    # 空的不认，退回审批自带/流式文本里的真参数（R5-9：旧的"空也认"会盖掉它）。
+    # 例 11 实测（glm-5.3-flash）：tool_call 首帧 content 就是 "{"（流式残片，
+    # 完整快照在同 callId 的 tool_call_update 里，先于 request_permission 到）——
+    # 残片是解析不成 JSON 的字符串，直接用它 policy 只能拿到 "{" 判不了，边界内
+    # 的命令也会挂起等人工（托管主管无人干预链就是这么断的）。所以残片让位给
+    # streamed 的完整快照；streamed 也没有才认残片
+    staleShard = isinstance(byCall, str) and _parseArgs(byCall) is None
+    if callId and byCall and not (staleShard and streamed):
         rawInput = byCall               # 按 callId 精确回查：参数记下了就用
     if not rawInput and callId and streamed:
         parsed = _parseArgs(streamed)
@@ -363,11 +369,12 @@ def _handleAcpPermission(task, agent, params, requestId):
     with store.repo.lock:
         if agent.get('perm'):
             agent['perm']['seq'] = ev.get('seq')
-    # 批次 P3 触发点（2026-11-14）：挂起审批 → 主管收件箱 notice（纯提醒，
-    # 审批沿链上行是 P5）
-    leads_inbox.emit(task, 'notice', '任务 %s 挂起审批：%s（requestId %s）'
-                                    '——纯提醒，路由在 P5'
-                     % (task['id'][:8], title, requestId))
+    # 批次 A（A4-1）：有主管的下属任务——审批请求立刻上交主管（escalation
+    # 条目 + 立即唤醒，与用户发话同一条旁路），替换 P3 里同一位置的 notice
+    # （不要两条都写）。主管自己的托管任务与没绑主管的任务不写（前者等用户
+    # 直接批，后者行为与现在逐字一致）
+    escLead = leads_escalation.escalatePermission(task, title, argsForEvent,
+                                                  str(requestId))
     try:
         timeoutSec = int((policy or {}).get('timeoutSec')
                          if (policy or {}).get('timeoutSec') is not None
@@ -375,18 +382,30 @@ def _handleAcpPermission(task, agent, params, requestId):
     except (TypeError, ValueError):
         timeoutSec = config.getTaskPermissionTimeoutSec()
     deadline = store._now() + timeoutSec if timeoutSec > 0 else None
+    # 批次 A（A4-3）：主管限期。期限内没决定 → 补一条 notice「审批已上交
+    # 用户」，审批继续挂着、不自动拒绝（用户的「等你处理」按
+    # pendingPermission 列出）；主管仍可在期限内补批
+    graceSec = config.getLeadApprovalGraceSec()
+    graceAt = (store._now() + graceSec) if (escLead and graceSec > 0) else None
+    handedOver = False
     while True:
         with store.repo.lock:
             if decision['value'] is not None:
                 break
             if task.get('closedByUser') or task.get('status') == 'closed':
                 break
+        if graceAt is not None and not handedOver and store._now() >= graceAt:
+            handedOver = True
+            leads_escalation.escalationHandedOver(task, str(requestId), graceSec)
         if deadline is not None and store._now() >= deadline:
             break
         agent['permEvent'].wait(0.5)
         agent['permEvent'].clear()
     with store.repo.lock:
         value = decision['value']
+        # 批次 A（A4-4）：谁批的留痕——taskPermission 记下决定者（主管令牌名
+        # / 面板），结果事件带 by；超时/取消没有决定者，不带这个键
+        decidedBy = str(decision.get('by') or '')
         agent['perm'] = None
         task['pendingPermission'] = ''
         backlog = bool(task.get('messageQueue'))
@@ -403,12 +422,14 @@ def _handleAcpPermission(task, agent, params, requestId):
         store.repo.append_event(task, 'permission_result', requestId=str(requestId),
                      status='timeout', text='授权超时，已拒绝：' + title)
         return None
+    # 批次 A（A4-4）：结果事件带 by（决定者：主管令牌名 / 面板）
+    byKw = {'by': decidedBy} if decidedBy else {}
     if value == '__deny__':
         store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                     status='denied', text='你拒绝了：' + title)
+                     status='denied', text='你拒绝了：' + title, **byKw)
         return None
     store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                 status='approved', text='已允许：' + title)
+                 status='approved', text='已允许：' + title, **byKw)
     return value
 
 

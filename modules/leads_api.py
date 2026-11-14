@@ -16,13 +16,18 @@ modules/leads_inbox.py）：托管任务绑/解（补 1，kind/taskId 两个键�
 入口——update() 的 PATCH_KEYS 故意不含它们，避免 hosted 却没有 taskId 的
 状态）；用户→主管的 human 条目（P3-6，管理面同鉴权档）。审计 lead.task.bound
 / lead.task.unbound / lead.inbox.human。
+
+批次 A：托管主管的专属令牌随主管生命周期走——停用（retired）/删除即吊销
+（leads_hosted.revokeLeadTokens），暂停（paused）不吊销、只拦新派活（沿用
+Q 的语义：被停用主管的令牌对已有任务的读/等/续聊/审批/关闭照常——吊销后
+这些调用按 401 处理，这是"停用"与"暂停"的差别所在）。
 """
 import json
 
 from flask import Blueprint, jsonify, request
 
 import config
-from modules import agent_api, events, leads_inbox, leads_store, tasks_store
+from modules import agent_api, events, leads_hosted, leads_inbox, leads_store, tasks_store
 
 blueprint = Blueprint('leads', __name__)
 
@@ -99,6 +104,12 @@ def updateLead(lid):
         return jsonify({'error': '主管不存在: %s' % lid}), 404
     if err:
         return jsonify({'error': err}), 400
+    # 批次 A：停用（retired）托管主管 = 吊销它的专属令牌（暂停不吊销——
+    # 只拦建任务，Q 的语义）。重新 active 不会恢复令牌，用户需重走一键创建
+    if 'status' in data \
+            and str(data.get('status') or '').strip() == 'retired' \
+            and str(updated.get('kind') or '') == 'hosted':
+        leads_hosted.revokeLeadTokens(updated)
     events.log('lead.updated', updated['name'], 'ok',
                json.dumps({k: data.get(k) for k in PATCH_KEYS if k in data},
                           ensure_ascii=False)[:200], request.remote_addr)
@@ -111,8 +122,11 @@ def deleteLead(lid):
     if lead is None:
         return jsonify({'error': '主管不存在: %s' % lid}), 404
     name = lead.get('name') or lid
+    # 批次 A：托管主管的令牌是中枢一键签发的专属令牌，生命周期跟着主管走——
+    # 删除即吊销，不再走「还绑着令牌 → 409 先解绑」那条（那是手工绑定的语义）
+    hosted = str(lead.get('kind') or '') == 'hosted'
     bound = _tokenNames(lid)
-    if bound:
+    if bound and not hosted:
         # 令牌还绑着：删了记录，这些令牌建任务时会 403 悬空——先解绑
         return jsonify({'error': '主管 %s 还绑着 %d 个令牌（%s）——先解绑，'
                                  '或把 status 改成 retired 停用'
@@ -123,6 +137,8 @@ def deleteLead(lid):
         return jsonify({'error': '主管 %s 名下有 %d 个任务（%d 个在跑）——'
                                  '先处理掉，或把 status 改成 retired 停用'
                        % (name, counts['total'], counts['running'])}), 409
+    if hosted:
+        leads_hosted.revokeLeadTokens(lead)
     leads_store.remove(lid)
     events.log('lead.deleted', name, 'ok', '', request.remote_addr)
     return jsonify({'ok': True})

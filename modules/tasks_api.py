@@ -108,10 +108,13 @@ def createTask():
     payload, code = createTaskResponse(data)
     return jsonify(payload), code
 
-def createTaskResponse(data):
+def createTaskResponse(data, start=True):
     """建任务核心（/api/tasks 与 /api/worklines/<id> 的派活共用）。
 
     返回 (payload, status)。工作线（R5-1a）在这里合并默认值、注入接力棒。
+    start=False（批次 A：一键托管主管用）：只建卡不启动会话——调用方先把
+    技能包与令牌落盘再 startTask，避免会话首轮跑时文件还没就位；失败回滚
+    也因此不需要杀会话（从没起过）。
     """
     store.repo.load()
     data = dict(data or {})
@@ -336,7 +339,8 @@ def createTaskResponse(data):
         detail = prompt[:160] + (' · model=%s' % model if model else '')
         events.log('agent.task.create', tokenName, 'ok', detail,
                    request.remote_addr, **_agentOnBehalfOf())
-    runner._startTask(task, manifest)
+    if start:
+        runner._startTask(task, manifest)
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:
         # 发完直接阻塞到回合结束/需决策（R4-3），省一次轮询往返；
@@ -346,6 +350,15 @@ def createTaskResponse(data):
         snap['paths'] = inputs
         return (snap), 200
     return ({'task': store.repo.summary(task), 'paths': inputs}), 202
+
+
+def startTask(task, manifest):
+    """启动任务会话（批次 A：一键托管主管把「建卡」与「启动」分两步用）。
+
+    建卡（createTaskResponse(start=False)）之后、技能包/令牌落盘之后调用；
+    其余调用方走 createTaskResponse 的默认路径，不经过这里。
+    """
+    runner._startTask(task, manifest)
 
 
 @blueprint.route('/api/tasks/<taskId>', methods=['GET'])
@@ -833,6 +846,9 @@ def taskPermission(task, taskId):
             if optionId not in valid:
                 return jsonify({'error': '无效的选项'}), 400
         agent['permDecision']['value'] = optionId
+        # 批次 A（A4-4）：谁批的留痕——结果事件（permission_result）带 by：
+        # 主管令牌名（主管经令牌通道批准）或「面板」（用户在面板批准）
+        agent['permDecision']['by'] = getattr(g, 'agentTokenName', '') or '面板'
         agent['permEvent'].set()
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:

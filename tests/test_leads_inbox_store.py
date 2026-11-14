@@ -2,10 +2,11 @@
 """批次 P3 收件箱：存储与触发点（例子 2/9–12/15/16/18）。
 
 从 test_leads_inbox.py 按主题拆出（批次 P3b，断言逐字未改）：runner 触发点
-落的条目（轮末 report / 空转·静默 failure / 挂起审批 notice / 线程退出 /
-用户关闭）、存储上限与并发写、web 重启恢复不误报。全部桩化：config.statePath
-与任务仓储指到 tmp，唤醒不起真 kimi；后台扫掠线程（首个 create_app 时起的
-进程级线程）在夹具里换成空操作——否则 5s 一跳的后台 tick 会和断言竞速。
+落的条目（轮末 report / 空转·静默 failure / 挂起审批 escalation（批次 A A4-1
+起，替换原 notice）/ 线程退出 / 用户关闭）、存储上限与并发写、web 重启恢复
+不误报。全部桩化：config.statePath 与任务仓储指到 tmp，唤醒不起真 kimi；后台
+扫掠线程（首个 create_app 时起的进程级线程）在夹具里换成空操作——否则 5s 一跳
+的后台 tick 会和断言竞速。
 """
 import json
 import os
@@ -204,8 +205,9 @@ def test_unbound_task_writes_nothing(env):
 
 # ---------------------------------------------------------------- 例 9–12（触发点）
 
-def test_permission_suspend_appends_notice(env):
-    """例 9：挂起审批 → 箱内一条 notice，含工具名与 requestId。"""
+def test_permission_suspend_escalates_to_lead(env):
+    """例 9 + 批次 A A4-1：挂起审批 → 箱内一条 escalation（含工具名与
+    requestId），替换 P3 同位置的 notice（规格明文：不要两条都写）。"""
     login(env.client)
     tok = newToken(env, 'T1')
     L = newLead(env, '甲')
@@ -222,9 +224,10 @@ def test_permission_suspend_appends_notice(env):
     entries, _ = inboxEntries(env, L)
     assert len(entries) == 1
     entry = entries[0]
-    assert entry['kind'] == 'notice'
+    assert entry['kind'] == 'escalation' and entry['dir'] == 'up'
     assert tid[:8] in entry['text'] and 'Bash' in entry['text']
-    assert 'requestId req-9' in entry['text'] and '纯提醒' in entry['text']
+    assert 'requestId req-9' in entry['text']
+    assert entry['ref'] == {'task': tid, 'requestId': 'req-9'}
 
 
 def test_empty_turn_appends_failure(env):
