@@ -17,15 +17,25 @@ from modules import tasks_store as store
 WAIT_ENDERS = ('waiting', 'failed', 'closed', 'cancelled')
 
 
-def _parseWaitSeconds(value, cap=600):
-    """"wait": <秒> → 1..cap 的整数或 None（不等待）。"""
+def parseWaitSeconds(value, cap=600):
+    """"wait": <秒> → 1..cap 的整数或 None（不等待）。
+
+    0/负数/非数字都不等待——查询串 '0' 与 JSON 0 同结果（批次 P3b 前 '0'
+    会落进 max(1, …) 白等 1s，inbox 复用本函数时实测复现）。
+    """
     if value in (None, '', False):
         return None
     try:
         secs = int(value)
     except (TypeError, ValueError):
         return None
-    return max(1, min(secs, cap))
+    if secs <= 0:
+        return None
+    return min(secs, cap)
+
+
+# 旧名别名：tasks_api/worklines_api 存量引用（批次 P3b 公开化，接缝表登记不变）
+_parseWaitSeconds = parseWaitSeconds
 
 
 def _lastAssistantAfter(task, after):

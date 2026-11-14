@@ -37,7 +37,7 @@ import time
 from flask import Blueprint, g, jsonify, request
 
 import config
-from modules import leads_store, state
+from modules import leads_store, state, task_wait
 from modules import tasks_store as store
 
 log = logging.getLogger('leads_inbox')
@@ -328,15 +328,15 @@ def _jsonBody():
 def agentInbox():
     """外部主管长轮询（P3-2）：只返 dir='up' 的条目（下属事件）。
 
-    after 缺省 0；wait 1–600（与任务 wait 同语义，0.5s 粒度轮询文件，有新条目
-    即返回；entries 可能为空——正常）。正文不可信：响应带引用红线。
+    after 缺省 0；wait 1–600，0/非数字/缺省 = 不等待（与任务 wait 同语义：
+    共用 task_wait.parseWaitSeconds，P3b），请求内 0.5s 粒度轮询文件，有新
+    条目即返回；entries 可能为空——正常。正文不可信：响应带引用红线。
     """
     lead, err = _boundLead()
     if err:
         return err
     after = _int0(request.args.get('after'))
-    waitArg = request.args.get('wait')
-    waitSec = max(1, min(_int0(waitArg), 600)) if waitArg not in (None, '', False) else 0
+    waitSec = task_wait.parseWaitSeconds(request.args.get('wait')) or 0
     deadline = time.monotonic() + waitSec if waitSec else None
     entries, lastSeq = entriesAfter(lead['id'], after, 'up')
     while not entries and deadline is not None and time.monotonic() < deadline:

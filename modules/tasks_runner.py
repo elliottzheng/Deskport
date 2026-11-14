@@ -524,14 +524,16 @@ def _popQueuedMessage(task):
 def _drainQueuedMessages(task, client):
     """把持久化队列 task['messageQueue'] 逐条投递，每条一轮 prompt
     （与手动续聊同链路）。轮中排队（R5-5）在每轮结束和每次唤醒后清队；
-    steer 插话因在队首而优先投递。"""
+    steer 插话因在队首而优先投递。条目带 by 时转发进 user 事件（补 4，
+    与直唤醒路径同字段）；老形状条目没这个键，行为不变。"""
     n = 0
     while True:
         msg = _popQueuedMessage(task)
         if msg is None:
             return n
         store.repo.append_event(task, 'user', text=msg.get('text') or '',
-                                **({'steer': True} if msg.get('steer') else {}))
+                                **({'steer': True} if msg.get('steer') else {}),
+                                **({'by': msg['by']} if msg.get('by') else {}))
         _promptOnce(task, client, msg.get('text') or '')
         store.repo.append_event(task, 'status', text='这轮结束，等你继续')
         n += 1

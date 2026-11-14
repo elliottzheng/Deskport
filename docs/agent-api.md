@@ -719,8 +719,9 @@ GET /api/tasks?lead=me          # 按调用令牌绑定的主管筛；调用方�
 ```text
 GET  /api/agent/leads/inbox?after=<seq>&wait=<秒>
 → {"entries": [条目...], "lastSeq": n, "lead": {"id","name"}, "note": "..."}
-  只返 dir='up' 的条目（下属事件）；after 缺省 0；wait 1–600（与任务 wait
-  同语义：请求内 0.5s 粒度轮询文件，有新条目即返回；entries 为空是正常的）
+  只返 dir='up' 的条目（下属事件）；after 缺省 0；wait 1–600，0/非数字/缺省
+  = 不等待（与任务 wait 同语义：请求内 0.5s 粒度轮询文件，有新条目即返回；
+  entries 为空是正常的）
 
 POST /api/agent/leads/report   {"text": "...", "ref"?}
 → {"ok": true, "seq": n}
