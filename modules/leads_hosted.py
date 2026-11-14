@@ -16,6 +16,8 @@
    替换成 <redacted:…>）；
 6. 首条消息 = 角色说明（docs/lead-role.md）+ duty；mode=default，policy
    允许工作区内读写与 python deskport/deskport.py 命令，其它走审批；
+   只读命令的路径参数全在工作区/项目目录内（readonlyRoots）时自动放行
+   （二次返工，主控拍板）；
 7. 绑成该主管的托管任务并启动会话（建卡与启动分两步：先落盘再起会话，
    失败回滚时会话从没起来过，不必杀进程）。
 
@@ -52,7 +54,10 @@ TOKEN_PREFIX = '主管·'
 # `cd "<工作区>" && python deskport/deskport.py …`——cd 段不匹配就整条挂起等
 # 用户，无人干预链断在这里。cd 单独无害（每条命令都是新 shell，落不了盘），
 # 后续段仍逐段过闸（`cd x && rm -rf y` 的 rm 段照样 ask）；重定向目标仍须落在
-# allowPaths 内（task_policy 的 redirect 判定用 cd 目标做基准）
+# allowPaths 内（task_policy 的 redirect 判定用 cd 目标做基准）。
+# readonlyRoots（批次 A 二次返工，主控拍板）：只读命令的路径参数全在这些根
+# 内（工作区 + 建卡时给的项目目录 cwd）时自动放行——cat/ls/grep/find 等
+# 边界内查看不再挂起等用户；根外、写与执行照旧询问。建卡后补（同 allowPaths）
 BASE_POLICY = {'allowCommands': [r'python3?\s+deskport[\\/]deskport\.py\b',
                                  r'^cd\b'],
                'default': 'ask'}
@@ -281,9 +286,13 @@ def createHostedLead():
         task = tasks_store.repo.get(taskId)
         if task is None:
             raise _Abort('任务记录丢失: %s' % taskId, 500)
-        # 工作区路径建卡时才知道：补进 allowPaths（A1-6）再起会话
+        # 工作区路径建卡时才知道：补进 allowPaths（A1-6）再起会话；
+        # readonlyRoots（二次返工，主控拍板）= 工作区 + 建卡时给的项目
+        # 目录 cwd——只读命令的路径参数全在这些根内才自动放行
         with tasks_store.repo.lock:
             task['policy']['allowPaths'] = [workspace]
+            task['policy']['readonlyRoots'] = (
+                [workspace] + ([fields['cwd']] if fields['cwd'] else []))
             tasks_store.repo.save()
         placeSkillPack(workspace, plaintext)
         bound, err = leads_store.bindTask(leadId, taskId)

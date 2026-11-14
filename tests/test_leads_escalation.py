@@ -162,6 +162,17 @@ def hostedLead(env, name='甲', tokenName='主管令'):
     return L, tid, agent, tok
 
 
+def hostedViaApi(env, name='甲', duty='托管会话', cwd=''):
+    """真实托管形状：POST /api/settings/leads/hosted 建出来的任务 lead 为空
+    （服务端建卡时无令牌上下文，payload 没有 lead 字段——复验问题 1：旧测试
+    用「主管令牌建任务再绑托管」的构造在真实流程里不存在）。"""
+    resp = call(env, 'post', '/api/settings/leads/hosted',
+                {'name': name, 'duty': duty, 'cwd': cwd})
+    assert resp.status_code == 201, resp.get_json()
+    out = resp.get_json()
+    return str(out['lead']['id']), str(out['taskId'])
+
+
 def subordinate(env, L, tok, prompt='下属活'):
     """主管令牌建的下属任务（task.lead = L）+ 假 agent + running。"""
     tid = newTask(env, prompt, token=tok['token'])
@@ -322,24 +333,22 @@ def test_unbound_task_permission_writes_nothing(env):
 
 
 def test_own_hosted_task_permission_no_escalation(env):
-    """防呆（补 2 同款 + 批次 A 返工）：主管自己托管任务（task.lead = 主管）
-    挂审批 → 不写 up 条目、不唤醒（不能上交给自己）；但补一条 down 方向的
-    用户可见提示（「主管 <名> 自己的命令需要你批准：…」）——老链路在这里
-    静默停摆，用户面板上看不到卡住的原因。"""
+    """防呆（补 2 同款 + 返工）：主管自己托管任务挂审批 → 不写 up 条目、
+    不唤醒（不能上交给自己）；但补一条 down 方向的用户可见提示（「主管
+    <名> 自己的命令需要你批准：…」）——老链路在这里静默停摆，用户面板上
+    看不到卡住的原因。真实托管形状（POST /api/settings/leads/hosted 建
+    出来，lead 为空）：ownLead 按 task.lead 反查不到人，按 leads_store
+    里 taskId == task.id 扫到该主管（复验问题 1 的修复面）。"""
     login(env.client)
-    tok = newToken(env, 'T1')
-    L = newLead(env, '甲')
-    assert bind(env, L, tok['id']).status_code == 200
-    H = newTask(env, '托管会话', token=tok['token'])   # H.lead = L
-    assert env.repo.get(H).get('lead') == L
-    assert call(env, 'post', '/api/settings/leads/%s/task' % L,
-                {'taskId': H}).status_code == 200
+    L, H = hostedViaApi(env)
     task = env.repo.get(H)
+    assert task.get('lead') == ''               # 真实形状：托管任务 lead 为空
+    assert leads_store.get(L).get('taskId') == H
     with env.repo.lock:
         task['status'] = 'running'
+        task['policy']['timeoutSec'] = 1
         env.repo.save()
     agent = seedAgent(env, H)
-    task['policy'] = {'timeoutSec': 1}
     value = runner._handleAcpPermission(task, agent, permParams('c-h'), 'req-h')
     assert value is None
     assert inboxEntries(env, L) == []          # up 侧零条目（不唤醒、不上交）

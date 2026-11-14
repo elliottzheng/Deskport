@@ -483,7 +483,14 @@ DELETE /api/agent/ssh/sessions/<sid>
   head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段仍须
   整段命中（`cat .agent-token | head`、`rm -rf x | head` 照旧 ask）——
   托管主管的自然形状 `cd "<工作区>" && python deskport/deskport.py --help
-  2>&1 | head -40` 不断链；
+  2>&1 | head -40` 不断链；消费段允许带 `2>/dev/null` / `2>&1`，其它重定向
+  仍不豁免。带 `readonlyRoots` 的 policy（一键托管主管建卡时写入：工作区
+  + 项目目录 `cwd`）另有**边界内只读命令自动放行**：cat/type/head/tail/
+  ls/dir/find（不带 -exec/-delete/-fprint 等写或执行参数）/grep/rg/wc/
+  file/stat，且所有路径参数（含 `cd` 段目标）规范化后都落在根内——`..`
+  折叠、符号链接、绝对路径越界都算越界，不可判定的一律询问（`rule=
+  readonly-roots`）；`allowPaths` / 重定向目标判定不受影响（只读放宽，
+  写不放宽）；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
   都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
   用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -689,8 +696,10 @@ POST /api/settings/leads/hosted
   `.deskport.json`（url 指向本机 `http://127.0.0.1:<port>`，node=local）与
   `.agent-token`（令牌明文只写这一个文件，并登记进脱敏来源）→ ⑤ 首条消息 =
   角色说明（`docs/lead-role.md` 模板）+ `duty`，`mode='default'`，policy 允许
-  工作区内读写与 `python deskport/deskport.py` 命令、其它走审批 → ⑥ 绑成该
-  主管的托管任务并启动会话。
+  工作区内读写与 `python deskport/deskport.py` 命令、其它走审批；**只读命令**
+  （cat/type/head/tail/ls/dir/find/grep/rg/wc/file/stat）的路径参数全部落在
+  工作区或建卡时的项目目录 `cwd` 内（policy 的 `readonlyRoots`）时自动放行，
+  其它命令挂起并提示用户 → ⑥ 绑成该主管的托管任务并启动会话。
 - 首条消息上限 4000 字符（角色说明 + duty 超了 → 400，什么都不建）。
 - 审计 `lead.hosted.created`（记任务 id 与令牌名，不记明文）。
 
@@ -826,7 +835,9 @@ policy 判定为「需要询问」时：
 主管**自己**的托管任务撞审批（返工项）：不上交、不唤醒（不能当自己的下属），
 但往该主管箱里写一条 `dir='down', kind='notice'` 的用户可见提示——「主管 <名>
 自己的命令需要你批准：<工具名> <参数摘要≤80字>」——指挥台/设置页因此看得见
-卡住的原因；没绑主管的任务仍零条目。
+卡住的原因；没绑主管的任务仍零条目。主管按 `lead.taskId == task.id` 反查
+（托管自己的任务 `lead` 按规格为空，`task.lead` 指不到人），读到自己的
+`deskport/.agent-token` 仍按敏感文件规则询问。
 
 ## 重启语义（如实版）
 

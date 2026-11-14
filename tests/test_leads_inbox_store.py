@@ -372,3 +372,26 @@ def test_restart_paused_no_failure_entry(env):
     assert inboxEntries(env, L)[0] == []          # 不刷 failure
     lead = leads_store.get(L)
     assert lead['inboxSeq'] == 2 and lead['readSeq'] == 1
+
+
+def test_own_lead_fallback_by_taskid(env):
+    """返工（复验问题 1）：托管主管自己的任务 lead 为空——ownLead 按
+    task.lead 反查必然落空，必须再按 leads_store 里 taskId == task.id
+    扫（与 triggerLead 的语义对齐），否则「主管自己撞审批」的 down 用户
+    提示一条都不写。走真实托管形状：POST /api/settings/leads/hosted 建
+    出来的任务（服务端建卡无令牌上下文，payload 没有 lead 字段）。"""
+    login(env.client)
+    resp = call(env, 'post', '/api/settings/leads/hosted',
+                {'name': '甲', 'duty': '托管会话'})
+    assert resp.status_code == 201, resp.get_json()
+    out = resp.get_json()
+    L, H = str(out['lead']['id']), str(out['taskId'])
+    assert env.repo.get(H).get('lead') == ''          # 真实形状：lead 为空
+    lead = leads_inbox.ownLead(env.repo.get(H))
+    assert lead and lead['id'] == L
+    # 别人的任务 / 不存在的任务 → None（不误判）
+    tok = newToken(env, 'T9')                          # 没绑主管的令牌
+    other = newTask(env, token=tok['token'])
+    assert env.repo.get(other).get('lead') == ''
+    assert leads_inbox.ownLead(env.repo.get(other)) is None
+    assert leads_inbox.ownLead({'id': 'no-such-task'}) is None

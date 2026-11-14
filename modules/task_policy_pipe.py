@@ -22,9 +22,11 @@ SEGMENT_SPLIT = re.compile(r'\s*(?:&&|\|\||\||;)\s*|\n')
 # 敏感路径，所以带引号参数的消费段一律不豁免（退回 allowCommands 逐段判
 # 定，敏感路径另有 task_policy 的内建 deny 兜底）。另排两类写向量：sort
 # 的 -o/--output（输出写文件）、uniq 的第二个位置参数（输出文件）；
-# head/tail/grep/wc 无写向量
+# head/tail/grep/wc 无写向量。消费段允许带 2>/dev/null / 2>&1（复验建议
+# 改的那条：主管写 `… | head -40 2>/dev/null` 不该挂），其它重定向仍不豁免
 PIPE_READONLY_RE = re.compile(r'^(head|tail|grep|wc|sort|uniq)\b')
 PIPE_PLAIN_ARG_RE = re.compile(r'^[\w./:=,+*?%@\-]+$')   # \w 含 CJK（grep 中文Pattern）
+STDERR_EXEMPT = ('2>/dev/null', '2>&1')
 
 
 def splitSegments(text):
@@ -53,8 +55,12 @@ def isPipeConsumer(rawSeg):
 
     条件：命令 ∈ head/tail/grep/wc/sort/uniq，且每个参数都是普通 token
     （见 PIPE_PLAIN_ARG_RE 字符集——不含引号，也就不含引号里的任何东西）。
+    段尾允许带 2>/dev/null / 2>&1（复验建议：`… | head -40 2>/dev/null`
+    这种自然形状不该挂；其它重定向仍不豁免）。
     """
     seg = (rawSeg or '').strip()
+    for exempt in STDERR_EXEMPT:
+        seg = seg.replace(exempt, '')
     m = PIPE_READONLY_RE.match(seg)
     if not m:
         return False

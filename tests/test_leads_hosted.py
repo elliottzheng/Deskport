@@ -141,6 +141,19 @@ def test_create_hosted_lead_full_flow(env):
     assert leads_store.get(lead['id'])['taskId'] == taskId
 
 
+def test_hosted_policy_carries_readonly_roots(env):
+    """二次返工（主控拍板）：只读命令在工作区与项目目录内自动放行——建卡
+    时把两个根写进 policy.readonlyRoots（给了 cwd 才带项目目录；allowPaths
+    仍只管写工具/重定向，不被放宽）。"""
+    login(env.client)
+    out, _plain = hosted(env, 'ro主管', '派活', cwd='E:\\proj')
+    task = env.repo.get(out['taskId'])
+    assert task['policy']['readonlyRoots'] == [task['workspace'], 'E:\\proj']
+    out2, _p2 = hosted(env, 'ro主管二', '派活')
+    task2 = env.repo.get(out2['taskId'])
+    assert task2['policy']['readonlyRoots'] == [task2['workspace']]
+
+
 # ---------------------------------------------------------------- 例 2
 
 def test_token_plaintext_never_in_response_or_events(env):

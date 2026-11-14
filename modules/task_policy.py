@@ -22,7 +22,13 @@
        head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段
        仍须整段命中（批次 A 返工：`cd "<工作区>" && python deskport/… 2>&1
        | head -40` 这种自然形状不该整体挂起；`rm -rf x | head` 的 rm 段
-       照旧 ask）；
+       照旧 ask；消费段允许带 2>/dev/null / 2>&1，其它重定向仍不豁免）；
+    4b. 二次返工（主控拍板）：policy 带 readonlyRoots（一键托管主管：工作区
+       + 项目目录 cwd）时，每段都是边界内的只读命令（cat/type/head/tail/
+       ls/dir/find/grep/rg/wc/file/stat，find 不带写执行参数）且所有路径
+       参数（含 cd 目标）规范化后落在根内 → allow（rule=readonly-roots）；
+       `..`、符号链接、绝对路径越界、不可判定、其它重定向一律不放行
+       （判定在 task_policy_readonly）；
     5. 写文件工具（edit/delete）的路径（审批请求带出的 paths——Edit/Write 的
        diff 块实测只有 path、args 里没有 + 参数里的路径）全部落在 allowPaths
        下 → allow；
@@ -37,6 +43,7 @@ import os
 import re
 
 from modules import task_policy_pipe
+from modules.task_policy_readonly import SENSITIVE_FILE_RE, segmentsReadonly, underAny
 
 READONLY_KINDS = {'read'}
 WRITE_KINDS = {'edit', 'delete'}
@@ -57,16 +64,6 @@ XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
 CD_RE = re.compile(r'\bcd\s+(?:"([^"]+)"|\'([^\']+)"?|([^\s;&|]+))', re.I)
 HEREDOC_RE = re.compile(r'<<-?\s*[\'"]?([A-Za-z_][\w.-]*)[\'"]?')
-# R5-2 内建 deny：读中枢配置/令牌文件的调用一律 ask——命中即 ask，独立于
-# 调用方 denyCommands（policy 写了 allowCommands 也压不过它）。模式：
-# 中枢/成员 config.json、.agent-token / agent_node_token 类令牌文件、
-# 本机 node 令牌 ~/.deskport-agent-node/token
-SENSITIVE_FILE_RE = tuple(re.compile(p, re.I) for p in (
-    r'config\.json',
-    r'\.agent[_-]?token',
-    r'agent[_-]?node[_-]?token',
-    r'deskport-agent-node[/\\]token',
-))
 
 
 def _stripHeredocs(cmd):
@@ -142,18 +139,6 @@ def validatePolicy(policy):
             'denyCommands': denyCommands, 'default': default,
             'timeoutSec': timeoutSec,
             'allowBackground': bool(policy.get('allowBackground'))}
-
-
-def _underAny(path, allowPaths):
-    """前缀判定：先 normpath 折叠 `..`/混合斜杠（R4-2 验收漏洞——
-    `root\\..\\other\\x` 曾绕过前缀直落 allow），再按目录边界 + 大小写
-    不敏感比较（web-platform-dev-evil 不会误匹配 web-platform-dev）。"""
-    p = os.path.normpath(str(path).replace('/', '\\')).lower()
-    for root in allowPaths:
-        r = os.path.normpath(str(root).replace('/', '\\')).lower().rstrip('\\')
-        if p == r or p.startswith(r + '\\'):
-            return True
-    return False
 
 
 def _pathsInArgs(args):
@@ -353,7 +338,7 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
                         return 'ask', 'danger:redirect'
                     p = os.path.normpath(os.path.join(base, p))
                 resolved.append(p)
-            if not resolved or not all(_underAny(p, allowPaths) for p in resolved):
+            if not resolved or not all(underAny(p, allowPaths) for p in resolved):
                 return 'ask', 'danger:redirect'
         if FIND_UNSAFE.search(stripped):
             return 'ask', 'danger:find'
@@ -391,9 +376,20 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
         if task_policy_pipe.segmentsAllowed(stripped, cmdNoHeredoc, allowRes):
             return 'allow', 'allowCommands'
 
+    if cmd.strip() and policy.get('readonlyRoots') \
+            and not any(r.search(cmdNoHeredoc) for r in SENSITIVE_FILE_RE):
+        # 批次 A 二次返工（主控拍板）：托管主管边界内的只读命令自动放行
+        # （cat/ls/grep/find… 的路径参数全在工作区或项目目录内）。敏感
+        # 文件按未剥引号原文再查一遍——引号里的 .agent-token 剥引号的
+        # segments 判定看不见，不能漏进白名单
+        roots = [str(r).strip() for r in policy['readonlyRoots']
+                 if str(r or '').strip()]
+        if roots and segmentsReadonly(cmdNoHeredoc, str(cwd or ''), roots):
+            return 'allow', 'readonly-roots'
+
     if kind in WRITE_KINDS or WRITE_NAMES.match(name or ''):
         writePaths = explicitPaths + list(_pathsInArgs(args))
-        if writePaths and all(_underAny(p, allowPaths) for p in writePaths):
+        if writePaths and all(underAny(p, allowPaths) for p in writePaths):
             return 'allow', 'allowPaths'
 
     return default, 'default'
