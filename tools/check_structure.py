@@ -45,7 +45,7 @@ LEGACY = {
     'tests/test_tasks_api.py': 1554,              # 任务 API 回归集（面最大）；2026-11-14 +15=P0-1 建卡闸门测试
 }
 
-SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run'}
+SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码
 FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp',
             'agent_sftp_write', 'agent_sessions', 'agent_share', 'agent_skill_files',
             'agent_tunnel', 'command', 'control', 'feedback', 'feedback_store',
