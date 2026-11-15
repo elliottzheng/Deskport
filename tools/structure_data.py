@@ -87,7 +87,7 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('feedback', 'feedback_store'), ('feedback', 'feedback_envelope'), ('feedback', 'feedback_views'), ('feedback', 'feedback_ops'), ('feedback', 'feedback_rate'), ('feedback_store', 'feedback_status'), ('feedback_views', 'feedback_store'), ('feedback_ops', 'feedback_store'), ('feedback_ops', 'feedback_status'),
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
-    ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
+    ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'), ('command_view', 'workitem_store'), ('command_view', 'workitem_state'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
     ('lead_notices', 'leads_inbox'), ('lead_notices', 'leads_store'), ('lead_notices', 'tasks_store'), ('leads_inbox', 'lead_notices'), ('tasks_runner', 'lead_notices'), ('task_health', 'tasks_store'), ('task_health', 'leads_inbox'), ('task_health', 'tasks_runner'), ('tasks_runner', 'tasks_api'),  # 批次 L：lead_notices=L1 超时提醒+L2 提问条目，task_health=L3 续接+L4 巡检（state_owner 归 INFRA）；tasks_runner→tasks_api 仅函数内延迟导入（answerPermission 复用 deliverMessage）
     ('leads_escalation', 'tasks_store'), ('leads_inbox', 'leads_escalation'), ('lead_notices', 'leads_escalation'),  # N1：leads_escalation→tasks_store 读任务终态与 pendingPermission（补标判据与"主管自己待批"提示存续条件，只读）；leads_inbox→leads_escalation 反向仅启动期（bindApp 里跑一次历史补标）、lead_notices→leads_escalation 反向仅扫掠期（ownPermissionLive），均为函数内延迟导入不成环
     ('leads_hosted', 'tasks_api'), ('leads_hosted', 'tasks_store'), ('leads_hosted', 'agent_skill_files'), ('leads_hosted', 'agent_tokens'), ('leads_hosted', 'agent_api'), ('leads_hosted', 'leads_store'), ('leads_api', 'leads_hosted'), ('leads_escalation', 'leads_inbox'), ('leads_escalation', 'leads_store'), ('tasks_runner', 'leads_escalation'),  # leads_hosted（批次 A 一键托管主管，编排层：建任务核心/技能包/令牌名额/吊销入口）+ leads_escalation（A4 审批上交的条目写入，判定与投递走 leads_inbox 公开面；tasks_runner 审批处一行调它；读 leads_store 判主管是否已停用）
@@ -188,7 +188,7 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
                   'TermEnv', 'TermSessionUI', 'TermControls',
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
-                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads', 'WPTasksOverview', 'WPTasksResult',  # 批次 S 主管卡片/任务页筛选 + 批次 U 指挥台一屏（纯函数有 node 单测）
+                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads', 'WPTasksOverview', 'WPTasksResult', 'WPWorkItems',  # 批次 S 主管卡片/任务页筛选 + 批次 U 指挥台一屏（纯函数有 node 单测）
                   # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
                   'WPSettingsCapability', 'WPFeedbackMine', 'WPSettingsFeedback'}   # 批次 F1 后两个：反馈「我的反馈」页签 + 设置页「反馈」处理卡片（纯函数有 node 单测）
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。

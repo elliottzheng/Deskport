@@ -116,14 +116,16 @@ class Stub:
 def makeRepo(tmp_path, gatesCmd, testCmd, monkeypatch):
     """临时 git 仓库 + 指向它的项目（worktreeRoot 在仓库外）。"""
     repo = tmp_path / 'repo'
-    repo.mkdir()
-    for args in (['init', '-b', 'main'], ['config', 'user.email', 't@t'],
-                 ['config', 'user.name', 't']):
-        subprocess.run(['git'] + args, cwd=repo, check=True,
-                       capture_output=True)
-    (repo / 'README.md').write_text('base\n', encoding='utf-8')
-    for args in (['add', '-A'], ['commit', '-m', 'base']):
-        subprocess.run(['git'] + args, cwd=repo, check=True, capture_output=True)
+    repo.mkdir(exist_ok=True)
+    if not (repo / '.git').exists():
+        for args in (['init', '-b', 'main'], ['config', 'user.email', 't@t'],
+                     ['config', 'user.name', 't']):
+            subprocess.run(['git'] + args, cwd=repo, check=True,
+                           capture_output=True)
+        (repo / 'README.md').write_text('base\n', encoding='utf-8')
+        for args in (['add', '-A'], ['commit', '-m', 'base']):
+            subprocess.run(['git'] + args, cwd=repo, check=True,
+                           capture_output=True)
     clean, errors = workitem_projects.validate({
         'id': 'p1', 'name': '测试项目', 'repoPath': str(repo),
         'worktreeRoot': str(tmp_path / 'wt'), 'mainBranch': 'main',

@@ -69,3 +69,9 @@ def listBriefs(lead=''):
         items = [w for w in items if w.get('lead') == lead]
     items.sort(key=lambda w: -w.get('createdAt', 0))
     return items
+
+
+def briefOf(wid):
+    """单个 brief（鉴权与决策前用）；不存在返回 None。"""
+    wi = workitem_store.repo.get(wid)
+    return brief(wi) if wi is not None else None

@@ -35,6 +35,11 @@ def env(tmp_path, monkeypatch):
     configMod._cache.update(mtime=None, data=None)
     repo = TaskRepository(str(tmp_path / 'tasks.json'), str(tmp_path / 'logs'))
     monkeypatch.setattr(store, 'repo', repo)
+    # G2：overview 也读工作项存储——别把 lazy 单件绑到本用例的 tmp（否则同进程
+    # 后续用例的 overview 会读到本用例留下的工作项）
+    from modules import workitem_store
+    monkeypatch.setattr(workitem_store, 'repo', workitem_store.WorkitemRepository(
+        str(tmp_path / 'workitems.json')))
     monkeypatch.setattr(leads_inbox, 'sweepOnce', lambda: None)
     # 冻结 command_view 的"现在"：24h 窗口与在忙判定不看真时钟
     monkeypatch.setattr(command_view, 'time',

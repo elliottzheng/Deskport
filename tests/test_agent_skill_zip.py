@@ -19,7 +19,7 @@ SKILL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 PACK = '/api/agent/skill.zip'
 ENTRIES = ['deskport/.deskport.json', 'deskport/COLLABORATION.md',
            'deskport/SKILL.md', 'deskport/deskport.py', 'deskport/driver.example.json',
-           'deskport/driver.py']
+           'deskport/driver.py', 'deskport/wi.py']
 # 公开内容里出现这些模式即失败（tests/test_agent_tools.py 的三个 + 路径泄露两个）
 CREDENTIAL_PATTERNS = [r'token\s*=\s*[\'"][A-Za-z0-9_-]{16,}',
                        r'password', r'agentTokens', r'C:\\', r'/mnt/']
@@ -37,12 +37,12 @@ def openPack(resp):
 
 
 def test_zip_public_without_token(env):
-    """无令牌 200：application/zip，六个条目，全在 deskport/ 前缀下。"""
+    """无令牌 200：application/zip，七个条目，全在 deskport/ 前缀下。"""
     resp = env.client.get(PACK)
     assert resp.status_code == 200
     assert resp.mimetype == 'application/zip'
     assert 'deskport-skill.zip' in resp.headers['Content-Disposition']
-    assert int(resp.headers['X-Skill-Files']) == 6
+    assert int(resp.headers['X-Skill-Files']) == 7
     z = openPack(resp)
     assert sorted(z.namelist()) == ENTRIES
     for name in z.namelist():

@@ -138,6 +138,9 @@ CLI 全部子命令（`python deskport.py <命令> -h` 看各自动态帮助）�
 | `close <任务id>` | 关闭任务（明确结束，回收进程） |
 | `approve <任务id> <requestId> [--deny]` | 审批下属的 escalation（只批 allow_once；拒绝加 `--deny`） |
 | `answer <任务id> <requestId> "<答复>"` | 答复下属任务的提问（审批按"允许"放行，答复立即投递） |
+| `wi new --project <id> --spec <文件> --impl <模型> --verify <模型> --footprint <GLOB>... [--title 标题] [--force-parallel]` | 建工作项派开发活（平台建 worktree→实施→验收→返工→集成）；`--verify` 必须≠`--impl`；`--footprint` 必填（防冲突调度） |
+| `wi ls` / `wi show <工作项id>` | 列工作项（阶段/attempt/verdict/在等谁）/ 看详情（名下任务+集成日志尾部） |
+| `wi decide <工作项id> continue\|rework\|integrate\|cancel [--text 说明]` | 处理 needs_judgment 的工作项（收件箱 `workitem_judgment` 里点名） |
 
 `lead` / `inbox` / `report` / `approve` 是指挥链上的主管命令：令牌绑了主管才有
 （没绑 `inbox`/`report` 报 400；全权令牌跑 `lead --register "<名字>"` 自助成为主管，

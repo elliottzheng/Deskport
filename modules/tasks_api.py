@@ -55,6 +55,15 @@ def _agentOnBehalfOf():
     who = str(getattr(g, 'agentOnBehalfOf', '') or '').strip()
     return {'on_behalf_of': who} if who else {}
 
+
+def _remoteAddr():
+    """调用方可能在后台线程（批次 G2：平台流水线建任务只有 app 上下文）——
+    没有请求上下文时返回 ''，别让审计调用炸掉建卡主链路。"""
+    try:
+        return request.remote_addr or ''
+    except RuntimeError:
+        return ''
+
 @blueprint.route('/api/tasks', methods=['GET'])
 def listTasks():
     store.repo.load()
@@ -365,7 +374,7 @@ def createTaskResponse(data, start=True):
         # 外部智能体经令牌通道建任务: 写系统审计（任务卡事件之外独立留痕）
         detail = prompt[:160] + (' · model=%s' % model if model else '')
         events.log('agent.task.create', tokenName, 'ok', detail,
-                   request.remote_addr, **_agentOnBehalfOf())
+                   _remoteAddr(), **_agentOnBehalfOf())
     if start:
         runner._startTask(task, manifest)
     waitSec = _parseWaitSeconds(data.get('wait'))
