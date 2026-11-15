@@ -20,7 +20,7 @@ import time
 import weakref
 
 import config
-from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node, task_events, task_title
+from modules import contracts, fsutil, store_io, state_owner, task_state, task_cwd, task_node, task_events, task_title
 from modules import sensitive_values
 from modules.staging import safeAttachmentName
 from modules.task_events import MAX_EVENTS, MAX_TEXT, MAX_TOOL_RESULT  # noqa: F401（store.MAX_* 兼容旧引用）
@@ -224,6 +224,9 @@ class TaskRepository:
             if self.loaded:
                 return
             self.loaded = True
+            # L6：状态目录所有者锁——web 之外的进程探测身份（持锁者存活 →
+            # 只读；锁空闲照常）。判定在读之前，后面 save/append 才有闸门
+            state_owner.adopt()
             # 瞬时共享冲突（并发 save 正在 replace）由 store_io 重试；文件
             # 真缺失/损坏才按空处理——不能把锁冲突当"无状态"丢全部任务
             raw = store_io.loadSnapshot(self.store_path)
@@ -240,6 +243,14 @@ class TaskRepository:
                 if task.get('pendingPermission'):
                     task['pendingPermission'] = ''
                     dirty = True
+                # L 返工（主控追加·必须修）：resuming 唤醒标记同样会落盘——
+                # 重启正好落在「唤醒中」（如等节点上一轮结束）时，标记活过重启，
+                # 之后任何 message 都被 _resumeWithMessage 挡在 409「会话正在
+                # 唤醒，请稍候」（线上实测 5 个任务全卡死）。启动恢复一律清掉；
+                # L3 的自动续接在 60s 后的巡检里跑，那时标记早已清干净
+                if task.get('resuming'):
+                    task['resuming'] = False
+                    dirty = True
                 if task.get('status') in ('queued', 'running', 'waiting'):
                     canResume = bool(task.get('sessionId'))
                     task_state.transition(
@@ -250,8 +261,13 @@ class TaskRepository:
                     if not canResume:
                         task['error'] = '服务重启，任务中断'
                         task['endedAt'] = _now()
+                    else:
+                        # L3：只有启动恢复路径设这个标记——重启 60s 后的自动
+                        # 续接认它，用户主动暂停/线程猝停都不设（不续）
+                        task['pausedBy'] = 'restart'
                     dirty = True
-            if dirty:
+            if dirty and state_owner.writable():
+                # 只读进程（L6）：状态迁移只活在内存，不落盘也不抛——读要能用
                 self.save()
 
     def save(self):
@@ -264,6 +280,8 @@ class TaskRepository:
         save 拿锁外读到的旧值进门，把已落盘的新快照盖掉（验收-R P1）。
         批 PS1：快照只存元数据（events/_ 键不落盘）；旧格式已由 load 留原件。
         批 PS2：写盘漏斗收敛到 _writeNow；append_event 不再走这里（见 touch）。
+        L6：只读进程（状态目录属于 web）的任何快照写入一律明确异常——闸门
+        在 _writeNow 漏斗入口，save 与 flush 两条路都盖住。
         """
         self._writeNow()
 
@@ -284,7 +302,9 @@ class TaskRepository:
         的 _IO_LOCK 串行（锁序固定为 调用方锁→_IO_LOCK，无反向等待）。
         落盘成功且捕获后没有新变更到达，才清脏标记——捕获后来的新变更留给
         下一拍，不会悄悄留在内存里（_dirtySeq 代号比对）。
+        L6：只读进程先抛（规格原文口径：状态目录属于 web 时本进程只读）。
         """
+        state_owner.ensureWritable('agent_tasks.json')
         with self.lock:
             try:
                 payload = task_events.snapshotPayload(self.tasks,
@@ -335,6 +355,8 @@ class TaskRepository:
         return os.path.join(self.log_dir, task['id'] + '.jsonl')
 
     def log_write(self, task, entry):   # 重试与失败计数见 task_events.JsonlWriter
+        # L6：只读进程的事件追加（append）同样明确异常（规格原文口径）
+        state_owner.ensureWritable('agent_logs/%s.jsonl' % task['id'])
         # 批 PS2：长开句柄追加（锁内写 + flush）；写完即关终态任务的句柄
         line = json.dumps(entry, ensure_ascii=False) + '\n'
         if self._jsonl.append(task['id'], line) \

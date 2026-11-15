@@ -23,8 +23,7 @@ import time
 import uuid
 
 import config
-from modules import feedback_status
-from modules import state
+from modules import feedback_status, state, state_owner
 
 OWNER_ID = 'owner'                     # 单密码系统：登录者就是这台机器的主人
 OWNER_DISPLAY = '主人'
@@ -83,6 +82,8 @@ def newFileId():
 
 def saveAttachment(blob, mime):
     """落一张截图；返回 file_id。mime 白名单由调用方按魔数判定。"""
+    # L6：附件也写在状态目录里，只读进程同样拒绝
+    state_owner.ensureWritable('feedback/attachments')
     ext = ATTACHMENT_EXTS.get(mime)
     if not ext:
         raise ValueError('不支持的图片类型')
@@ -123,6 +124,8 @@ def load():
 
 
 def save(data):
+    # L6：只读进程（状态目录属于 web）一律明确异常，读不受影响
+    state_owner.ensureWritable('feedback.json')
     state.atomicWriteJson(_itemsPath(), data)
 
 

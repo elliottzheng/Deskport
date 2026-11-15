@@ -366,6 +366,44 @@ def getLeadIdleSec():
     return value if value >= 0 else 900
 
 
+def getLeadResponseSec():
+    """主管反应超时提醒阈值（批次 L L1，秒）：缺省 600，0=关闭。
+
+    收件箱里下属消息（report/failure/escalation/human/question）超过这个
+    阈值既没投递也没被读 → 往该主管 down 方向写一条 notice，指挥台「等你
+    处理」因此可见；同一主管每阈值最多一条。负数回退缺省。
+    """
+    value = load().get('leadResponseSec')
+    if value is None:
+        return 600
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 600
+    return value if value >= 0 else 600
+
+
+def getAutoResumeAfterRestart():
+    """重启后自动续接开关（批次 L L3）：缺省开，显式 false 才关。"""
+    return load().get('autoResumeAfterRestart', True) is not False
+
+
+def getToolStallSec():
+    """工具调用无事件报警阈值（批次 L L4，秒）：缺省 900，0=关闭。
+
+    任务 running 且当前工具调用超过这个阈值没有任何事件 → 一条 status 事件
+    + 主管收件箱 failure（无主管的进指挥台「等你处理」）。负数回退缺省。
+    """
+    value = load().get('toolStallSec')
+    if value is None:
+        return 900
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 900
+    return value if value >= 0 else 900
+
+
 def getLeadApprovalGraceSec():
     """主管审批限期（批次 A，秒）：缺省 300，0=不限期（一直等用户）。
 

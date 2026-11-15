@@ -22,7 +22,10 @@
 批次 P3 追加的键都是懒键（记录建成时不带，首次写入才出现——Q 批的测试钉死
 了建记录的键集，不能为占位键破坏它）：
     inboxSeq/readSeq/reportSeq：收件箱游标（setCursor 推进，只增不减）；
-    idleNoticedAt：无动静提示的单次标记（P3-5）。
+    idleNoticedAt：无动静提示的单次标记（P3-5）；
+    responseNoticedAt：主管反应超时提醒的单次标记（L1，节流同款）。
+    resolvedRequests：已落定的审批请求（requestId→{at, by}，setResolved 写，
+    上限 RESOLVED_CAP）——escalation 审批出结果后不再算未处理（主控追加）。
 绑定托管任务（补 1）改 kind/taskId 两个键，走 bindTask/unbindTask——
 不进 update() 的 PATCH_KEYS（避免出现 hosted 却没有 taskId 的状态）。
 """
@@ -32,7 +35,7 @@ import threading
 import time
 
 import config
-from modules import state
+from modules import state, state_owner
 
 MAX_NAME = 24                      # 与 agent_tokens.MAX_NAME 同一套（令牌名限制）
 BAD_NAME_CHARS = '<>"\'\r\n\t'     # 同上，字面量复制（理由见模块 docstring）
@@ -57,6 +60,18 @@ def _now():
 
 
 def _load():
+    # 读也要进锁（RLock 可重入，setCursor 等持锁调用不受影响）。理由（主控
+    # 追验二更正）：Windows 上 os.replace 换不掉正被读的文件（WinError 5），
+    # 而 replaceWithRetry 的逃逸点正是最后一次 os.replace——读者（sweeper/
+    # 残留线程）跨过全部退避仍持着文件时，authGuard.touch 之类的请求 500
+    # （验方压测复现 1/1/0、另 8s 1 次；持读锁两轮 0 错误）。持锁读把同进程
+    # 的读者/替换互斥 deterministic 关死；replaceWithRetry 保留作纵深防御
+    # （外部占用者：杀毒/索引），两者并存各管一段。
+    with _LOCK:
+        return _loadUnlocked()
+
+
+def _loadUnlocked():
     try:
         with open(storePath(), encoding='utf-8') as f:
             data = json.load(f)
@@ -66,6 +81,14 @@ def _load():
 
 
 def _save(data):
+    # L6：只读进程（状态目录属于 web）的任何写入一律明确异常
+    state_owner.ensureWritable('leads.json')
+    # 写盘在 _LOCK 内（调用方持锁做「读-改-写」，data 是锁内现读的活字典）：
+    # 把 replaceWithRetry 挪到锁外不安全——序列化 concurrent 于其他线程的
+    # 原地修改会撕裂/丢更新（tasks_store 那样锁内捕获快照需要另造字符串写盘
+    # API，等于第二份机制，不要）。最长阻塞：退避 20/40/80/160ms + 最后一次
+    # replace + dump/fsync ≈ 0.3s 出头；且 _load 持锁读后重试只在外部占用者
+    # （杀毒/索引）时才走满，常态是几毫秒
     state.atomicWriteJson(storePath(), data)
 
 
@@ -256,6 +279,55 @@ def markIdleNoticed(leadId, at=None):
         if not isinstance(lead, dict):
             return None, NOT_FOUND
         lead['idleNoticedAt'] = float(at) if at is not None else _now()
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+def markResponseNoticed(leadId, at=None):
+    """记一次主管反应超时提醒（批次 L L1）：同一主管每 leadResponseSec 最多一条。"""
+    leadId = str(leadId or '')
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        lead['responseNoticedAt'] = float(at) if at is not None else _now()
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+RESOLVED_CAP = 500        # resolvedRequests 上限：只留最近这么多（按 at 丢最旧）
+
+
+def setResolved(leadId, requestId, by=''):
+    """标记一个审批请求已落定（主控追加：escalation 落定后不再算未处理）。
+
+    线上实测：驱动几秒内批掉审批，收件箱却堆着几十条未读 escalation，
+    L1 于是提醒"主管好久没处理 50 多条"——全是处理过的。落定状态记在
+    主管记录里（requestId → {at, by}），收件箱 JSONL 保持只追加不改写；
+    读侧（L1 / 指挥台 / inbox 接口）只把未落定的 escalation 当待处理。
+    重复标记同一条只刷新时间（幂等）。返回 (record, error)。
+    """
+    leadId = str(leadId or '')
+    requestId = str(requestId or '')
+    if not leadId or not requestId:
+        return None, 'leadId 与 requestId 都不能为空'
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        resolved = lead.get('resolvedRequests')
+        if not isinstance(resolved, dict):
+            resolved = {}
+            lead['resolvedRequests'] = resolved
+        resolved[requestId] = {'at': _now(), 'by': str(by or '')[:40]}
+        while len(resolved) > RESOLVED_CAP:
+            oldest = min(resolved,
+                         key=lambda k: float((resolved[k] or {}).get('at') or 0))
+            resolved.pop(oldest, None)
         lead['updatedAt'] = _now()
         _save(data)
         return lead, ''

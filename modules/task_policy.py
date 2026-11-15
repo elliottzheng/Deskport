@@ -20,6 +20,10 @@
        - 剔除引号内容与豁免项（2>&1、>/dev/null、2>/dev/null、1>/dev/null）
          之后仍存在输出重定向 >；
        - find 的 -exec / -delete；xargs 后面跟非只读命令（含 xargs 悬空）；
+       - 按名字批量杀进程：taskkill /IM、taskkill /F /T、Stop-Process
+         -Name、Get-Process … | Stop-Process（管道无 -Name）、pkill、
+         killall（L5；按 PID 结束不受影响；Git Bash 的 //IM 双斜杠写法
+         同样命中）；
     3. 只读工具（kind=read 或名称白名单）→ allow；
     4. execute：剔除引号后按 && || | ; 裸 `&`（bash 后台分隔符，两侧都执行
        ——三验返工）与换行拆段，每段都命中任一 allowCommands → allow；管道
@@ -67,6 +71,26 @@ FIND_UNSAFE = re.compile(r'(?:^|[\s;&|])-(?:exec|delete)\b')
 XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
 CD_RE = re.compile(r'\bcd\s+(?:"([^"]+)"|\'([^\']+)"?|([^\s;&|]+))', re.I)
+# L5 内建询问（批次 L）：按名字批量杀进程——taskkill /IM、taskkill /F /T、
+# Stop-Process -Name、Get-Process … | Stop-Process（管道、无 -Name）、
+# pkill、killall。共同点是作用于「非本任务启动的进程树」（2026-11-15 事故：
+# 执行方 taskkill 掉所有 Edge）。按 PID 结束进程（taskkill /PID 1234、
+# Stop-Process -Id 1234）不命中任何一条，不受影响。Git Bash（MSYS）会把
+# /IM 改写传成 //IM——开关参数正则一律 `/{1,2}`，双斜杠写法同样命中
+# （返工：//IM 曾整条绕过高危询问）。
+# 启发式（文档已声明）：宁多问——引号内文本同样参与匹配，藏起来的参数
+# 一样危险；同一行内 /F 与 /T 任意顺序都算。
+KILL_BY_NAME_RES = (
+    (re.compile(r'\btaskkill\b[^\r\n]*?\s/{1,2}IM\b', re.I), 'taskkill /IM'),
+    (re.compile(r'\btaskkill\b[^\r\n]*?\s/{1,2}F\b[^\r\n]*?\s/{1,2}T\b'
+                r'|\btaskkill\b[^\r\n]*?\s/{1,2}T\b[^\r\n]*?\s/{1,2}F\b', re.I),
+     'taskkill /F /T'),
+    (re.compile(r'\bStop-Process\b[^\r\n]*?-Name\b', re.I), 'Stop-Process -Name'),
+    (re.compile(r'\bGet-Process\b[^\r\n]*?\|\s*Stop-Process\b', re.I),
+     'Get-Process | Stop-Process'),
+    (re.compile(r'(?:^|[\s;&|(])pkill\b', re.I), 'pkill'),
+    (re.compile(r'(?:^|[\s;&|(])killall\b', re.I), 'killall'),
+)
 
 
 DEFAULT_POLICY = {'allowPaths': [], 'allowCommands': [], 'denyCommands': [],
@@ -280,6 +304,21 @@ def _wantsBackground(args):
     return False
 
 
+def killByNameHit(args):
+    """命中按名字批量杀进程的内建询问规则（L5）→ 形态名，否则 ''。
+
+    只认命令文本（_commandText）：Read/Edit 等非命令工具没有命令，直接不
+    命中。按 PID 结束（taskkill /PID、//PID、Stop-Process -Id）不命中。
+    """
+    cmd = _commandText(args)
+    if not cmd.strip():
+        return ''
+    for pattern, label in KILL_BY_NAME_RES:
+        if pattern.search(cmd):
+            return label
+    return ''
+
+
 def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
     """按 policy 判定一次工具调用。
 
@@ -312,6 +351,9 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
         outsideSingle = STRIP_SQ.sub('', cmdNoHeredoc)
         if DANGER_SUBST.search(outsideSingle):
             return 'ask', 'danger:command-substitution'
+        # L5：按名字批量杀进程——内建询问压过 allowCommands/default（一律 ask）
+        if killByNameHit(args):
+            return 'ask', 'danger:kill-by-name'
         stripped = STRIP_DQ.sub('', STRIP_SQ.sub('', cmdNoHeredoc))
         for exempt in REDIRECT_EXEMPT:
             stripped = stripped.replace(exempt, '')

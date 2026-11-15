@@ -401,6 +401,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | GET | /api/tasks/<id>/messages | 排队中的消息 `{items, count}`（只列未投递的） |
 | DELETE | /api/tasks/<id>/messages/<mid> | 撤回一条排队消息 → `{ok, count}`（已投递 404） |
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
+| POST | /api/tasks/<id>/answer | 主管答复下属提问 `{requestId, text}`（批次 L L2）：审批按「允许」放行 + 答复以 steer 立即投递。主管令牌只许答复 `task.lead` 是自己的任务；网页会话均可；requestId 对不上当前挂起的审批 → 409 |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
 | GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`os`/`shells`/`defaultCwd`/`cwdRoots`/`modelStatus`/`usableModels` |
@@ -517,6 +518,14 @@ DELETE /api/agent/ssh/sessions/<sid>
   折叠、符号链接、绝对路径越界都算越界，不可判定的一律询问（`rule=
   readonly-roots`）；`allowPaths` / 重定向目标判定不受影响（只读放宽，
   写不放宽）；
+- **按名字批量杀进程一律问（批次 L L5）**：内建询问规则，**所有任务**生效
+  （不只托管主管，也不需要 policy）——`taskkill` 带 `/IM`、`taskkill /F /T`、
+  `Stop-Process -Name`、`Get-Process … | Stop-Process`（管道、无 -Name）、
+  `pkill`、`killall` 命中即 `ask`（`permission_request` 事件带
+  `rule=danger:kill-by-name`），`allowCommands` 与 `default=allow` 都压不掉。
+  Git Bash（MSYS）的 `//IM`、`//F //T` 双斜杠写法同样命中。按 PID 结束进程
+  （`taskkill /PID 1234`、`Stop-Process -Id 1234`）不受影响。启发式：宁多问，
+  引号内文本同样参与匹配；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
   都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
   用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -834,15 +843,30 @@ POST /api/agent/leads/inbox/ack   {"seq": n}
 ```
 
 汇报触发（系统侧，只对 `task.lead` 非空的任务）：轮次正常结束 → `report`；
-空转/静默轮 → `failure`；会话线程退出且 failed/interrupted/closed → `failure`；
-用户关闭 → `failure`。托管自己的任务（`task.id == 主管.taskId`）**不产条目**——
-否则它每轮自报、被唤醒再自报，死循环。web 重启把在飞任务打 paused **不**报
-（避免每次部署给所有在飞下属刷一条）。
+空转/静默轮 → `failure`；挂起审批 → `escalation`（批次 A：审批先上交主管，
+见下节；替换了 P3 里同一位置的 notice——不要两条都写）；会话线程退出且
+failed/interrupted/closed → `failure`；用户关闭 → `failure`。
+托管自己的任务（`task.id == 主管.taskId`）**不产条目**——否则它每轮自报、
+被唤醒再自报，死循环。web 重启把在飞任务打 paused **不**报（避免每次部署给
+所有在飞下属刷一条；重启自动续接的那一条见「重启语义」）。
+
+下属提问（批次 L L2）：审批请求若是 AskUserQuestion（工具名或参数形如
+`{questions:[…]}`）→ `question` 条目（问题文本 + 选项 label 列表 + `requestId`
+引用），托管主管**立即唤醒**（与 `human` 同款不等合并窗口）。答复：
+
+```text
+POST /api/tasks/<id>/answer   {"requestId": "...", "text": "..."}
+```
+
+审批按「允许」放行，答复以 steer 立即投递给该任务（不排队）；主管令牌只许
+答复 `task.lead` 是自己的任务，网页会话均可。挂起的是提问时，队列里的消息
+会被当作答复自动走同一条路（不再干等到审批超时）。CLI：
+`deskport.py answer <task> <requestId> "<答复>"`。
 
 托管唤醒：`kind=hosted` 且有未投递条目时，中枢按合并窗口（config
 `leadWakeMergeSec`，默认 20s，0=立即）把窗口内全部条目合并成**一条**摘要投进
 托管任务的消息队列（发信人记 `收件箱`，不是"面板"），投递成功才推进游标；
-`human` 条目（用户说的话）不等窗口、立即唤醒。
+`human`（用户说的话）与 `question`（下属提问）不等窗口、立即唤醒。
 
 用户→主管（网页会话，管理面同鉴权档）：
 
@@ -855,6 +879,12 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
 
 无动静提示：主管有下属在跑、却老于 `leadIdleSec`（默认 900s）没有任何事件 →
 箱内一条 `notice`；同一主管每阈值最多一条。
+
+主管反应超时提醒（批次 L L1）：下属消息（report/failure/escalation/human/
+question）超过 `leadResponseSec`（默认 600s，0=关闭）既没投递（inboxSeq）也没
+被外部主管读（readSeq）→ 该主管 `down` 方向一条 `notice`（指挥台「等你处理」
+因此可见）；托管主管另有第二条分支——条目已投递但唤醒还堵在队列里没人消费、
+超过阈值没有任何新事件，同样提醒。同一主管每阈值最多一条。
 
 ## 审批先上交主管（批次 A）
 
@@ -878,6 +908,14 @@ policy 判定为「需要询问」时：
 5. 时间窗：节点侧审批 900 秒兜底超时不变（节点协议不动）——**主管 + 用户合计
    有约 15 分钟处理窗口**；`taskPermissionTimeoutSec`（默认 1800s）到点仍按
    超时拒绝，与以前逐字一致。
+6. **落定（主控追加）**：审批一出结果（任何人批准/拒绝/超时/任务关闭），
+   runner 在写 `permission_result` 的同一处把对应 escalation 标记
+   `resolved`（记在主管记录的 `resolvedRequests`，requestId→{at, by}；收件箱
+   JSONL 只追加不改写）。此后的未读计数、L1 反应超时提醒、指挥台「等你」
+   徽标都只统计**未落定**的 escalation；正好在 grace 到点那一瞬落定的，
+   不再补「已上交用户」。`GET /api/agent/leads/inbox` 游标语义不变（全部
+   条目照返），每条 escalation 多带 `resolved` 字段，客户端 CLI 对已落定的
+   显示「（已处理）」。
 
 主管**自己**的托管任务撞审批（返工项）：不上交、不唤醒（不能当自己的下属），
 但往该主管箱里写一条 `dir='down', kind='notice'` 的用户可见提示——「主管 <名>
@@ -904,6 +942,20 @@ policy 判定为「需要询问」时：
   补进 tool 事件的 args 也不丢：回填时往 jsonl 追加不带 `seq` 的
   `tool_args_patch` 补丁行，重启后按 `targetSeq` 还原（补丁行本身不是
   事件，`/log` 原样透出）。
+- **重启后自动续接（批次 L L3）**：web 启动时被打成 paused 且
+  `pausedBy='restart'`（只有启动恢复路径设这个标记）的任务，启动 60 秒后
+  自动发一条续接消息，每个任务只自动续一次；用户主动暂停/关闭的不续
+  （构造上不带标记）。自动续接的任务若属于某主管，主管收件箱会多一条
+  notice「任务 <id8> 因重启被打断，已自动续接」。开关 config
+  `autoResumeAfterRestart`（默认开）。
+- **卡住的工具调用（批次 L L4）**：任务 running 且当前工具调用超过
+  `toolStallSec`（默认 900s，0=关闭）没有任何事件 → 一条 status 事件；
+  属于主管的下属往主管收件箱写 `failure`，无主管的进指挥台「等你处理」。
+  每次工具调用只报一次（工具收尾标记即清）。
+- **cancel 的如实回报（批次 L L4）**：重启后重新接上的节点会话里，cancel
+  照常对同一 node sid 发 `session/cancel`（节点协议未改）；发完再读一次
+  节点实况（既有 `GET /api/sessions/<sid>` 的 `running` 字段），回合还在跑
+  时 `/api/tasks/<id>/cancel` 的响应带 `nodeStillRunning: true`——不假装停了。
 
 ## 技能分发（URL 自举）
 

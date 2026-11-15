@@ -541,12 +541,19 @@ def cancelTask(task, taskId):
         # 语义）——轮结束后 runner 把任务置回 waiting，任务保持可续聊；
         # 不再终态化成 cancelled（那会让后续 message 一律 409）
         runner._denyPendingPermission(agent)
+        nodeStillRunning = False
         try:
-            client.cancel()
+            # L4：RemoteAcpClient.cancel 发完 session/cancel 后读一次节点
+            # 实况（既有 GET /api/sessions/<sid>，节点协议不改）——回合还在
+            # 跑就如实说 nodeStillRunning，不假装停了
+            nodeStillRunning = bool(client.cancel())
         except Exception:
             pass
         store.repo.append_event(task, 'status', text='已请求停止当前这轮')
-        return jsonify({'ok': True, 'status': task.get('status')})
+        payload = {'ok': True, 'status': task.get('status')}
+        if nodeStillRunning:
+            payload['nodeStillRunning'] = True
+        return jsonify(payload)
     # 没有活客户端（web 重启后的残留 running 等）：无法只停这一轮，保留终态取消
     task_state.transition(task, task_state.TaskState.CANCELLED)
     task['endedAt'] = store._now()
@@ -839,6 +846,32 @@ def closeTaskCore(task):
     if not wasEnded:
         leads_inbox.emit(task, 'failure', '任务 %s 被关闭' % task['id'][:8])
     return payload, 200
+
+
+@blueprint.route('/api/tasks/<taskId>/answer', methods=['POST'])
+@taskRoute
+def taskAnswer(task, taskId):
+    """L2：主管答复下属的提问——审批按"允许"放行，答复 steer 立即投递。
+
+    主管令牌只许答复自己子树里的任务（task.lead == 令牌绑的主管）；网页会话
+    均可。请求体 {"requestId", "text"}；requestId 对不上当前挂起的审批 → 409。
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    requestId = str(data.get('requestId') or '')
+    text = (data.get('text') or '').strip()
+    if not requestId:
+        return jsonify({'error': '缺少 requestId（要答复的那条提问）'}), 400
+    if not text:
+        return jsonify({'error': 'text 不能为空'}), 400
+    if len(text) > 8000:
+        return jsonify({'error': 'text 过长'}), 400
+    tokenName = getattr(g, 'agentTokenName', '') or ''
+    if tokenName and str(task.get('lead') or '') != (getattr(g, 'agentLead', '') or ''):
+        return jsonify({'error': '只有任务所属主管的令牌能答复（task.lead=%s）'
+                         % (task.get('lead') or '(无)')}), 403
+    payload, code = runner.answerPermission(task, requestId, text,
+                                            by='主管答复')
+    return jsonify(payload), code
 
 
 @blueprint.route('/api/tasks/<taskId>/permission', methods=['POST'])

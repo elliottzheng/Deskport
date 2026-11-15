@@ -92,21 +92,25 @@ test('pendingRows: 三类映射、主管名回填、时间倒序、key 稳定', 
     const rows = pendingRows([
         {kind: 'report', at: 100, leadId: 'ld_1', title: '乙',
          detail: '跑完了', seq: 2},
+        {kind: 'notice', at: 150, leadId: 'ld_1', title: '乙',
+         detail: '主管反应超时提醒', seq: 3},
         {kind: 'permission', at: 300, taskId: 't1', leadId: 'ld_2',
          title: 'Bash', detail: 'ls', requestId: 'rq-1',
          options: [{optionId: 'o1', name: '允许', kind: 'allow_once'}]},
         {kind: 'problem', at: 200, taskId: 't2', leadId: '',
          title: '坏任务', detail: '崩了'},
     ], {ld_1: {id: 'ld_1', name: '乙'}, ld_2: {id: 'ld_2', name: ''}});
-    assert.deepEqual(rows.map(r => r.kind), ['permission', 'problem', 'report']);
-    assert.deepEqual(rows.map(r => r.kindText), ['审批', '问题', '汇报']);
+    assert.deepEqual(rows.map(r => r.kind), ['permission', 'problem', 'notice', 'report']);
+    // down 侧的 notice（主管超时提醒/主管自己待批）不能显示成「汇报」（L 返工）
+    assert.deepEqual(rows.map(r => r.kindText), ['审批', '问题', '提醒', '汇报']);
     // 名字：找得到用名字，空名兜底「未命名」，无主任务为空
     assert.equal(rows[0].leadName, '未命名');
     assert.equal(rows[2].leadName, '乙');
     // key 带类型与主键，同任务多条待办不会撞
     assert.equal(rows[0].key, 'permission:t1:rq-1');
-    assert.equal(rows[2].key, 'report:ld_1:2');
-    assert.equal(rows[2].seq, 2);
+    assert.equal(rows[2].key, 'notice:ld_1:3');
+    assert.equal(rows[3].key, 'report:ld_1:2');
+    assert.equal(rows[3].seq, 2);
     assert.deepEqual(rows[0].options.map(o => o.optionId), ['o1']);
 });
 

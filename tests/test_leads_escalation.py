@@ -315,6 +315,70 @@ def test_no_grace_notice_when_lead_decides_in_time(env):
     assert [e['kind'] for e in inboxEntries(env, L)] == ['escalation']
 
 
+# ---------------------------------------------------------------- 落定（主控追加）
+
+def test_resolved_escalation_not_counted_or_reminded(env):
+    """主控线上实测：驱动几秒批掉审批，收件箱堆几十条未读 escalation，L1
+    一直提醒"主管好久没处理 50 多条"。审批落定 → escalation 标记 resolved：
+    未读不计、L1 不提醒、grace 到点也不补「已上交用户」。"""
+    login(env.client)
+    env.monkeypatch.setattr(configMod, 'getLeadApprovalGraceSec', lambda: 1)
+    L, _tid, _agent, tok = hostedLead(env)
+    task, agent = subordinate(env, L, tok)
+    th = hangPermission(env, task, agent, 'req-res', 'c-res')
+    entries = waitEntries(env, L, 1)
+    assert entries[0]['kind'] == 'escalation'
+
+    # 主管令牌批准 → 落定标记（审批出过结果就不再算待处理）
+    resp = call(env, 'post', '/api/tasks/%s/permission' % task['id'],
+                {'requestId': 'req-res', 'optionId': 'opt-allow'},
+                token=tok['token'])
+    assert resp.status_code == 200, resp.get_json()
+    th.join(timeout=10)
+    assert not th.is_alive()
+    record = leads_store.get(L)
+    resolved = record.get('resolvedRequests') or {}
+    assert 'req-res' in resolved and resolved['req-res']['by'] == '主管令'
+    entry = inboxEntries(env, L)[0]
+    assert leads_inbox.entryResolved(record, entry) is True
+
+    # inbox 接口逐条带 resolved（游标语义不变：全部条目照返）
+    resp = call(env, 'get', '/api/agent/leads/inbox', token=tok['token'])
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert [e['kind'] for e in body['entries']] == ['escalation']
+    assert body['entries'][0]['resolved'] is True
+
+    # grace（1s）早过了：不再补「已上交用户」——审批早就落定了
+    time.sleep(1.3)
+    assert [e['kind'] for e in inboxEntries(env, L)] == ['escalation']
+
+    # L1：时钟推到远超阈值，唯一那条已落定 → 不算 stale、不提醒
+    from modules import lead_notices
+    far = time.time() + 10 ** 6
+    assert lead_notices._staleEntries(record, far, 600) == []
+    assert lead_notices.responseNotice(record, far) == 0
+
+
+def test_resolve_permission_no_entry_leaves_no_mark(env):
+    """防呆：没上交过 escalation 的审批（任务没绑主管）落定时不留垃圾标记。"""
+    login(env.client)
+    tok = newToken(env, 'T3')      # 不绑主管 → 任务无 lead，从不上交
+    L = newLead(env, '甲')         # 箱子里没有任何条目的主管
+    tid = newTask(env, token=tok['token'])
+    task = env.repo.get(tid)
+    with env.repo.lock:
+        task['status'] = 'running'
+        env.repo.save()
+    agent = seedAgent(env, tid)
+    th = hangPermission(env, task, agent, 'req-none', 'c-none')
+    call(env, 'post', '/api/tasks/%s/permission' % tid,
+         {'requestId': 'req-none', 'optionId': 'opt-allow'})
+    th.join(timeout=10)
+    assert leads_inbox.entriesAfter(L, 0, 'up')[0] == []
+    assert not (leads_store.get(L) or {}).get('resolvedRequests')
+
+
 # ---------------------------------------------------------------- 例 9
 
 def test_unbound_task_permission_writes_nothing(env):
