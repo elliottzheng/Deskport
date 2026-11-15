@@ -225,6 +225,12 @@ _EXIT_CHILD = """
 import os, sys
 sys.path.insert(0, {repo!r})
 os.environ['APPDATA'] = {appdata!r}
+import config
+# 子进程与父进程一样不读仓库里的 config.json：父进程由 conftest 把 CONFIG_PATH
+# 指到临时配置，子进程照做（指到一个不存在的路径 → config.load 回退 DEFAULTS，
+# stateDirName = 缺省 web-platform）。否则 dev checkout 的 config.json 会把状态
+# 目录改名（如 web-platform-dev），退出 flush 落到别的路径，本用例按缺省名断言。
+config.CONFIG_PATH = os.path.join({appdata!r}, 'no-such-config.json')
 from modules import tasks_store as store
 store.repo.load()                  # 物化模块级仓库（服务就这一个）
 task = {{'id': 'exit-1', 'seq': 0, 'events': [], 'status': 'running'}}
@@ -246,7 +252,8 @@ def test_exit_flush_persists_last_changes(tmp_path, monkeypatch):
     proc = subprocess.run([sys.executable, '-c', code], cwd=REPO_ROOT,
                           capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr[-500:]
-    # 子进程走模块级仓库：状态目录 = %APPDATA%\web-platform（config 缺省名）
+    # 子进程走模块级仓库：状态目录 = %APPDATA%\web-platform（config 缺省名；
+    # 子进程已把 CONFIG_PATH 指开，仓库里的 config.json 不改名——见 _EXIT_CHILD）
     storePath = os.path.join(appdata, 'web-platform', 'agent_tasks.json')
     data = json.loads(open(storePath, encoding='utf-8').read())
     assert data['exit-1']['seq'] == 7          # atexit flush 生效
