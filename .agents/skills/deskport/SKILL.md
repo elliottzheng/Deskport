@@ -146,6 +146,8 @@ POST /api/tasks
 - `prompt` 上限 4000 字符；本机文件用 `paths: [绝对路径]`；没有现成文件时先上传：
   `POST /api/tasks/files {"name": "a.md", "contentB64": "..."}` → 返回 path 塞进 paths，
   或建任务时直接带 `attachments: [{name, contentB64}]`。
+- `title` 可选（≤40 字）：**主管派活建议显式给**（如 `"title": "批次 T：任务标题"`）——不给就按
+  提示词首行自动生成（剥【目标】类标记、取第一句、截 24 字）；改名走 `PATCH /api/tasks/<id>`。
 
 **收事件（推荐：阻塞 wait，一次请求等到需要你决策为止）**：
 

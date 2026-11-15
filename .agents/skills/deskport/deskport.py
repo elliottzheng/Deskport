@@ -233,17 +233,20 @@ class Deskport:
                     cwd: str | None = None, paths: list[str] | None = None,
                     model: str | None = None, attachments: dict[str, bytes | str] | None = None,
                     kimi_session: str | None = None, fork: bool = True,
-                    policy: dict | None = None) -> "Task":
+                    policy: dict | None = None, title: str | None = None) -> "Task":
         """派活给 Deskport 托管的智能体。mode=default 逐项审批，全自动显式传 "auto"。
         node=执行点（缺省 "local"）；cwd=执行目录（本机可给绝对目录，任务目录仍是 workspace；
         非本机给该机器上已存在的目录，缺省 = 任务目录）。kimi_session 接手（R4-7）：默认 fork
         副本，fork=False 直接接管原会话（被占用时 409）。model 可选（见 nodes() 的 models）；
         attachments={文件名: 内容} 随任务上传，prompt 上限 4000 字符。policy=审批边界（R4-2）：
         {"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则], "default":"ask|allow|deny",
-        "timeoutSec":n}；边界内自动放行，越界才挂起。"""
+        "timeoutSec":n}；边界内自动放行，越界才挂起。title=任务标题（批次 T，≤40 字；
+        留空按提示词自动生成，主管派活建议显式给）。"""
         if len(prompt) > 4000:
             raise ValueError(f"prompt {len(prompt)} 字符超过服务端上限 4000；长内容请用 attachments")
         body: dict = {"prompt": prompt, "node": node, "mode": mode}
+        if title:
+            body["title"] = title
         if model:
             body["model"] = model
         if kimi_session:
@@ -629,6 +632,7 @@ if __name__ == "__main__":
     p.add_argument("-n", "--node", help="执行点（缺省 local）")
     p.add_argument("-m", "--mode", default="default", help="default=危险操作等审批 / auto=全自动")
     p.add_argument("--model", help="执行点支持的模型名（缺省用执行点默认）")
+    p.add_argument("--title", help="任务标题（≤40 字；留空按提示词自动生成）")
     p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
                    metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
@@ -682,7 +686,8 @@ if __name__ == "__main__":
                 sys.exit(0)
             if a.cmd == "task":
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
-                                      cwd=_unmangle(a.cwd), model=a.model)
+                                      cwd=_unmangle(a.cwd), model=a.model,
+                                      title=a.title)
                 print(task.id)
             else:
                 task = dp.task(a.tid)

@@ -18,7 +18,7 @@ import shutil
 from flask import request
 
 import config
-from modules import events, staging, task_inputs, task_node, tasks_api, tasks_store
+from modules import events, staging, task_inputs, task_node, task_title, tasks_api, tasks_store
 
 MAX_FILES = 10
 MAX_PROMPT = 4000
@@ -144,6 +144,11 @@ def parseShareOptions(data, fileCount):
     if len(model) > 100:
         return None, ({'error': 'model 不合法（≤100 字符）'}, 400)
 
+    # 批次 T：可选标题（1–40 字，空 = 按提示词自动生成）
+    title = _text(data.get('title'))
+    if len(title) > 40:
+        return None, ({'error': 'title 过长（上限 40 字符）'}, 400)
+
     organize = _text(data.get('organize')).lower() or 'none'
     if organize not in ORGANIZE_MODES:
         return None, ({'error': 'organize 只能是 none / folder'}, 400)
@@ -162,7 +167,8 @@ def parseShareOptions(data, fileCount):
 
     return {'prompt': prompt, 'mode': mode, 'node': node, 'cwd': cwd,
             'model': model, 'taskId': _text(data.get('taskId')),
-            'organize': organize, 'folderName': folderName}, None
+            'organize': organize, 'folderName': folderName,
+            'title': title}, None
 
 
 def findOpenTask(taskId):
@@ -243,7 +249,7 @@ def _createShare(opts, files, folder, paths, folderName, detail,
         return {'error': 'prompt 过长（加上文件夹说明超过 %d 字符）'
                          % MAX_PROMPT}, 400
     data = {'prompt': finalPrompt, 'paths': paths, 'mode': opts['mode'],
-            'node': opts['node']}
+            'node': opts['node'], 'title': opts['title']}
     if opts['cwd']:
         data['cwd'] = opts['cwd']
     if opts['model']:
@@ -287,7 +293,7 @@ def tasksPayload():
     repo.load()
     items = repo.list()
     rows = [{'id': t.get('id') or '',
-             'title': t.get('title') or '',
+             'title': task_title.titleFor(t),
              'status': t.get('status') or '',
              'updatedAt': _updatedAt(t),
              'node': t.get('node') or 'local'}

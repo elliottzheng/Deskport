@@ -168,6 +168,7 @@ POST /api/agent/share           (scope=share, multipart/form-data)
   cwd      可选；远端执行点必填（该机器上的工作目录）
   model    可选；建新任务时的模型（须在该执行点的 models 里）
   mode     可选 default|auto（缺省 default = 逐项审批）
+  title    可选；建新任务时的标题（≤40 字；留空按 prompt 自动生成）
   organize 可选 none|folder（缺省 none）；folder = 新建文件夹装附件
   folderName 可选；folder 模式缺省 share-<YYYYMMDD-HHmm>，重名自动 (2)
 → 200 {"taskId": "abc123", "mode": "created" | "appended",
@@ -374,8 +375,9 @@ DELETE /api/agent/ssh/sessions/<sid>
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | /api/tasks | 任务列表 + `running`/`queued` 计数与 `limit`（全局口径） |
-| POST | /api/tasks | 建任务 → 202 `{task, paths}`；入参 `{prompt, node, cwd, mode, model, paths, attachments}`，`node` 缺省 `local`，`cwd` 缺省任务目录 |
+| POST | /api/tasks | 建任务 → 202 `{task, paths, titleSource}`；入参 `{prompt, node, cwd, mode, model, paths, attachments, title?}`，`node` 缺省 `local`，`cwd` 缺省任务目录 |
 | GET | /api/tasks/<id> | 任务详情 `{task}`：`status`/`model`/`workspace`/`cwd`/`context{used,max}`/`commands`/`lastSeq`/`currentTool`/`queuedMessages`；`?events=1` 附带最近 500 条事件 |
+| PATCH | /api/tasks/<id> | 改名 `{title}`（网页会话与令牌均可；令牌只能改它建的或绑主管名下的）→ `{ok, title, titleSource, task}` |
 | GET | /api/tasks/<id>/events?after=N | 增量事件（`since` 等价接受） |
 | GET | /api/tasks/<id>/events/stream?since=N | SSE 推送 |
 | POST | /api/tasks/<id>/message | 续聊 `{text, mode?, wait?}`，mode=queue（默认）/steer/reject |
@@ -442,6 +444,15 @@ DELETE /api/agent/ssh/sessions/<sid>
   网页任务页与 `/m/share` 的远端 cwd 占位符即按它切换；
 - `mode`：不传 = `default`（**逐项审批**，安全默认）；要自动批准必须显式
   `auto`；另有 `plan` / `yolo`；
+- **标题（`title`，可选，批次 T）**：≤40 字（超长截断，换行折成空格），给了就用
+  它、任务记 `titleSource=given`；**留空自动生成**（`titleSource=derived`）：
+  取提示词第一行非空文本 → 剥开头的【…】[…]、Markdown `#`/`-`/`*`/`>`、序号
+  `1.`/`1、`、「目标：」这类 2–4 字标签 → 在第一个句末标点（`。！？；!?;`）处截断 →
+  首行只有标记就取下一行 → 最长 24 字（超出截 23 字加 `…`）→ 全空用「未命名任务」。
+  工作线派活（带 `"workline": "<id>"` 且没显式给 title）用 `<工作线标题>`，
+  与默认标题不同则 `<工作线标题> · <默认标题>`（总长仍 ≤40）。**老任务**（记录里
+  没有 `titleSource`）存储不动，列表/overview/详情输出时按同一规则从 `prompt`
+  重新推导；改名（PATCH）后 `titleSource` 转 `given`，原样输出；
 - `model`（可选）：给执行点选模型（§7）。`GET /api/tasks/nodes` 里每个执行点
   带 `models`（可选列表）/ `defaultModel` / `modelSelectable`；清单三级来源：
   config 显式声明 → node /health 自动上报（节点侧解析 kimi config.toml，
@@ -584,7 +595,7 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 | GET | /api/worklines | 列表（含 `currentTask`/`currentStatus`/`context`/`nextAction`） |
 | GET | /api/worklines/<id> | 详情：`doc`（接力棒全文）、`rev`、`taskList`、`policy`、`nextAction` |
 | PUT | /api/worklines/<id> | 改 `doc`/`title`/`policy`/`defaults`/`node`/`cwd`；带 `baseRev` 做乐观锁，过期 409 |
-| POST | /api/worklines/<id>/tasks | 在工作线上派活：`{prompt, mode?, wait?}`，服务端自动路由 |
+| POST | /api/worklines/<id>/tasks | 在工作线上派活：`{prompt, title?, mode?, wait?}`，服务端自动路由（新任务没显式给 title 时用「工作线标题 · 默认标题」） |
 | POST | /api/worklines/<id>/rotate | 换新会话接棒（新任务带接力棒，旧任务 close） |
 | DELETE | /api/worklines/<id> | 删线（当前任务在跑时 409） |
 
@@ -870,10 +881,11 @@ GET /api/agent/skill.zip        → 整包 zip：deskport/{SKILL.md, deskport.py
 ## 审计
 
 每次调用写 `events` 流（`agent.exec` / `agent.sftp.*` / `agent.session.*` /
-`agent.task.create` / `agent.task.upload` / `agent.upload` / `agent.share`），控制台审计可
+`agent.task.create` / `agent.task.rename` / `agent.task.upload` / `agent.upload` /
+`agent.share`），控制台审计可
 回看：哪个令牌、哪台主机、执行了什么。`agent.exec` / `agent.sftp.*` 的
 detail 带 `[令牌名]` 前缀，`agent.task.*` / `agent.upload` 的 target 即
-令牌名；联邦来源统一记为 `联邦:<来源>`（见上一节），便于事后追责。
+令牌名（网页会话改名为「面板」）；联邦来源统一记为 `联邦:<来源>`（见上一节），便于事后追责。
 令牌越权（scope 不满足）另记
 `agent.scope`（result=deny，含令牌名与所需 scope）。
 
