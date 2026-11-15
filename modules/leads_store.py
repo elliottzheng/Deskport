@@ -60,9 +60,18 @@ def _now():
 
 
 def _load():
-    # WinError 5（replace 撞上正被读的 leads.json）由共享助手
-    # state.replaceWithRetry 兜底（atomicWriteJson 内部，20/40/80/160ms
-    # 退避 4 次）——读侧不另设一套锁，只留一份机制
+    # 读也要进锁（RLock 可重入，setCursor 等持锁调用不受影响）。理由（主控
+    # 追验二更正）：Windows 上 os.replace 换不掉正被读的文件（WinError 5），
+    # 而 replaceWithRetry 的逃逸点正是最后一次 os.replace——读者（sweeper/
+    # 残留线程）跨过全部退避仍持着文件时，authGuard.touch 之类的请求 500
+    # （验方压测复现 1/1/0、另 8s 1 次；持读锁两轮 0 错误）。持锁读把同进程
+    # 的读者/替换互斥 deterministic 关死；replaceWithRetry 保留作纵深防御
+    # （外部占用者：杀毒/索引），两者并存各管一段。
+    with _LOCK:
+        return _loadUnlocked()
+
+
+def _loadUnlocked():
     try:
         with open(storePath(), encoding='utf-8') as f:
             data = json.load(f)
@@ -74,6 +83,12 @@ def _load():
 def _save(data):
     # L6：只读进程（状态目录属于 web）的任何写入一律明确异常
     state_owner.ensureWritable('leads.json')
+    # 写盘在 _LOCK 内（调用方持锁做「读-改-写」，data 是锁内现读的活字典）：
+    # 把 replaceWithRetry 挪到锁外不安全——序列化 concurrent 于其他线程的
+    # 原地修改会撕裂/丢更新（tasks_store 那样锁内捕获快照需要另造字符串写盘
+    # API，等于第二份机制，不要）。最长阻塞：退避 20/40/80/160ms + 最后一次
+    # replace + dump/fsync ≈ 0.3s 出头；且 _load 持锁读后重试只在外部占用者
+    # （杀毒/索引）时才走满，常态是几毫秒
     state.atomicWriteJson(storePath(), data)
 
 
