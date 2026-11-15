@@ -19,7 +19,7 @@ from modules import kimi_acp
 from modules import task_events
 from modules import task_policy
 from modules import tasks_runner as runner
-from modules import task_state
+from modules import task_state, task_title
 from modules import tasks_store as store
 from modules import worklines_store
 from modules import fsutil, node_path, staging, task_cwd, task_node
@@ -260,7 +260,7 @@ def createTaskResponse(data, start=True):
         if limit > 0 and len(running) >= limit:
             # 429 带占用明细（R4-9）：调用方不必再查一轮就知道是谁占着名额
             holders = [{'id': t['id'], 'owner': t.get('owner') or '未知',
-                        'title': t.get('title') or ''} for t in running]
+                        'title': task_title.titleFor(t)} for t in running]
             return ({'error': '并发任务已达上限 %d，请稍后再试' % limit,
                             'limit': limit, 'running': len(running),
                             'holders': holders}), 429
@@ -299,8 +299,15 @@ def createTaskResponse(data, start=True):
         except OSError:
             pass
         return ({'error': str(e)}), 400
+    # 批次 T：显式标题（可选，1–40 字超长截断）；没给按提示词推默认标题，
+    # 带工作线时套「工作线标题 · 默认标题」——titleSource 记来历，老任务
+    # （无该键）在摘要输出时按同规则补推（tasks_store.titleFor）
+    if (rawTitle := data.get('title')) is not None \
+            and not isinstance(rawTitle, str):
+        return ({'error': 'title 需为字符串（1–40 字；留空自动生成）'}), 400
+    title, titleSource = task_title.resolveTitle(rawTitle, prompt, workline)
     task = {
-        'id': taskId, 'title': prompt.splitlines()[0][:40],
+        'id': taskId, 'title': title, 'titleSource': titleSource,
         'prompt': prompt, 'workspace': workspace, 'status': 'queued',
         'createdAt': store._now(), 'startedAt': 0, 'endedAt': 0,
         'seq': 0, 'events': [], 'lastText': '',
@@ -348,9 +355,11 @@ def createTaskResponse(data, start=True):
         # task: summaryBrief 让调用方不重查任务卡就能拿到元数据
         snap = _blockWait(task, 0, waitSec)
         snap['task'] = store.repo.summaryBrief(task)
+        snap['titleSource'] = task.get('titleSource') or ''
         snap['paths'] = inputs
         return (snap), 200
-    return ({'task': store.repo.summary(task), 'paths': inputs}), 202
+    return ({'task': store.repo.summary(task), 'paths': inputs,
+             'titleSource': task.get('titleSource') or ''}), 202
 
 
 def startTask(task, manifest):

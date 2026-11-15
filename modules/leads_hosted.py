@@ -47,6 +47,7 @@ SKILL_NAME = 'deskport'
 MAX_DUTY = 2000                 # duty 上限（规格：≤2000 字）
 PROMPT_LIMIT = 4000             # 任务首条消息上限（createTaskResponse 同款）
 TOKEN_PREFIX = '主管·'
+LEAD_TITLE_PREFIX = '主管 · '   # 托管主管任务的标题前缀（批次 T返工：显式 given）
 # 主管任务的审批边界（A1-6）：python deskport/deskport.py 命令自动放行；路径
 # 分隔符用 [\\/]——Windows 上主管可能打反斜杠。allowPaths 建卡时才知道工作区
 # 路径，建卡后补（见 createHostedLead）；其余走审批（default=ask）。
@@ -278,7 +279,10 @@ def createHostedLead():
         payload, code = tasks_api.createTaskResponse({
             'prompt': prompt, 'node': 'local', 'mode': 'default',
             'model': fields['model'] or None,
-            'policy': BASE_POLICY}, start=False)
+            'policy': BASE_POLICY,
+            # 批次 T 返工：托管主管自己的任务标题显式给「主管 · <主管名>」——
+            # 角色说明首行推出来的默认标题指代不清，指挥台上一屏分不出是谁
+            'title': LEAD_TITLE_PREFIX + fields['name']}, start=False)
         if code >= 400:
             raise _Abort(str(payload.get('error') or '建任务失败'), code)
         taskId = str(payload['task']['id'])
