@@ -908,6 +908,14 @@ policy 判定为「需要询问」时：
 5. 时间窗：节点侧审批 900 秒兜底超时不变（节点协议不动）——**主管 + 用户合计
    有约 15 分钟处理窗口**；`taskPermissionTimeoutSec`（默认 1800s）到点仍按
    超时拒绝，与以前逐字一致。
+6. **落定（主控追加）**：审批一出结果（任何人批准/拒绝/超时/任务关闭），
+   runner 在写 `permission_result` 的同一处把对应 escalation 标记
+   `resolved`（记在主管记录的 `resolvedRequests`，requestId→{at, by}；收件箱
+   JSONL 只追加不改写）。此后的未读计数、L1 反应超时提醒、指挥台「等你」
+   徽标都只统计**未落定**的 escalation；正好在 grace 到点那一瞬落定的，
+   不再补「已上交用户」。`GET /api/agent/leads/inbox` 游标语义不变（全部
+   条目照返），每条 escalation 多带 `resolved` 字段，客户端 CLI 对已落定的
+   显示「（已处理）」。
 
 主管**自己**的托管任务撞审批（返工项）：不上交、不唤醒（不能当自己的下属），
 但往该主管箱里写一条 `dir='down', kind='notice'` 的用户可见提示——「主管 <名>

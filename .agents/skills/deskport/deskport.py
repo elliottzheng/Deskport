@@ -795,8 +795,11 @@ if __name__ == "__main__":
             if a.cmd == "inbox":
                 entries, lastSeq = dp.inbox(a.after, a.wait)
                 for e in entries:
+                    text = " ".join(str(e.get("text") or "").split())
+                    if e.get("resolved"):
+                        text += "（已处理）"   # 审批已落定的 escalation：别再当未处理
                     print("%d\t%s\t%s" % (e.get("seq") or 0, e.get("kind") or "",
-                                          " ".join(str(e.get("text") or "").split())))
+                                          text))
                 print("lastSeq=%d" % lastSeq)
                 sys.exit(0)
             if a.cmd == "close":

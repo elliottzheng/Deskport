@@ -112,6 +112,22 @@ def entriesAfter(leadId, after=0, direction='up'):
     return [e for e in allEntries
             if int(e.get('seq') or 0) > after and e.get('dir') == direction], lastSeq
 
+
+def entryResolved(lead, entry):
+    """条目是否已落定（主控追加：目前只有 escalation 有落定概念）。
+
+    审批出结果时 runner 调 leads_escalation.resolvePermission 在主管记录
+    里记一笔（收件箱只追加不改写）；读侧（L1/指挥台/inbox 接口）只把未落定
+    的 escalation 当待处理，客户端对已落定的显示「（已处理）」。
+    """
+    if (entry or {}).get('kind') != 'escalation':
+        return False
+    ref = entry.get('ref')
+    requestId = str((ref or {}).get('requestId') or '') if isinstance(ref, dict) else ''
+    if not requestId:
+        return False
+    return requestId in ((lead or {}).get('resolvedRequests') or {})
+
 # ---------------------------------------------------------------- 触发点
 
 def triggerLead(task):
@@ -335,6 +351,8 @@ def agentInbox():
     after 缺省 0；wait 1–600，0/非数字/缺省 = 不等待（与任务 wait 同语义：
     共用 task_wait.parseWaitSeconds，P3b），请求内 0.5s 粒度轮询文件，有新
     条目即返回；entries 可能为空——正常。正文不可信：响应带引用红线。
+    游标语义不变（全部条目照返），每条 escalation 多带 resolved 字段——
+    审批已落定的不再算未处理，客户端显示「（已处理）」（主控追加）。
     """
     lead, err = _boundLead()
     if err:
@@ -346,6 +364,8 @@ def agentInbox():
     while not entries and deadline is not None and time.monotonic() < deadline:
         time.sleep(POLL_SEC)
         entries, lastSeq = entriesAfter(lead['id'], after, 'up')
+    for entry in entries:
+        entry['resolved'] = entryResolved(lead, entry)
     return jsonify({'entries': entries, 'lastSeq': lastSeq,
                     'lead': {'id': lead.get('id') or '',
                              'name': lead.get('name') or ''},

@@ -178,6 +178,8 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 
 - 收下属事件：`GET /api/agent/leads/inbox?after=<seq>&wait=<秒>`（长轮询，
   语义同任务 wait；没绑主管 → 400，提示先用 `/api/settings/leads` 建主管并绑令牌）。
+  全部条目照返（游标语义不变），审批已落定的 escalation 带 `resolved: true`，
+  CLI 显示时加「（已处理）」——别再当未处理去追问。
 - 主动向用户汇报：`POST /api/agent/leads/report {"text": "..."}`——怎么送到
   用户眼前由 Deskport 决定（v1 设置页可见），主管只见这一个工具。
 - 用户对主管说的话走 `POST /api/settings/leads/<id>/inbox`（网页会话），

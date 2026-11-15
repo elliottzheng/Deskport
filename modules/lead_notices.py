@@ -11,7 +11,9 @@ L1（主管反应超时提醒）：收件箱里下属消息超过 leadResponseSe
 （inboxSeq）也没被外部主管读（readSeq）→ 往该主管 down 方向写一条 notice，
 指挥台「等你处理」因此可见；托管主管另有第二条分支——条目已投递但任务
 waiting、收件箱唤醒之后没有任何新事件（主管根本没反应），同样提醒。同一
-主管每阈值最多一条（leads_store.responseNoticedAt 节流）。
+主管每阈值最多一条（leads_store.responseNoticedAt 节流）。已落定的
+escalation（审批出过结果，leads_inbox.entryResolved）不算待处理——否则
+驱动几秒批掉的审批会在收件箱里堆成"主管好久没处理 50 多条"（主控追加）。
 
 时钟可注入：responseNotice(lead, now) 的 now 由 sweeper 传入（测试据此造
 超时），缺省走墙上时钟。
@@ -86,13 +88,18 @@ def emitQuestion(task, text, requestId):
 # ---------------------------------------------------------------- L1
 
 def _staleEntries(lead, now, sec):
-    """分支一：既没投递也没被读、且年龄超阈值的下属消息。"""
+    """分支一：既没投递也没被读、且年龄超阈值的下属消息。
+
+    已落定的 escalation（审批出过结果）不算——线上实测驱动几秒批掉审批，
+    收件箱堆几十条未读 escalation，L1 一直提醒"主管好久没处理"（主控追加）。
+    """
     leadId = str(lead.get('id') or '')
     entries, _last = leads_inbox.entriesAfter(leadId, 0, 'up')
     cursor = max(_int0(lead.get('inboxSeq')), _int0(lead.get('readSeq')))
     return [e for e in entries
             if _int0(e.get('seq')) > cursor
             and (e.get('kind') or '') in RESPONSE_KINDS
+            and not leads_inbox.entryResolved(lead, e)
             and now - float(e.get('at') or 0) >= sec]
 
 
@@ -127,7 +134,8 @@ def _hostedUnreacted(lead, now, sec):
     else:
         covered = [e for e in entries
                    if _int0(e.get('seq')) <= _int0(lead.get('inboxSeq'))]
-    covered = [e for e in covered if (e.get('kind') or '') in RESPONSE_KINDS]
+    covered = [e for e in covered if (e.get('kind') or '') in RESPONSE_KINDS
+               and not leads_inbox.entryResolved(lead, e)]
     return covered or None
 
 

@@ -521,8 +521,15 @@ def _handleAcpPermission(task, agent, params, requestId):
                 answeredFromQueue = True
                 break
         if graceAt is not None and not handedOver and store._now() >= graceAt:
-            handedOver = True
-            leads_escalation.escalationHandedOver(task, str(requestId), graceSec)
+            # 主控追加：锁外重读一次决定——正好在这一瞬落定（主管批了/任务
+            # 关了）就不再补「已上交用户」，那条 notice 会是假的
+            with store.repo.lock:
+                settled = decision['value'] is not None \
+                    or task.get('closedByUser') or task.get('status') == 'closed'
+            if not settled:
+                handedOver = True
+                leads_escalation.escalationHandedOver(task, str(requestId),
+                                                      graceSec)
         if deadline is not None and store._now() >= deadline:
             break
         agent['permEvent'].wait(0.5)
@@ -553,18 +560,21 @@ def _handleAcpPermission(task, agent, params, requestId):
             except Exception:
                 pass
     if value is None:
-        store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                     status='timeout', text='授权超时，已拒绝：' + title)
-        return None
+        status, text = 'timeout', '授权超时，已拒绝：' + title
+    elif value == '__deny__':
+        status, text = 'denied', '你拒绝了：' + title
+    else:
+        status, text = 'approved', '已允许：' + title
     # 批次 A（A4-4）：结果事件带 by（决定者：主管令牌名 / 面板）
     byKw = {'by': decidedBy} if decidedBy else {}
-    if value == '__deny__':
-        store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                     status='denied', text='你拒绝了：' + title, **byKw)
-        return None
     store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                 status='approved', text='已允许：' + title, **byKw)
-    return value
+                 status=status, text=text, **byKw)
+    # 主控追加：审批落定的唯一汇集点——标记对应 escalation 已处理，未读计数
+    # / L1 提醒 / 指挥台徽标从此不再拿它当"主管好久没处理"（线上实测堆过
+    # 50 多条已批完的 escalation）
+    leads_escalation.resolvePermission(task, str(requestId),
+                                       decidedBy or status)
+    return None if value in (None, '__deny__') else value
 
 
 def _afterWorklineTurn(task):

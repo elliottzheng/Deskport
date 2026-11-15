@@ -24,6 +24,8 @@
     inboxSeq/readSeq/reportSeq：收件箱游标（setCursor 推进，只增不减）；
     idleNoticedAt：无动静提示的单次标记（P3-5）；
     responseNoticedAt：主管反应超时提醒的单次标记（L1，节流同款）。
+    resolvedRequests：已落定的审批请求（requestId→{at, by}，setResolved 写，
+    上限 RESOLVED_CAP）——escalation 审批出结果后不再算未处理（主控追加）。
 绑定托管任务（补 1）改 kind/taskId 两个键，走 bindTask/unbindTask——
 不进 update() 的 PATCH_KEYS（避免出现 hosted 却没有 taskId 的状态）。
 """
@@ -273,6 +275,41 @@ def markResponseNoticed(leadId, at=None):
         if not isinstance(lead, dict):
             return None, NOT_FOUND
         lead['responseNoticedAt'] = float(at) if at is not None else _now()
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+RESOLVED_CAP = 500        # resolvedRequests 上限：只留最近这么多（按 at 丢最旧）
+
+
+def setResolved(leadId, requestId, by=''):
+    """标记一个审批请求已落定（主控追加：escalation 落定后不再算未处理）。
+
+    线上实测：驱动几秒内批掉审批，收件箱却堆着几十条未读 escalation，
+    L1 于是提醒"主管好久没处理 50 多条"——全是处理过的。落定状态记在
+    主管记录里（requestId → {at, by}），收件箱 JSONL 保持只追加不改写；
+    读侧（L1 / 指挥台 / inbox 接口）只把未落定的 escalation 当待处理。
+    重复标记同一条只刷新时间（幂等）。返回 (record, error)。
+    """
+    leadId = str(leadId or '')
+    requestId = str(requestId or '')
+    if not leadId or not requestId:
+        return None, 'leadId 与 requestId 都不能为空'
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        resolved = lead.get('resolvedRequests')
+        if not isinstance(resolved, dict):
+            resolved = {}
+            lead['resolvedRequests'] = resolved
+        resolved[requestId] = {'at': _now(), 'by': str(by or '')[:40]}
+        while len(resolved) > RESOLVED_CAP:
+            oldest = min(resolved,
+                         key=lambda k: float((resolved[k] or {}).get('at') or 0))
+            resolved.pop(oldest, None)
         lead['updatedAt'] = _now()
         _save(data)
         return lead, ''
