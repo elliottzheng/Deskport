@@ -94,6 +94,12 @@ def _autoResume(now):
 
 # ---------------------------------------------------------------- L4
 
+def _waitedText(sec):
+    """无输出时长的文案：≥60s 说分钟，<60s 说秒（toolStallSec 可以配成
+    30 这种小值，分钟数会是 0——返工：指挥台因此显示过「? 分钟」）。"""
+    return '%d 分钟' % (sec // 60) if sec >= 60 else '%d 秒' % sec
+
+
 def _toolStall(now):
     """running 任务里超过 toolStallSec 没有任何事件的工具调用：报警一次。"""
     sec = config.getToolStallSec()
@@ -116,13 +122,13 @@ def _toolStall(now):
             if not str(task.get('lead') or ''):
                 # 无主管：留标记给指挥台「等你处理」（command_view 读它）
                 task['_toolStall'] = {'name': name, 'since': since,
-                                      'at': now, 'minutes': sec // 60}
+                                      'at': now, 'sec': sec}
             store.repo.save()
         store.repo.append_event(
             task, 'status',
-            text='工具 %s 已 %d 分钟无输出（疑似卡住；要停就取消这一轮）'
-                 % (name, sec // 60))
+            text='工具 %s 已 %s无输出（疑似卡住；要停就取消这一轮）'
+                 % (name, _waitedText(sec)))
         if str(task.get('lead') or ''):
             leads_inbox.emit(task, 'failure',
-                             '任务 %s 的 %s 已 %d 分钟无输出'
-                             % (task['id'][:8], name, sec // 60))
+                             '任务 %s 的 %s 已 %s无输出'
+                             % (task['id'][:8], name, _waitedText(sec)))

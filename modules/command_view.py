@@ -167,10 +167,15 @@ def _pendingPermission(task):
 
 
 def _reportPending(lead, entries):
-    """主管未读汇报（dir='down' 且 seq > reportSeq）→ 每条的 pending 行。"""
+    """主管未读汇报（dir='down' 且 seq > reportSeq）→ 每条的 pending 行。
+
+    kind 按条目原样带出：down 侧绝大多数是 report（汇报），但 L1 的主管
+    反应超时提醒与批次 A 的主管自己待批提示都是 notice——指挥台不该把它们
+    显示成「汇报」（返工：以前一律硬编码 report）。
+    """
     rows = []
     for entry in entries:
-        rows.append({'kind': 'report', 'at': _int(entry.get('at')),
+        rows.append({'kind': entry.get('kind') or 'report', 'at': _int(entry.get('at')),
                      'leadId': lead.get('id') or '',
                      'title': _firstLine(lead.get('name'), TITLE_MAX) or '主管',
                      'detail': _firstLine(entry.get('text')),
@@ -188,13 +193,18 @@ def _stallPending(task):
     stall = task.get('_toolStall')
     if not isinstance(stall, dict) or (task.get('status') or '') != 'running':
         return None
+    sec = _int(stall.get('sec')) or _int(stall.get('minutes')) * 60
+    if sec >= 60:
+        waited = '%d 分钟' % (sec // 60)
+    else:
+        waited = '%d 秒' % sec       # toolStallSec < 60：显示秒（0 也曾显示成「?」）
     return {'kind': 'stall', 'at': _int(stall.get('at')),
             'taskId': task.get('id') or '', 'leadId': task.get('lead') or '',
             'title': _firstLine(task.get('title') or task.get('prompt'),
                                 TITLE_MAX) or '任务',
-            'detail': '工具 %s 已 %s 分钟无输出'
+            'detail': '工具 %s 已 %s无输出'
                       % (_firstLine(stall.get('name'), TITLE_MAX) or '工具',
-                         _int(stall.get('minutes')) or '?')}
+                         waited)}
 
 
 def _problemPending(tasks, now):

@@ -232,6 +232,19 @@ def test_pending_reports_and_read_clears(env):
     assert data['leads'][0]['lastReport']['seq'] == 2
 
 
+def test_down_notice_keeps_its_own_kind(env):
+    """L 返工：down 侧的 notice（L1 主管超时提醒 / 批次 A 主管自己待批
+    提示）按条目自己的 kind 进指挥台，不能一律显示成「汇报」。"""
+    login(env.client)
+    lead = newLead(env, '乙')
+    assert leads_inbox.append(lead, 'down', 'notice',
+                              '主管 乙 有 1 条下属消息超过 10 分钟未处理') == 1
+    data = overview(env)
+    rows = [p for p in data['pending'] if p['seq'] == 1]
+    assert len(rows) == 1 and rows[0]['kind'] == 'notice'
+    assert rows[0]['title'] == '乙' and '未处理' in rows[0]['detail']
+
+
 def test_reports_read_only_increases(env):
     """reports-read 只增不减；坏入参与不存在的主管有明确错误。"""
     login(env.client)

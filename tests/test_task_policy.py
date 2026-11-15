@@ -4,8 +4,11 @@ r"""审批边界判定器（R4-1/R4-2）：policy 校验与 evaluate 矩阵。
 规格例子逐条回归：引号内的 \| 与 $( 不误判、重定向豁免、
 deny 命中强制 ask、只读/allowPaths/allowCommands/default 各分支。
 批次 L L5 追加：按名字批量杀进程（taskkill /IM、taskkill /F /T、
-Stop-Process -Name、pkill、killall）一律 ask——evaluate 矩阵 + runner
-层（无 policy 的任务同样挂起，事件带 rule=danger:kill-by-name）。
+Stop-Process -Name、Get-Process … | Stop-Process（管道无 -Name）、pkill、
+killall）一律 ask——evaluate 矩阵 + runner 层（无 policy 的任务同样挂起，
+事件带 rule=danger:kill-by-name）。Git Bash（MSYS）的 //IM、//F //T 双
+斜杠写法同样命中（返工：曾整条绕过高危询问）；//PID 双斜杠按 PID 依旧
+不命中。
 """
 import queue
 import threading
@@ -351,7 +354,7 @@ def test_substitution_still_ask_with_redirect():
 # ---- L5：按名字批量杀进程，一律 ask（policy 压不掉；按 PID 不受影响）----
 
 KILL_ALLOW = {'allowCommands': ['^taskkill', '^pkill', '^Stop-Process',
-                                '^killall', '^echo\\b'],
+                                '^Get-Process', '^killall', '^echo\\b'],
               'default': 'allow'}
 
 
@@ -364,10 +367,16 @@ def exe_(command):
     'taskkill /f /im notepad.exe',
     'taskkill /F /T /IM chrome.exe',
     'taskkill /T /F /PID 1234',            # /F /T 组合：连PID也问（整棵进程树）
+    'taskkill //IM foo.exe',               # Git Bash 双斜杠：曾整条绕过高危询问
+    'taskkill //F //IM x',                 # 双斜杠混写：//F //IM
+    'taskkill //F //T //IM x',             # 全双斜杠：//F //T 组合
     'pkill -f edge',
     'killall chrome',
     'Stop-Process -Name msedge',
     'powershell -Command "Stop-Process -Name Edge"',
+    'Get-Process msedge | Stop-Process',   # 管道、无 -Name：同样按名字杀
+    'get-process edge | stop-process',     # 小写管道形态
+    'Get-Process -Name msedge | Stop-Process -Force',
 ])
 def test_kill_by_name_always_ask_even_if_policy_allows(command):
     """正例：段首命中 allowCommands、default=allow，也一律 ask。"""
@@ -378,7 +387,10 @@ def test_kill_by_name_always_ask_even_if_policy_allows(command):
 @pytest.mark.parametrize('command', [
     'taskkill /PID 1234',
     'taskkill /pid 1234 /f',                # 按 PID：连 /F 也不问
+    'taskkill //PID 1234',                  # Git Bash 双斜杠按 PID：照样不问
     'Stop-Process -Id 1234',
+    'Get-Process msedge',                   # 只看进程、不杀：不问
+    'Get-Process | Format-Table',           # 管道下游不是 Stop-Process：不问
     'echo 已清理完毕',
 ])
 def test_kill_by_pid_unaffected(command):
@@ -390,11 +402,17 @@ def test_kill_by_pid_unaffected(command):
 def test_kill_by_name_hit_labels():
     """killByNameHit：命中返回形态名（事件/审计用），不命中返回 ''。"""
     assert tp.killByNameHit({'command': 'taskkill /IM x'}) == 'taskkill /IM'
+    assert tp.killByNameHit({'command': 'taskkill //IM x'}) == 'taskkill /IM'
+    assert tp.killByNameHit({'command': 'taskkill //F //IM x'}) == 'taskkill /IM'
     assert tp.killByNameHit({'command': 'taskkill /T /F /PID 1'}) == 'taskkill /F /T'
     assert tp.killByNameHit({'command': 'Stop-Process -Name x'}) == 'Stop-Process -Name'
+    assert tp.killByNameHit({'command': 'Get-Process x | Stop-Process'}) \
+        == 'Get-Process | Stop-Process'
     assert tp.killByNameHit({'command': 'pkill x'}) == 'pkill'
     assert tp.killByNameHit({'command': 'killall x'}) == 'killall'
     assert tp.killByNameHit({'command': 'taskkill /PID 1'}) == ''
+    assert tp.killByNameHit({'command': 'taskkill //PID 1'}) == ''
+    assert tp.killByNameHit({'command': 'Get-Process x'}) == ''
     assert tp.killByNameHit({'command': 'ls'}) == ''
     assert tp.killByNameHit(None) == ''
     assert tp.killByNameHit({'path': 'x'}) == ''      # 非命令工具：不命中

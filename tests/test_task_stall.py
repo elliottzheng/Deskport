@@ -144,6 +144,26 @@ def test_tool_stall_silent_when_events_keep_coming(env):
                    for e in env.repo.get(tid)['events'])
 
 
+def test_tool_stall_under_one_minute_shows_seconds(env):
+    """L 返工：toolStallSec < 60（如 30s）——文案与指挥台行显示秒数，
+    不再是「0 分钟」/「? 分钟」。"""
+    env.monkeypatch.setattr(configMod, 'getToolStallSec', lambda: 30)
+    tid = _create(env)
+    now = time.time()
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['status'] = 'running'
+        task['_currentTool'] = {'name': 'Bash', 'since': now - 40}
+        task['lastActiveAt'] = now - 40
+        env.repo.save()
+    task_health._toolStall(now)
+    events = env.repo.get(tid)['events']
+    stall = [e for e in events if e.get('type') == 'status' and '无输出' in (e.get('text') or '')]
+    assert len(stall) == 1 and '30 秒' in stall[0]['text']
+    rows = [p for p in command_view.overview()['pending'] if p['kind'] == 'stall']
+    assert len(rows) == 1 and '30 秒' in rows[0]['detail']
+
+
 def test_tool_stall_disabled_by_config(env):
     """toolStallSec=0：关闭。"""
     tid = _stalledTask(env)

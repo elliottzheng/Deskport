@@ -66,12 +66,19 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, 'repo', repo)
     monkeypatch.setattr(store, 'taskRoot', lambda: str(tmp_path / 'taskroot'))
     monkeypatch.setattr(tasks_api.runner, '_startTask', lambda t, m: None)
+    # sweepOnce 打桩（L 返工）：sweeper 的 question 旁路 5s 内也会投递摘要，
+    # 不打桩「立即唤醒」的断言会被它带绿——拆掉 wakeNow 测试仍旧全过的假象。
+    # 要真 sweeper 的用例调 env.sweep()。在 create_app 前打桩，bindApp 拉起的
+    # 扫掠线程从此空转
+    realSweep = leads_inbox.sweepOnce
+    monkeypatch.setattr(leads_inbox, 'sweepOnce', lambda: None)
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
     client = app.test_client()
     assert client.post('/login', data={'password': PASSWORD}).status_code == 302
     return SimpleNamespace(client=client, fresh=app.test_client(), repo=repo,
-                           tmp=tmp_path, monkeypatch=monkeypatch)
+                           tmp=tmp_path, sweep=realSweep,
+                           monkeypatch=monkeypatch)
 
 
 def call(env, method, path, body=None, token=None):
@@ -299,9 +306,10 @@ def test_queued_message_auto_answers_question(env):
     assert users[-1]['text'] == '选乙方案'
 
 
-def test_plain_permission_still_notices_not_question(env):
-    """普通审批（非提问）不变：收件箱是 notice、没有 question 条目、队列
-    消息不当答复（仍等审批落定）。"""
+def test_plain_permission_still_escalates_not_question(env):
+    """普通审批（非提问）不当提问：收件箱是 escalation（批次 A 审批先上交
+    主管，合并 main 后替换同位置的 notice）、没有 question 条目、队列消息
+    不当答复（仍等审批落定）。"""
     L, _H, tok = _hostedLead(env)
     D, _task, agent, client = _subordinate(env, L, tok)
     params = {'toolCall': {'title': 'Bash', 'toolCallId': 'c-b1',
@@ -312,8 +320,10 @@ def test_plain_permission_still_notices_not_question(env):
                            'kind': 'reject_once'}]}
     thread = startPermission(env, D, agent, params=params)
     try:
-        entry = awaitEntry(env, L, 'notice')
-        assert '挂起审批' in entry['text']
+        entry = awaitEntry(env, L, 'escalation')
+        assert '请求审批' in entry['text']
+        assert not [e for e in leads_inbox.entriesAfter(L, 0, 'up')[0]
+                    if e.get('kind') == 'question']
         resp = call(env, 'post', '/api/tasks/%s/message' % D, {'text': '先等等'})
         assert resp.status_code == 202
         time.sleep(1.2)                       # 给等待循环几个跳：不能自动放行

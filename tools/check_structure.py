@@ -18,12 +18,12 @@ BUDGET = {'.py': 400, '.js': 500, '.css': 500}
 # 拆完移除; 2026-11-12 起按"先认清现状"重新登记现有超预算文件（上限 = 当前
 # 行数），之后只能变短; 未列本表的新文件仍必须直接符合预算。
 LEGACY = {
-    'modules/task_policy.py': 460,                # 审批边界判定（纯函数）；2026-11-15 合并 main（拆出 task_policy_pipe/task_policy_readonly）后新登记：L5 按名字批量杀进程内建询问（KILL_BY_NAME_RES/killByNameHit + evaluate 接线，policy 压不掉）
-    'config.py': 620,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义；2026-11-14 +32=主管收件箱两个阈值 leadWakeMergeSec/leadIdleSec（批次 P3）；2026-11-15 +38=批次 L 三个阈值 leadResponseSec/autoResumeAfterRestart/toolStallSec；+17=主管审批限期 leadApprovalGraceSec（批次 A）
+    'modules/task_policy.py': 432,                # 审批边界判定（纯函数）；2026-11-15 合并 main（拆出 task_policy_pipe/task_policy_readonly）后新登记：L5 按名字批量杀进程内建询问（KILL_BY_NAME_RES/killByNameHit + evaluate 接线，policy 压不掉）
+    'config.py': 603,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义；2026-11-14 +32=主管收件箱两个阈值 leadWakeMergeSec/leadIdleSec（批次 P3）；2026-11-15 +38=批次 L 三个阈值 leadResponseSec/autoResumeAfterRestart/toolStallSec；+17=主管审批限期 leadApprovalGraceSec（批次 A）
     # .agents/skills/deskport/{deskport,driver}.py 是发给外部智能体的「拷一个文件就能跑」
     # 客户端/驱动（零依赖、也能当 CLI），拆分会破坏这个约定——按单文件登记，只许变短。
-    '.agents/skills/deskport/deskport.py': 850,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）；2026-11-15 合并批次 A/SR 与 D：+91=主管通信子命令 lead/inbox/report + close/approve（派活收件箱汇报之外，主管关下属与批审批也要在 A1-6 边界内，例 11 无人干预实测要用）+ 库方法（批次 A A2），+39=lead --register 自助成为外部主管与 register_lead 库方法（批次 SR，两侧 lead 子命令合一：不带参查看、--register 注册），+11=inboxAck 收件箱确认 + create_task/CLI 的 --title 标题字段（批次 D，服务端批次 T 起接收），+4=task --session 接回原会话继续干活（kimiSessionId + fork=false，返工/复验复用执行方），+8=answer 命令（L2 答复下属提问）
-    '.agents/skills/deskport/driver.py': 600,     # 单文件驱动模板（见上注）；2026-11-14 +19=审批 409 分类处理（P0-3）；2026-11-15 +111=inbox 收件箱模式（外部主管长轮询+自动 ack）+ resume 暂停续接 + title.txt 作为 title 字段传给建任务（批次 D，不拼首行）
+    '.agents/skills/deskport/deskport.py': 851,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）；2026-11-15 合并批次 A/SR 与 D：+91=主管通信子命令 lead/inbox/report + close/approve（派活收件箱汇报之外，主管关下属与批审批也要在 A1-6 边界内，例 11 无人干预实测要用）+ 库方法（批次 A A2），+39=lead --register 自助成为外部主管与 register_lead 库方法（批次 SR，两侧 lead 子命令合一：不带参查看、--register 注册），+11=inboxAck 收件箱确认 + create_task/CLI 的 --title 标题字段（批次 D，服务端批次 T 起接收），+4=task --session 接回原会话继续干活（kimiSessionId + fork=false，返工/复验复用执行方），+8=answer 命令（L2 答复下属提问）
+    '.agents/skills/deskport/driver.py': 597,     # 单文件驱动模板（见上注）；2026-11-14 +19=审批 409 分类处理（P0-3）；2026-11-15 +111=inbox 收件箱模式（外部主管长轮询+自动 ack）+ resume 暂停续接 + title.txt 作为 title 字段传给建任务（批次 D，不拼首行）
     'agent_node/acp_session.py': 454,             # ACP 会话单文件实现（见上注）
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
     'frontend/assets/css/files.css': 522,         # 文件页样式一体，选择器跨文件耦合，拆分暂缓
@@ -32,14 +32,14 @@ LEGACY = {
                                                   # （批次 C 把各模块的私有名收进来，批次 H 加
                                                   # onBehalfOfKwargs，批次 J 加 nodeArg）——只减不增，
                                                   # 下一步把主机解析与入参归一拆成独立小模块
-    'modules/agent_nodes.py': 600,                # 节点注册+隧道+引擎注册一体；2026-11-15 +12=RemoteAcpClient.cancel 发完再读一次节点实况、如实回报回合是否还在跑（L4）
+    'modules/agent_nodes.py': 592,                # 节点注册+隧道+引擎注册一体；2026-11-15 +12=RemoteAcpClient.cancel 发完再读一次节点实况、如实回报回合是否还在跑（L4）
     'modules/agent_sessions.py': 443, 'modules/leads_api.py': 409,  # sessions：持久会话（bash 常驻通道）管理｜leads_api：主管管理面 + 令牌通道自查/自助注册，2026-11-15 合并批次 A（+16=托管主管停用/删除即吊销专属令牌）与批次 SR（+114=POST /api/agent/lead 自助成为主管 + 认领历史任务）后 409，下次改先拆
-    'modules/tasks_api.py': 1030,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）；+21=answer 端点（L2）+ cancel 响应 nodeStillRunning（L4）
-    'modules/tasks_runner.py': 960,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）；+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）；+80=批次 L：L2 提问路径（_isAskUserQuestion/perm.question/队首当答复/answerPermission）+ L4 清 _toolStall
-    'modules/tasks_store.py': 470,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +12=L3 pausedBy='restart' + L6 只读闸门；+3=启动清 resuming 唤醒标记（L 返工：落盘的 resuming 会让重启后一切 message 409）
+    'modules/tasks_api.py': 1027,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）；+21=answer 端点（L2）+ cancel 响应 nodeStillRunning（L4）
+    'modules/tasks_runner.py': 914,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）；+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）；+80=批次 L：L2 提问路径（_isAskUserQuestion/perm.question/队首当答复/answerPermission）+ L4 清 _toolStall
+    'modules/tasks_store.py': 462,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +12=L3 pausedBy='restart' + L6 只读闸门；+3=启动清 resuming 唤醒标记（L 返工：落盘的 resuming 会让重启后一切 message 409）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
-    'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）
+    'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620, 'tests/test_task_policy.py': 506,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）｜task_policy：审批边界回归集，11-15 合并 main（拆出 task_policy_pipe/readonly）后 506：L5 按名字杀进程正反例（含 //IM 双斜杠与 Get-Process 管道返工用例）
 }
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码

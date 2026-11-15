@@ -5,6 +5,10 @@
 内不续、每个任务只续一次、续接给主管留一条 notice、配置可关。续接本身
 打桩（runner._resumeWithMessage 记录调用）——起不起真会话由 R4/R5 的
 回归集覆盖，这里只验编排。
+
+L 返工（主控追加·必须修）：重启落在「唤醒中」（resuming=True 落盘）时，
+启动恢复必须清掉标记——否则任何 message 都被 409「会话正在唤醒，请稍候」
+挡死（线上实测 5 个任务）；清掉之后 message 正常续接。
 """
 import json
 import time
@@ -206,3 +210,32 @@ def test_auto_resume_disabled_by_config(env):
 
     task_health.tick(time.time())
     assert resumed == [] and repo2.get(tid)['pausedBy'] == 'restart'
+
+
+def test_restart_clears_resuming_then_message_resumes(env):
+    """L 返工（必须修）：重启落在「唤醒中」——resuming 落盘活过重启，
+    之后任何 message 都被 409「会话正在唤醒」挡死（线上实测 5 个任务）。
+    启动恢复清掉标记后，message 正常续接（202 + 真起 resume 会话线程）。
+    """
+    tid = _create(env)
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['sessionId'] = 'session_' + 'f' * 36
+        task['status'] = 'queued'          # _resumeWithMessage 把任务打 queued
+        task['resuming'] = True            # 重启正好落在唤醒中：标记落盘
+        env.repo.save()
+
+    repo2 = _restart(env)
+    assert repo2.get(tid)['resuming'] is False       # 启动恢复清掉唤醒标记
+    assert repo2.get(tid)['pausedBy'] == 'restart'   # 照常走 L3 恢复路径
+
+    started = []
+    env.monkeypatch.setattr(
+        runner, '_sessionThread',
+        lambda task, manifest, resume=False, firstMessage=None, **kw:
+        started.append((task['id'], resume, firstMessage)))
+    resp = env.client.post('/api/tasks/%s/message' % tid, headers=H,
+                           data=json.dumps({'text': '重启后续上'}),
+                           content_type='application/json')
+    assert resp.status_code == 202, resp.get_json()
+    assert started == [(tid, True, '重启后续上')]

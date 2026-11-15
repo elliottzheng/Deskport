@@ -180,6 +180,14 @@ class TaskRepository:
                 if task.get('pendingPermission'):
                     task['pendingPermission'] = ''
                     dirty = True
+                # L 返工（主控追加·必须修）：resuming 唤醒标记同样会落盘——
+                # 重启正好落在「唤醒中」（如等节点上一轮结束）时，标记活过重启，
+                # 之后任何 message 都被 _resumeWithMessage 挡在 409「会话正在
+                # 唤醒，请稍候」（线上实测 5 个任务全卡死）。启动恢复一律清掉；
+                # L3 的自动续接在 60s 后的巡检里跑，那时标记早已清干净
+                if task.get('resuming'):
+                    task['resuming'] = False
+                    dirty = True
                 if task.get('status') in ('queued', 'running', 'waiting'):
                     canResume = bool(task.get('sessionId'))
                     task_state.transition(

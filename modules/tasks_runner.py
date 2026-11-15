@@ -485,6 +485,7 @@ def _handleAcpPermission(task, agent, params, requestId):
     # 批次 A（A4-1）立刻上交主管（escalation 条目 + 立即唤醒，替换 P3 里
     # 同一位置的 notice——不要两条都写；主管自己的托管任务另由
     # leads_escalation 补 down 用户可见提示；没绑主管的零条目）
+    escLead = ''                              # 提问不上交：限期只对 escalation 生效
     if isQuestion:
         lead_notices.emitQuestion(
             task, '任务 %s 提问：%s'
