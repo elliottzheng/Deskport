@@ -7,7 +7,8 @@
       可选 allowRemoteUpload: true 才追加 upload_remote（往远端执行点投
       附件，见 agent_share）；缺省不授，响应里的 scopes 如实反映。
       密码与网页登录同一来源(config.getPassword)同一比对方式; 令牌只在
-      这次响应出现, 任何接口都不再回显。同设备名重登=换新令牌, 旧令牌即废。
+      这次响应出现, 任何接口都不再回显。同设备名重登=换新令牌, 旧令牌即废
+      ——60 秒窗口内的多次登录例外, 视为同一次登录的并发尝试(见 _issueDevice)。
     POST /api/agent/device/logout   凭设备令牌自吊销（智能体令牌 403）
     管理面（设置页, 会话态, 路由在 modules/settings.py）:
       GET /api/settings/devices; POST /api/settings/devices/revoke {id}
@@ -17,7 +18,11 @@
 也不放项目目录（本机清理进程删过项目目录文件，SSH 状态因此迁出，见
 config.py 头注）；stateDirName 自带 dev/prod 隔离。条目:
     {id, name, tokenHash(SHA-256), kind:'device', scopes:['upload','share'],
-     createdAt, lastUsedAt, lastIp}
+     createdAt, lastUsedAt, lastIp, burstUntil(epoch 秒), burstHashes[]}
+    burstUntil/burstHashes 是并发登录窗口(批次 DL): 窗口内同名设备的多次
+    登录都在同一条目上追加 burstHashes(与 tokenHash 并列有效), 任一令牌
+    首次被用于鉴权即收敛到该 hash、其余 burst 即废; 窗口外再登照旧整条
+    替换, 旧令牌(含未收敛的 burst)即刻失效。
 令牌校验经 agent_api.agentFromRequest 回退进来：设备令牌与智能体令牌走
 同一个鉴权入口/scope 白名单——upload/share 放行，exec 与 /api/tasks 照常 403。
 
@@ -43,6 +48,8 @@ from modules.agent_api import (SCOPE_SHARE, SCOPE_UPLOAD, SCOPE_UPLOAD_REMOTE,
                                agentFromRequest, blueprint, tokenHash)
 
 DEVICE_SCOPES = [SCOPE_UPLOAD, SCOPE_SHARE]   # 默认不授 upload_remote
+BURST_WINDOW_SECONDS = 60      # 同名设备多次登录视为并发尝试的窗口(批次 DL)
+MAX_BURST_HASHES = 4           # 窗口内 burst 令牌上限(tokenHash 之外)
 
 DEVICES_FILE = 'devices.json'
 MAX_DEVICES = 20
@@ -62,6 +69,8 @@ _ipFailures = {}
 _globalFailures = []
 _globalLockedUntil = 0.0
 _rateLock = threading.Lock()
+_convergeLock = threading.Lock()   # 收敛写盘串行化（并发首次使用）
+_issueLock = threading.Lock()      # 登录签发串行化（并发登录防丢更新）
 
 
 # ---------------------------------------------------------------- 存储
@@ -101,13 +110,30 @@ def _saveDevices(devices):
 
 
 def _issueDevice(devices, name, token, ip, scopes=None):
-    """同设备名重登 = 替换旧条目（旧令牌即刻失效）。返回 createdAt。"""
+    """同名设备登录：窗口内（BURST_WINDOW_SECONDS）视为同一次登录的并发
+    尝试——新令牌追加进同一条目的 burstHashes，与 tokenHash 并列有效
+    （上限 MAX_BURST_HASHES，超出丢最旧）；窗口外的登录照旧整条替换，
+    旧令牌（含未收敛的 burst）即刻失效。返回本次登录时间。"""
+    now = time.time()
     nowText = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     kept = [d for d in devices if d.get('name') != name]
+    existing = next((d for d in devices if d.get('name') == name), None)
+    if existing is not None and now < float(existing.get('burstUntil') or 0):
+        entry = dict(existing)
+        bursts = [str(h or '') for h in (entry.get('burstHashes') or [])]
+        bursts.append(tokenHash(token))
+        del bursts[:max(0, len(bursts) - MAX_BURST_HASHES)]
+        entry['burstHashes'] = bursts
+        entry['scopes'] = list(scopes or DEVICE_SCOPES)
+        entry['lastIp'] = ip
+        kept.append(entry)
+        _saveDevices(kept)
+        return nowText
     kept.append({'id': secrets.token_hex(8), 'name': name,
                  'tokenHash': tokenHash(token), 'kind': 'device',
                  'scopes': list(scopes or DEVICE_SCOPES), 'createdAt': nowText,
-                 'lastUsedAt': '', 'lastIp': ip})
+                 'lastUsedAt': '', 'lastIp': ip, 'burstHashes': [],
+                 'burstUntil': now + BURST_WINDOW_SECONDS})
     _saveDevices(kept)
     return nowText
 
@@ -117,6 +143,15 @@ def _cleanDeviceName(raw):
     if not text or len(text) > MAX_NAME or any(c in text for c in BAD_NAME_CHARS):
         return None
     return text
+
+
+def _capError(devices, name):
+    """设备数满员且这是新设备名时的 400 应答；否则 None。"""
+    fresh = not any(d.get('name') == name for d in devices)
+    if fresh and len(devices) >= MAX_DEVICES:
+        return jsonify({'error': '设备数量已达上限 %d, 请先在设置页吊销不用的'
+                                 '设备' % MAX_DEVICES}), 400
+    return None
 
 
 def publicDevices():
@@ -153,13 +188,50 @@ def revokeByHash(digest):
 
 def agentFromDevices(digest):
     """agent_api.agentFromRequest 的回退查询：devices.json 按 tokenHash
-    找设备条目，命中视同智能体令牌条目（kind='device', scopes=['upload']）。"""
+    或 burstHashes 找设备条目，命中即收敛到该 hash（窗口内并发登录的令牌
+    第一次被用于鉴权即收敛，其余 burst 即废），并回写 lastUsedAt/lastIp。"""
     for device in _loadDevices():
-        stored = str(device.get('tokenHash') or '')
-        if stored and hmac.compare_digest(stored, digest):
-            _touch(device)
-            return dict(device)
+        if str(device.get('kind') or '') != 'device':
+            continue
+        if not _matchesHash(device, digest):
+            continue
+        _convergeTo(device, digest)
+        _touch(device)
+        return dict(device)
     return None
+
+
+def _matchesHash(device, digest):
+    """tokenHash 或任一 burstHashes 命中即算这个令牌有效。"""
+    stored = str(device.get('tokenHash') or '')
+    if stored and hmac.compare_digest(stored, digest):
+        return True
+    for h in device.get('burstHashes') or []:
+        if h and hmac.compare_digest(str(h), digest):
+            return True
+    return False
+
+
+def _convergeTo(device, digest):
+    """窗口内令牌第一次被成功用于鉴权：条目只保留这一个 hash，其余 burst
+    立即失效。写完同步内存条目（供 _touch 与返回值按新 hash 定位）；已收敛
+    或条目已被替换（并发下别的请求先动手）则不重复写盘。"""
+    if not (device.get('burstHashes') or []):
+        return
+    with _convergeLock:
+        devices = _loadDevices()
+        for item in devices:
+            if str(item.get('id') or '') != str(device.get('id') or ''):
+                continue
+            if not (item.get('burstHashes') or []) \
+                    or not _matchesHash(item, digest):
+                break
+            item['tokenHash'] = digest
+            item['burstHashes'] = []
+            _saveDevices(devices)
+            device['tokenHash'] = digest
+            device['burstHashes'] = []
+            break
 
 
 def _touch(device):
@@ -231,11 +303,9 @@ def deviceLogin():
     if name is None:
         return jsonify({'error': 'device 需为 1-%d 个字符, 不能含 < > " \' '
                                  '或换行' % MAX_NAME}), 400
-    devices = _loadDevices()
-    fresh = not any(d.get('name') == name for d in devices)
-    if fresh and len(devices) >= MAX_DEVICES:
-        return jsonify({'error': '设备数量已达上限 %d, 请先在设置页吊销不用的'
-                                 '设备' % MAX_DEVICES}), 400
+    capErr = _capError(_loadDevices(), name)
+    if capErr is not None:
+        return capErr
     password = str(data.get('password') or '')
     expect = config.getPassword()
     if expect and hmac.compare_digest(expect.encode(), password.encode()):
@@ -243,7 +313,14 @@ def deviceLogin():
         scopes = list(DEVICE_SCOPES)
         if data.get('allowRemoteUpload') is True:
             scopes.append(SCOPE_UPLOAD_REMOTE)   # 显式勾选才授远端投递
-        createdAt = _issueDevice(devices, name, token, ip, scopes)
+        with _issueLock:
+            # 锁内重读再签: 并发登录(raceLogin 三入口齐发)若各持各的旧快照,
+            # 后写的会把前面的条目整个覆盖掉——窗口内并发登录必须落在同一条目上。
+            devices = _loadDevices()
+            capErr = _capError(devices, name)
+            if capErr is not None:
+                return capErr
+            createdAt = _issueDevice(devices, name, token, ip, scopes)
         targets = [{'id': t['id'], 'name': t['name']}
                    for t in config.getUploadTargets()]
         events.log('device.login', name, 'ok',
