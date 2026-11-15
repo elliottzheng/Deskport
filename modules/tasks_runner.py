@@ -7,11 +7,12 @@ import atexit
 import json
 import logging
 import queue
+import re
 import threading
 import time
 
 import config
-from modules import leads_inbox, sensitive_values
+from modules import leads_escalation, leads_inbox, lead_notices, sensitive_values, session_adopt, task_drain
 from modules import tasks_store as store
 from modules import task_events, task_state, task_node
 from modules import task_engines
@@ -31,13 +32,16 @@ def _appendAssistantText(task, text):
     增量订阅者（SSE/轮询）按 seq 去重，若逐 chunk 合并进同一条事件，
     订阅者会停在首推时刻的部分文本。回合结束时 _flushAssistant 以单条
     完整事件落卡，订阅者天然拿到终版；log 流水仍逐 chunk 可追溯。
+
+    批 PS2：chunk 路径不 save 也不 touch——lastText 随轮末 _flushAssistant
+    的 assistant 事件与 _promptOnce 的状态变迁落盘（规格：轮中崩溃时
+    lastText 停在轮初，jsonl 有 chunk 全文可追溯，方案 §6 风险 7 已列明）。
     """
     if not text:
         return
     with store.repo.lock:
         task['_assistantBuf'] = (task.get('_assistantBuf') or '') + text
         task['lastText'] = task['_assistantBuf'][:300]
-        store.repo.save()
     store.repo.log_write(task, {'at': store._now(), 'type': 'assistant_chunk',
                                 'text': text})
 
@@ -134,11 +138,12 @@ def _backfillToolArgs(task, callId, argsText):
     故回填时往 jsonl 追加一行**不带 seq** 的 tool_args_patch 补丁记录
     （targetSeq=被补事件的 seq，args 与内存落卡逐字一致），重启回填与
     /event/<seq> 按它还原；补丁不占事件序号，seq 校正不受影响。
-    落盘的 agent_tasks.json 已剥离 events，store.repo.save() 对回填是空转
-    （批 1 起删除）——args 以 jsonl 补丁行为准。
 
     回填判定（独立验收 2026-11-15 追加）：残片首帧（含 U 批实测的
     "{\"command\": " 这种 11 字半截 JSON）也要补，规则见 _needsBackfill。
+
+    批 PS2 确认：回填只改内存 + 写 jsonl 补丁行，不触发 save/touch——落盘
+    快照已剥离 events（批 PS1），args 以 jsonl 补丁行为准，重启后按它还原。
     """
     if not callId or not argsText:
         return
@@ -214,6 +219,7 @@ def _handleAcpUpdate(task, update):
         rawText = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
         with store.repo.lock:
             task['_currentTool'] = None   # 工具收尾（R4-8 currentTool 清空）
+            task['_toolStall'] = None     # L4：卡住标记随之清除（指挥台不再待办）
         text, truncated = task_events.truncateEvent('tool_result', rawText)
         store.repo.append_event(task, 'tool_result',
                      text=text, full=rawText, truncated=truncated,
@@ -237,7 +243,7 @@ def _handleAcpUpdate(task, update):
         if names:
             with store.repo.lock:
                 task['commands'] = names[:200]
-                store.repo.save()
+                store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
         return
     if kind == 'session_info_update':
         # Kimi 会用首轮 prompt 自动起标题（现在开头是平台约束），覆盖后任务名就没意义了。
@@ -253,6 +259,75 @@ def _handleAcpUpdate(task, update):
 BACKGROUND_DENY_TEXT = '后台任务被禁用，请在前台运行'
 ORPHAN_DENY_TEXT = ('该审批的 callId 在本任务的工具调用记录里找不到'
                     '（后台幽灵审批），已自动拒绝')
+
+
+def _isAskUserQuestion(title, args):
+    """是否 AskUserQuestion 提问（L2）：工具名命中，或参数形如 {questions:[…]}。"""
+    name = re.sub(r'[\s_-]', '', str(title or '')).lower()
+    if 'askuserquestion' in name:
+        return True
+    return isinstance(args, dict) and isinstance(args.get('questions'), list)
+
+
+def _approvePermission(agent, requestId=''):
+    """把挂起审批按"允许"放行（L2）：requestId 给空 = 当前挂起的那条。
+
+    返回 (ok, 错误消息)。与 /permission 端点同一机制（置 permDecision +
+    唤醒等待循环）——事件由等待循环落卡，不在这里重复写。
+    """
+    if not agent:
+        return False, '任务没有活动会话，无法处理这条审批'
+    with store.repo.lock:
+        perm = agent.get('perm') or {}
+        if not perm or (requestId and perm.get('requestId') != requestId):
+            return False, '授权请求已失效（可能已超时或已处理）'
+        optionId = next((str(o.get('optionId') or '') for o in perm.get('options') or []
+                         if o.get('kind') in ('allow_once', 'allow_always')), '')
+        if not optionId:
+            return False, '这条审批没有可放行的选项'
+        decision = agent.get('permDecision')
+        if decision is None or decision.get('value') is not None:
+            return False, '授权请求已失效（可能已超时或已处理）'
+        decision['value'] = optionId
+        ev = agent.get('permEvent')
+    if ev is not None:
+        ev.set()
+    return True, ''
+
+
+def _awaitPermissionCleared(task, timeout=2.0):
+    """等等待循环跳出并清掉 pendingPermission（有界）；清了返回 True。
+
+    不清（等待循环没在跑/卡住）也照常投递——审批侧已落定，消息作为普通
+    下一条到达，最坏是晚一轮，不会丢。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with store.repo.lock:
+            if not task.get('pendingPermission'):
+                return True
+        time.sleep(0.05)
+    return False
+
+
+def answerPermission(task, requestId, text, by=''):
+    """L2 答复入口（/answer 端点用）：审批按允许放行 + 答复 steer 立即投递。
+
+    先放行再投递——steer 的队首消息会被 pendingPermission 闸门挡住
+    （_popQueuedMessage），顺序反了答复就躺在队列里干等审批超时。
+    返回 (payload, status)。
+    """
+    with store.repo.lock:
+        agent = store.repo.agentOf(task.get('id') or '')
+    ok, err = _approvePermission(agent, requestId)
+    if not ok:
+        return {'error': err}, 409
+    _awaitPermissionCleared(task)
+    from modules import tasks_api      # 延迟导入：tasks_api 模块级 import 本模块
+    payload, code = tasks_api.deliverMessage(task, text, 'steer', by=by)
+    payload = dict(payload or {})
+    payload['answered'] = True
+    return payload, code
 
 
 def _knownToolCall(task, callId):
@@ -306,8 +381,14 @@ def _handleAcpPermission(task, agent, params, requestId):
     # 且 tool_call 参数是 JSON 字符串——为空就按 callId/最近调用回查，字符串
     # 统一解析成对象，否则引号剥离会把整段 JSON 当引号内容吃掉。
     # 流式形状（模型在 tool_call 之后才吐参数）下按 callId 记下的可能是空串：
-    # 空的不认，退回审批自带/流式文本里的真参数（R5-9：旧的"空也认"会盖掉它）
-    if callId and byCall:
+    # 空的不认，退回审批自带/流式文本里的真参数（R5-9：旧的"空也认"会盖掉它）。
+    # 例 11 实测（glm-5.3-flash）：tool_call 首帧 content 就是 "{"（流式残片，
+    # 完整快照在同 callId 的 tool_call_update 里，先于 request_permission 到）——
+    # 残片是解析不成 JSON 的字符串，直接用它 policy 只能拿到 "{" 判不了，边界内
+    # 的命令也会挂起等人工（托管主管无人干预链就是这么断的）。所以残片让位给
+    # streamed 的完整快照；streamed 也没有才认残片
+    staleShard = isinstance(byCall, str) and _parseArgs(byCall) is None
+    if callId and byCall and not (staleShard and streamed):
         rawInput = byCall               # 按 callId 精确回查：参数记下了就用
     if not rawInput and callId and streamed:
         parsed = _parseArgs(streamed)
@@ -341,6 +422,14 @@ def _handleAcpPermission(task, agent, params, requestId):
         options.append({'optionId': opt.get('optionId') or '',
                         'name': opt.get('name') or '',
                         'kind': opt.get('kind') or ''})
+    # L2：AskUserQuestion 提问（工具名或参数形如 {questions:[…]}）——作为
+    # question 进主管收件箱并立即唤醒，答复走 /answer（本模块 answerPermission）
+    isQuestion = _isAskUserQuestion(title, rawInput)
+    allowOptionId = next((o['optionId'] for o in options
+                          if o.get('kind') in ('allow_once', 'allow_always')), '')
+    # L5：按名字批量杀进程的内建询问——所有任务一律 ask，policy 压不掉；
+    # 规则名随 permission_request 事件落卡（无 policy 的任务靠它留痕）
+    killRule = task_policy.killByNameHit(rawInput)
 
     policy = task.get('policy') or {}
     peerJudged = False
@@ -378,7 +467,10 @@ def _handleAcpPermission(task, agent, params, requestId):
     with store.repo.lock:
         agent['perm'] = {'requestId': str(requestId), 'seq': 0,
                          'title': title, 'options': options,
-                         'callId': callId, 'args': argsForEvent, 'paths': paths}
+                         'callId': callId, 'args': argsForEvent, 'paths': paths,
+                         # L2：提问标记——_popQueuedMessage 据此把队首消息
+                         # 当答复放行（轮间挂起的提问不再干等到超时）
+                         'question': {'title': title} if isQuestion else None}
         agent['permDecision'] = decision
         agent['permEvent'] = threading.Event()
         task['pendingPermission'] = str(requestId)
@@ -388,15 +480,24 @@ def _handleAcpPermission(task, agent, params, requestId):
         store.repo.evCond.notify_all()
     ev = store.repo.append_event(task, 'permission_request', requestId=str(requestId),
                       text='等待你授权：' + title, name=title, options=options,
-                      callId=callId, args=argsForEvent, paths=paths)
+                      callId=callId, args=argsForEvent, paths=paths,
+                      **({'rule': 'danger:kill-by-name'} if killRule else {}))
     with store.repo.lock:
         if agent.get('perm'):
             agent['perm']['seq'] = ev.get('seq')
-    # 批次 P3 触发点（2026-11-14）：挂起审批 → 主管收件箱 notice（纯提醒，
-    # 审批沿链上行是 P5）
-    leads_inbox.emit(task, 'notice', '任务 %s 挂起审批：%s（requestId %s）'
-                                    '——纯提醒，路由在 P5'
-                     % (task['id'][:8], title, requestId))
+    # L2 触发点（2026-11-15）：提问进主管收件箱并立即唤醒；其余审批按
+    # 批次 A（A4-1）立刻上交主管（escalation 条目 + 立即唤醒，替换 P3 里
+    # 同一位置的 notice——不要两条都写；主管自己的托管任务另由
+    # leads_escalation 补 down 用户可见提示；没绑主管的零条目）
+    escLead = ''                              # 提问不上交：限期只对 escalation 生效
+    if isQuestion:
+        lead_notices.emitQuestion(
+            task, '任务 %s 提问：%s'
+            % (task['id'][:8], lead_notices.questionText(title, rawInput)),
+            requestId)
+    else:
+        escLead = leads_escalation.escalatePermission(task, title, argsForEvent,
+                                                      str(requestId))
     try:
         timeoutSec = int((policy or {}).get('timeoutSec')
                          if (policy or {}).get('timeoutSec') is not None
@@ -404,18 +505,44 @@ def _handleAcpPermission(task, agent, params, requestId):
     except (TypeError, ValueError):
         timeoutSec = config.getTaskPermissionTimeoutSec()
     deadline = store._now() + timeoutSec if timeoutSec > 0 else None
+    answeredFromQueue = False
+    # 批次 A（A4-3）：主管限期。期限内没决定 → 补一条 notice「审批已上交
+    # 用户」，审批继续挂着、不自动拒绝（用户的「等你处理」按
+    # pendingPermission 列出）；主管仍可在期限内补批
+    graceSec = config.getLeadApprovalGraceSec()
+    graceAt = (store._now() + graceSec) if (escLead and graceSec > 0) else None
+    handedOver = False
     while True:
         with store.repo.lock:
             if decision['value'] is not None:
                 break
             if task.get('closedByUser') or task.get('status') == 'closed':
                 break
+            if isQuestion and allowOptionId and task.get('messageQueue'):
+                # L2：挂起的是提问且有排队消息 → 队首消息当作答复：按"允许"
+                # 放行并打断当前轮，轮末 drain 立即投递（不再干等到超时）
+                decision['value'] = allowOptionId
+                answeredFromQueue = True
+                break
+        if graceAt is not None and not handedOver and store._now() >= graceAt:
+            # 主控追加：锁外重读一次决定——正好在这一瞬落定（主管批了/任务
+            # 关了）就不再补「已上交用户」，那条 notice 会是假的
+            with store.repo.lock:
+                settled = decision['value'] is not None \
+                    or task.get('closedByUser') or task.get('status') == 'closed'
+            if not settled:
+                handedOver = True
+                leads_escalation.escalationHandedOver(task, str(requestId),
+                                                      graceSec)
         if deadline is not None and store._now() >= deadline:
             break
         agent['permEvent'].wait(0.5)
         agent['permEvent'].clear()
     with store.repo.lock:
         value = decision['value']
+        # 批次 A（A4-4）：谁批的留痕——taskPermission 记下决定者（主管令牌名
+        # / 面板），结果事件带 by；超时/取消没有决定者，不带这个键
+        decidedBy = str(decision.get('by') or '')
         agent['perm'] = None
         task['pendingPermission'] = ''
         backlog = bool(task.get('messageQueue'))
@@ -428,17 +555,30 @@ def _handleAcpPermission(task, agent, params, requestId):
             agent['queue'].put({'type': 'drain'})
         except Exception:
             pass
+    if answeredFromQueue:
+        # 队首答复已放行：打断当前轮，让轮末 drain 立刻把它投出去（steer 语义）
+        client = agent.get('client')
+        if client is not None:
+            try:
+                client.cancel()
+            except Exception:
+                pass
     if value is None:
-        store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                     status='timeout', text='授权超时，已拒绝：' + title)
-        return None
-    if value == '__deny__':
-        store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                     status='denied', text='你拒绝了：' + title)
-        return None
+        status, text = 'timeout', '授权超时，已拒绝：' + title
+    elif value == '__deny__':
+        status, text = 'denied', '你拒绝了：' + title
+    else:
+        status, text = 'approved', '已允许：' + title
+    # 批次 A（A4-4）：结果事件带 by（决定者：主管令牌名 / 面板）
+    byKw = {'by': decidedBy} if decidedBy else {}
     store.repo.append_event(task, 'permission_result', requestId=str(requestId),
-                 status='approved', text='已允许：' + title)
-    return value
+                 status=status, text=text, **byKw)
+    # 主控追加：审批落定的唯一汇集点——标记对应 escalation 已处理，未读计数
+    # / L1 提醒 / 指挥台徽标从此不再拿它当"主管好久没处理"（线上实测堆过
+    # 50 多条已批完的 escalation）
+    leads_escalation.resolvePermission(task, str(requestId),
+                                       decidedBy or status)
+    return None if value in (None, '__deny__') else value
 
 
 def _afterWorklineTurn(task):
@@ -461,10 +601,10 @@ def _afterWorklineTurn(task):
         already = bool(task.get('contextHigh'))
         if not high and already and info['ratio'] < 0.5:
             task['contextHigh'] = False
-            store.repo.save()
+            store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
         elif high and not already:
             task['contextHigh'] = True
-            store.repo.save()
+            store.repo.touch()
     if high and not already:
         store.repo.append_event(
             task, 'status',
@@ -475,6 +615,8 @@ def _afterWorklineTurn(task):
 
 
 def _promptOnce(task, client, text, first=False):
+    if task_drain.waitWhileDraining(task):
+        return False        # 排空期间被关闭：这一轮不开，交回会话循环收尾
     if not first and task.get('workline'):
         tail = worklines_store.turnTail(task)
         if tail:
@@ -507,6 +649,7 @@ def _promptOnce(task, client, text, first=False):
         if int(turn.get('finalLen') or 0):
             report += '，终稿 %d 字' % int(turn.get('finalLen'))
         leads_inbox.emit(task, 'report', report)
+    return True
 
 
 def _markTurnKind(task, seq0):
@@ -525,7 +668,8 @@ def _markTurnKind(task, seq0):
                             'empty': tools == 0 and not said
                             and not (task.get('lastText') or '').strip(),
                             'silent': tools > 0 and not said, 'at': store._now()}
-        store.repo.save()
+        store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush（轮末的
+        # WAITING 变迁 save 会把它一起带走，见 _promptOnce）
     # 批次 P3 触发点（2026-11-14）：空转/静默轮 → 主管收件箱 failure
     if not task.get('closedByUser') and (task['lastTurn']['empty']
                                           or task['lastTurn']['silent']):
@@ -540,9 +684,16 @@ def _popQueuedMessage(task):
 
     两个投递闸门：有 live 挂起审批时不投（R4-3c——旧审批 5 分钟超时拒绝
     会把刚开的新一轮带死，等审批落定后的唤醒信号再投）；用户已关闭任务
-    不投。"""
+    不投。例外（L2）：挂起的审批是提问（AskUserQuestion）时，队首消息当作
+    答复——按"允许"放行；投递由清完标记后的 backlog 信号触发再次 drain。
+    """
     with store.repo.lock:
         if task.get('pendingPermission') or task.get('closedByUser'):
+            if task.get('pendingPermission') and task.get('messageQueue'):
+                agent = store.repo.agentOf(task.get('id') or '')
+                perm = (agent.get('perm') if agent else None) or {}
+                if perm.get('question'):
+                    _approvePermission(agent)
             return None
         mq = task.get('messageQueue') or []
         if not mq:
@@ -554,16 +705,22 @@ def _drainQueuedMessages(task, client):
     """把持久化队列 task['messageQueue'] 逐条投递，每条一轮 prompt
     （与手动续聊同链路）。轮中排队（R5-5）在每轮结束和每次唤醒后清队；
     steer 插话因在队首而优先投递。条目带 by 时转发进 user 事件（补 4，
-    与直唤醒路径同字段）；老形状条目没这个键，行为不变。"""
+    与直唤醒路径同字段）；老形状条目没这个键，行为不变。
+
+    排空期间（批次 DR）不开新一轮：消息留在持久队列，排空结束后由
+    _wakeQueuedAgents 的唤醒信号回来续投。"""
     n = 0
     while True:
+        if task_drain.draining():
+            return n
         msg = _popQueuedMessage(task)
         if msg is None:
             return n
         store.repo.append_event(task, 'user', text=msg.get('text') or '',
                                 **({'steer': True} if msg.get('steer') else {}),
                                 **({'by': msg['by']} if msg.get('by') else {}))
-        _promptOnce(task, client, msg.get('text') or '')
+        if not _promptOnce(task, client, msg.get('text') or ''):
+            return n
         store.repo.append_event(task, 'status', text='这轮结束，等你继续')
         n += 1
 
@@ -587,7 +744,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
         with store.repo.lock:
             store.repo.setRunning(taskId, client)
             store.repo.setAgent(taskId, agent)
-        sid = client.start(session_id=task.get('sessionId') or None)
+        sid = session_adopt.startSession(client, task)
         with store.repo.lock:
             task['sessionId'] = sid
             task['resume'] = True
@@ -609,7 +766,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             # liveFrom 之后的事件才是本轮 live 的（R4-5a #3）：wait 重建
             # pending 只认这条水位线之后产生的 permission_request
             task['liveFrom'] = task.get('seq', 0)
-            store.repo.save()
+            store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
         if resume:
             _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
             if firstMessage:
@@ -617,8 +774,9 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                 # 重启前排队未投的消息先投（入队时间比本次续聊更早）
                 _drainQueuedMessages(task, client)
                 store.repo.append_event(task, 'user', text=firstMessage)
-                _promptOnce(task, client, firstMessage)
-                store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+                if _promptOnce(task, client, firstMessage):
+                    store.repo.append_event(task, 'status',
+                                            text='这轮结束，等你继续')
         else:
             firstText = store._promptFor(task, manifest,
                                          task.get('worklineBlock') or '')
@@ -627,8 +785,8 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                 task, 'user',
                 text=firstText if task.get('workline')
                 else (task.get('prompt') or ''))
-            _promptOnce(task, client, firstText, first=True)
-            store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+            if _promptOnce(task, client, firstText, first=True):
+                store.repo.append_event(task, 'status', text='这轮结束，等你继续')
         _drainQueuedMessages(task, client)   # 轮中排队的消息，轮一结束就投
         while True:
             item = agent['queue'].get()
@@ -641,8 +799,9 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
                     # 人以为是用户说的）；缺省不带这个键，行为不变
                     store.repo.append_event(task, 'user', text=text,
                                             **({'by': item['by']} if item.get('by') else {}))
-                    _promptOnce(task, client, text)
-                    store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+                    if _promptOnce(task, client, text):
+                        store.repo.append_event(task, 'status',
+                                                text='这轮结束，等你继续')
             # 任何唤醒（message/drain 信号）后先清持久化队列（R5-5）
             _drainQueuedMessages(task, client)
     except Exception as e:
@@ -731,7 +890,7 @@ def _resumeWithMessage(task, text):
         finally:
             with store.repo.lock:
                 task['resuming'] = False
-                store.repo.save()
+                store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
     threading.Thread(target=run, daemon=True).start()
 
     # 唤醒看门狗（R4-3c 复测缺陷）：session/load 可能阻塞在被其他活进程
@@ -740,6 +899,10 @@ def _resumeWithMessage(task, text):
     def watchdog():
         deadline = time.monotonic() + RESUME_WATCHDOG_SEC
         while time.monotonic() < deadline:
+            if task_drain.draining():
+                # 排空期间唤醒等待（闸门）不计超时：否则部署一长，resume 会被
+                # 看门狗打回 paused，与排空语义打架（批次 DR）
+                deadline = time.monotonic() + RESUME_WATCHDOG_SEC
             with store.repo.lock:
                 if not task.get('resuming') or task.get('status') != 'queued':
                     return   # 唤醒线程自己完成了/已进入其它状态

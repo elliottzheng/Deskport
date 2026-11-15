@@ -2,10 +2,11 @@
 """批次 P3 收件箱：存储与触发点（例子 2/9–12/15/16/18）。
 
 从 test_leads_inbox.py 按主题拆出（批次 P3b，断言逐字未改）：runner 触发点
-落的条目（轮末 report / 空转·静默 failure / 挂起审批 notice / 线程退出 /
-用户关闭）、存储上限与并发写、web 重启恢复不误报。全部桩化：config.statePath
-与任务仓储指到 tmp，唤醒不起真 kimi；后台扫掠线程（首个 create_app 时起的
-进程级线程）在夹具里换成空操作——否则 5s 一跳的后台 tick 会和断言竞速。
+落的条目（轮末 report / 空转·静默 failure / 挂起审批 escalation（批次 A A4-1
+起，替换原 notice）/ 线程退出 / 用户关闭）、存储上限与并发写、web 重启恢复
+不误报。全部桩化：config.statePath 与任务仓储指到 tmp，唤醒不起真 kimi；后台
+扫掠线程（首个 create_app 时起的进程级线程）在夹具里换成空操作——否则 5s 一跳
+的后台 tick 会和断言竞速。
 """
 import json
 import os
@@ -204,8 +205,9 @@ def test_unbound_task_writes_nothing(env):
 
 # ---------------------------------------------------------------- 例 9–12（触发点）
 
-def test_permission_suspend_appends_notice(env):
-    """例 9：挂起审批 → 箱内一条 notice，含工具名与 requestId。"""
+def test_permission_suspend_escalates_to_lead(env):
+    """例 9 + 批次 A A4-1：挂起审批 → 箱内一条 escalation（含工具名与
+    requestId），替换 P3 同位置的 notice（规格明文：不要两条都写）。"""
     login(env.client)
     tok = newToken(env, 'T1')
     L = newLead(env, '甲')
@@ -222,9 +224,10 @@ def test_permission_suspend_appends_notice(env):
     entries, _ = inboxEntries(env, L)
     assert len(entries) == 1
     entry = entries[0]
-    assert entry['kind'] == 'notice'
+    assert entry['kind'] == 'escalation' and entry['dir'] == 'up'
     assert tid[:8] in entry['text'] and 'Bash' in entry['text']
-    assert 'requestId req-9' in entry['text'] and '纯提醒' in entry['text']
+    assert 'requestId req-9' in entry['text']
+    assert entry['ref'] == {'task': tid, 'requestId': 'req-9'}
 
 
 def test_empty_turn_appends_failure(env):
@@ -334,8 +337,13 @@ def test_concurrent_appends_stay_consistent(env):
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(10)]
     for th in threads:
         th.start()
+    # 600 次 append 过半要走「读全量 + fsync 重写」（500 条截头），并行分组
+    # 跑时磁盘争抢下 30s 跑不完：旧写法 join 超时后继续断言，线程还在写，
+    # 少几条就误报成丢条目。放宽到 180s，并用 is_alive 兜底——真卡住给出
+    # 明确失败，不拿猜的条数断言。
     for th in threads:
-        th.join(timeout=30)
+        th.join(timeout=180)
+    assert all(not th.is_alive() for th in threads), 'append 线程 180s 没跑完'
     entries, lastSeq = inboxEntries(env, L)
     assert len(entries) == 500 and lastSeq == 600
     assert [e['seq'] for e in entries] == list(range(101, 601))
@@ -369,3 +377,26 @@ def test_restart_paused_no_failure_entry(env):
     assert inboxEntries(env, L)[0] == []          # 不刷 failure
     lead = leads_store.get(L)
     assert lead['inboxSeq'] == 2 and lead['readSeq'] == 1
+
+
+def test_own_lead_fallback_by_taskid(env):
+    """返工（复验问题 1）：托管主管自己的任务 lead 为空——ownLead 按
+    task.lead 反查必然落空，必须再按 leads_store 里 taskId == task.id
+    扫（与 triggerLead 的语义对齐），否则「主管自己撞审批」的 down 用户
+    提示一条都不写。走真实托管形状：POST /api/settings/leads/hosted 建
+    出来的任务（服务端建卡无令牌上下文，payload 没有 lead 字段）。"""
+    login(env.client)
+    resp = call(env, 'post', '/api/settings/leads/hosted',
+                {'name': '甲', 'duty': '托管会话'})
+    assert resp.status_code == 201, resp.get_json()
+    out = resp.get_json()
+    L, H = str(out['lead']['id']), str(out['taskId'])
+    assert env.repo.get(H).get('lead') == ''          # 真实形状：lead 为空
+    lead = leads_inbox.ownLead(env.repo.get(H))
+    assert lead and lead['id'] == L
+    # 别人的任务 / 不存在的任务 → None（不误判）
+    tok = newToken(env, 'T9')                          # 没绑主管的令牌
+    other = newTask(env, token=tok['token'])
+    assert env.repo.get(other).get('lead') == ''
+    assert leads_inbox.ownLead(env.repo.get(other)) is None
+    assert leads_inbox.ownLead({'id': 'no-such-task'}) is None

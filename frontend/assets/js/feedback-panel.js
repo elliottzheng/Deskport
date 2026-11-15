@@ -1,10 +1,8 @@
 // 反馈面板：右下角悬浮按钮 + 半屏浮层（截图标注 / 一句话 / 联系方式）+「我的反馈」。
 // 只在浮层里操作，绝不路由跳转（§3.2）；截图与标注就是最终上传的内容（所见即所传）。
+// 「我的反馈」页签的内容在 feedback-mine.js（批次 F1：按身份过滤 + 未读红点 +
+// 评论线程 + 确认/重开）；本文件只管采集与画布。
 window.WPFeedbackPanel = (function () {
-    var STATUS_TEXT = {
-        submitted: '已提交', acknowledged: '已收到', processing: '处理中',
-        resolved: '已解决', rejected: '未采纳', user_confirmed: '已确认'
-    };
     var root = null;
     var panel = null;
     var maskEl = null;
@@ -15,7 +13,6 @@ window.WPFeedbackPanel = (function () {
     var hintEl = null;
     var submitBtn = null;
     var shotTip = null;
-    var mineList = null;
     var tabs = {};
     var baseImage = null;
     var ops = [];
@@ -176,8 +173,7 @@ window.WPFeedbackPanel = (function () {
 
         var mine = el('div', 'fb-body fb-mine');
         mine.hidden = true;
-        mineList = el('div', 'fb-mine-list');
-        mine.appendChild(mineList);
+        mine.appendChild(el('div', 'fb-mine-list'));   // 内容由 WPFeedbackMine 填
 
         panel.appendChild(head);
         panel.appendChild(write);
@@ -301,57 +297,13 @@ window.WPFeedbackPanel = (function () {
         });
     }
 
-    // ---- 我的反馈（§7.2 必做）----
-    function statusBadge(status) {
-        var span = el('span', 'fb-badge', STATUS_TEXT[status] || status);
-        span.setAttribute('data-status', status || 'submitted');
-        return span;
-    }
-
-    function renderMine(items) {
-        mineList.textContent = '';
-        if (!items.length) {
-            mineList.appendChild(el('div', 'fb-empty', '还没有提交过反馈。'));
-            return;
-        }
-        items.forEach(function (item) {
-            var card = el('div', 'fb-card');
-            var top = el('div', 'fb-card-top');
-            top.appendChild(statusBadge(item.status));
-            top.appendChild(el('span', 'fb-card-route', item.route || ''));
-            top.appendChild(el('span', 'fb-card-time', (item.submitted_at || '').slice(0, 16).replace('T', ' ')));
-            card.appendChild(top);
-            card.appendChild(el('div', 'fb-card-msg', item.message || '（无文字）'));
-            if (item.status_note) {
-                card.appendChild(el('div', 'fb-card-note', '处理说明：' + item.status_note));
-            }
-            (item.attachments || []).forEach(function (att) {
-                var img = document.createElement('img');
-                img.className = 'fb-card-shot';
-                img.loading = 'lazy';
-                img.src = att.url;
-                img.alt = '截图';
-                card.appendChild(img);
-            });
-            mineList.appendChild(card);
-        });
-    }
-
-    function loadMine() {
-        mineList.textContent = '';
-        mineList.appendChild(el('div', 'fb-empty', '读取中…'));
-        fetch('/api/feedback?size=20', { credentials: 'same-origin' })
-            .then(function (res) { return res.ok ? res.json() : Promise.reject(res.status); })
-            .then(function (data) { renderMine((data && data.items) || []); })
-            .catch(function () { renderMine([]); });
-    }
-
+    // ---- 页签：写反馈 / 我的反馈（后者内容在 feedback-mine.js）----
     function switchTab(name) {
         tabs.write.classList.toggle('is-on', name === 'write');
         tabs.mine.classList.toggle('is-on', name === 'mine');
         panel.querySelector('.fb-write').hidden = name !== 'write';
         panel.querySelector('.fb-mine').hidden = name !== 'mine';
-        if (name === 'mine') { loadMine(); }
+        if (name === 'mine' && window.WPFeedbackMine) { window.WPFeedbackMine.show(); }
     }
 
     function open(tab) {

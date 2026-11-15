@@ -28,6 +28,7 @@ from modules import leads_inbox, leads_store
 from modules import model_availability
 from modules import events
 from modules import task_inputs
+from modules import session_adopt, task_drain
 from modules.task_wait import (_blockWait, _parseWaitSeconds, _waitSnapshot,
                                parseWaitSeconds)
 
@@ -109,10 +110,13 @@ def createTask():
     payload, code = createTaskResponse(data)
     return jsonify(payload), code
 
-def createTaskResponse(data):
+def createTaskResponse(data, start=True):
     """建任务核心（/api/tasks 与 /api/worklines/<id> 的派活共用）。
 
     返回 (payload, status)。工作线（R5-1a）在这里合并默认值、注入接力棒。
+    start=False（批次 A：一键托管主管用）：只建卡不启动会话——调用方先把
+    技能包与令牌落盘再 startTask，避免会话首轮跑时文件还没就位；失败回滚
+    也因此不需要杀会话（从没起过）。
     """
     store.repo.load()
     data = dict(data or {})
@@ -235,6 +239,14 @@ def createTaskResponse(data):
                                     % live[0]['id'],
                                     'hint': '去掉 fork:false 改用 fork 副本'}), 409
         # 非本机：kimiSessionId/fork 原样透传到执行点侧 fork+load（R4-7）
+        elif not kimiSessionFork:
+            # 批次 DR：直接接管撞上未关闭任务 → 409 点名（与本机分支同义），
+            # 不抢活会话；fork 副本的占用由接回重试链路兜（session_adopt）
+            holders = session_adopt.holdersOf(kimiSessionId)
+            if holders:
+                return ({'error': '该会话正被未关闭任务占用，不能直接接管',
+                         'holders': holders,
+                         'hint': '先关闭占用任务，或改用 fork 副本接手'}), 409
     # 模型白名单：执行点声明了可选列表时必须命中（§7.1 按活的性质挑模型）
     decl = agent_nodes.nodeModelDecl(node)
     if model and decl['models'] and model not in decl['models']:
@@ -344,7 +356,8 @@ def createTaskResponse(data):
         detail = prompt[:160] + (' · model=%s' % model if model else '')
         events.log('agent.task.create', tokenName, 'ok', detail,
                    request.remote_addr, **_agentOnBehalfOf())
-    runner._startTask(task, manifest)
+    if start:
+        runner._startTask(task, manifest)
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:
         # 发完直接阻塞到回合结束/需决策（R4-3），省一次轮询往返；
@@ -356,6 +369,15 @@ def createTaskResponse(data):
         return (snap), 200
     return ({'task': store.repo.summary(task), 'paths': inputs,
              'titleSource': task.get('titleSource') or ''}), 202
+
+
+def startTask(task, manifest):
+    """启动任务会话（批次 A：一键托管主管把「建卡」与「启动」分两步用）。
+
+    建卡（createTaskResponse(start=False)）之后、技能包/令牌落盘之后调用；
+    其余调用方走 createTaskResponse 的默认路径，不经过这里。
+    """
+    runner._startTask(task, manifest)
 
 
 @blueprint.route('/api/tasks/<taskId>', methods=['GET'])
@@ -519,12 +541,19 @@ def cancelTask(task, taskId):
         # 语义）——轮结束后 runner 把任务置回 waiting，任务保持可续聊；
         # 不再终态化成 cancelled（那会让后续 message 一律 409）
         runner._denyPendingPermission(agent)
+        nodeStillRunning = False
         try:
-            client.cancel()
+            # L4：RemoteAcpClient.cancel 发完 session/cancel 后读一次节点
+            # 实况（既有 GET /api/sessions/<sid>，节点协议不改）——回合还在
+            # 跑就如实说 nodeStillRunning，不假装停了
+            nodeStillRunning = bool(client.cancel())
         except Exception:
             pass
         store.repo.append_event(task, 'status', text='已请求停止当前这轮')
-        return jsonify({'ok': True, 'status': task.get('status')})
+        payload = {'ok': True, 'status': task.get('status')}
+        if nodeStillRunning:
+            payload['nodeStillRunning'] = True
+        return jsonify(payload)
     # 没有活客户端（web 重启后的残留 running 等）：无法只停这一轮，保留终态取消
     task_state.transition(task, task_state.TaskState.CANCELLED)
     task['endedAt'] = store._now()
@@ -610,6 +639,14 @@ def deliverMessage(task, text, mode='queue', waitSec=None, by=''):
             agent['queue'].put({'type': 'drain'})
             return ({'queued': True, 'position': pos, 'steered': False,
                      'messageId': item.get('id') or ''}), 202
+        if task_drain.draining():
+            # 排空期间（部署中，批次 DR）：等待中的会话只收消息、不开新一轮；
+            # 排空结束后由唤醒信号自动投递（消息在持久队列里，重启不丢）
+            item, pos = _enqueueMessage(task, text, by=by)
+            store.repo.append_event(task, 'status',
+                         text='部署排空中，消息已排队（第 %d 位，排空结束后自动投递）' % pos)
+            return ({'queued': True, 'position': pos, 'steered': False,
+                     'draining': True, 'messageId': item.get('id') or ''}), 202
         wake = {'type': 'message', 'text': text}
         if by:
             wake['by'] = by       # 补 4：runner 落 user 事件时记发信人
@@ -789,18 +826,18 @@ def closeTaskCore(task):
                                           'close 强制终止（回合未返回结果）')
                     task['endedAt'] = store._now()
                     store.repo.append_event(task, 'status', text='已强制终止')
-            if task.get('sessionId'):
-                from modules.agent_nodes import shutdownNodeSession
-                shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     else:
         task_state.transition(task, task_state.TaskState.CLOSED)
         task['endedAt'] = store._now()
         store.repo.append_event(task, 'status', text='会话已结束')
-        # web 重启后 agent 已不在内存——close 仍须释放 node 侧会话锁，
-        # 终止持锁的 kimi 进程（R4-5 余项 A：不能"既不能续、又不释放"）
-        if task.get('sessionId'):
-            from modules.agent_nodes import shutdownNodeSession
-            shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
+    # 批次 DR：close 必须确保节点侧持锁的 kimi 进程退出。原实现只在"强制
+    # 终止"分支里杀——正常路径靠会话线程 finally 的 client.shutdown()，线程
+    # 卡住/状态从 failed 侧落定时锁会残留，接回即 "in use"（fork 与直接
+    # 接管都认这把锁）。终态落地后按 sessionId 补一次：幂等（节点已删则
+    # 404），本机 stdio 无节点时安全空转。
+    if task.get('sessionId'):
+        from modules.agent_nodes import shutdownNodeSession
+        shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     # close 语义：返回的就是终态（已 cancel 的任务保持 cancelled，不会改判）
     payload = {'ok': True, 'status': task.get('status')}
     if forced:
@@ -809,6 +846,32 @@ def closeTaskCore(task):
     if not wasEnded:
         leads_inbox.emit(task, 'failure', '任务 %s 被关闭' % task['id'][:8])
     return payload, 200
+
+
+@blueprint.route('/api/tasks/<taskId>/answer', methods=['POST'])
+@taskRoute
+def taskAnswer(task, taskId):
+    """L2：主管答复下属的提问——审批按"允许"放行，答复 steer 立即投递。
+
+    主管令牌只许答复自己子树里的任务（task.lead == 令牌绑的主管）；网页会话
+    均可。请求体 {"requestId", "text"}；requestId 对不上当前挂起的审批 → 409。
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    requestId = str(data.get('requestId') or '')
+    text = (data.get('text') or '').strip()
+    if not requestId:
+        return jsonify({'error': '缺少 requestId（要答复的那条提问）'}), 400
+    if not text:
+        return jsonify({'error': 'text 不能为空'}), 400
+    if len(text) > 8000:
+        return jsonify({'error': 'text 过长'}), 400
+    tokenName = getattr(g, 'agentTokenName', '') or ''
+    if tokenName and str(task.get('lead') or '') != (getattr(g, 'agentLead', '') or ''):
+        return jsonify({'error': '只有任务所属主管的令牌能答复（task.lead=%s）'
+                         % (task.get('lead') or '(无)')}), 403
+    payload, code = runner.answerPermission(task, requestId, text,
+                                            by='主管答复')
+    return jsonify(payload), code
 
 
 @blueprint.route('/api/tasks/<taskId>/permission', methods=['POST'])
@@ -830,6 +893,9 @@ def taskPermission(task, taskId):
             if optionId not in valid:
                 return jsonify({'error': '无效的选项'}), 400
         agent['permDecision']['value'] = optionId
+        # 批次 A（A4-4）：谁批的留痕——结果事件（permission_result）带 by：
+        # 主管令牌名（主管经令牌通道批准）或「面板」（用户在面板批准）
+        agent['permDecision']['by'] = getattr(g, 'agentTokenName', '') or '面板'
         agent['permEvent'].set()
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:

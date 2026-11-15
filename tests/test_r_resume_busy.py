@@ -333,7 +333,10 @@ def test_concurrent_saves_never_collide(tmp_path):
     finally:
         log.removeHandler(handler)
     fails = [m for m in caught if 'save tasks failed' in m]
-    assert fails == [], '并发 save 零失败: %s' % fails[:2]
+    # 批 PS2 追件：os.replace 的 PermissionError（WinError 5/32，安全软件/
+    # 索引器对目标的瞬间占用）已在 store_io 按 20/40/80/160ms 退避重试 4 次
+    # ——瞬时占用不再变成失败，这里恢复零失败（另一批曾因此放宽到 ≤2 次）
+    assert not fails, '并发 save 零失败: %s' % fails[:2]
     data = json.loads((tmp_path / 'tasks.json').read_text(encoding='utf-8'))
     assert len(data) == 50, '盘上状态完整'
     leftovers = [p.name for p in tmp_path.iterdir()

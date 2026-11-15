@@ -19,7 +19,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from modules import command_activity, leads_inbox, leads_store, task_title
+from modules import command_activity, command_tree, leads_inbox, leads_store, task_title
 from modules import tasks_store as store
 
 blueprint = Blueprint('command_view', __name__)
@@ -30,11 +30,6 @@ PROBLEM_STATUSES = ('failed', 'interrupted')  # 出问题的下属（终态两�
 PROBLEM_WINDOW_SEC = 24 * 3600                # 最近 24 小时内结束才算
 LEAD_BUSY_SEEN_SEC = 300                      # 外部主管 5 分钟内见过 = 在忙
 CLOSED_KEEP = 5                               # 已关闭任务每组只留最近 5 条
-PANEL_OWNER = '面板'                          # 面板自己派的活（tasks_api 同字面量）
-TREE_DEPTH = 3                                # 指挥树最多 3 层，更深折成「更多层级 N」
-# 树的任务节点只带行内要用的字段：树与旧字段都带全量 brief，300 个任务就超 200KB（完整摘要走 /api/tasks/<id>，前端 openTask 有兜底）。
-TASK_NODE_KEYS = ('id', 'title', 'status', 'node', 'model', 'modelEffective',
-                  'lastActiveAt')
 ARG_SUMMARY_MAX = 80                          # 审批参数摘要上限（规格：≤80 字）
 REASON_MAX = 80                               # 出问题原因首句上限
 TITLE_MAX = 40                                # 行内标题上限（长标题不撑破行）
@@ -170,15 +165,44 @@ def _pendingPermission(task):
 
 
 def _reportPending(lead, entries):
-    """主管未读汇报（dir='down' 且 seq > reportSeq）→ 每条的 pending 行。"""
+    """主管未读汇报（dir='down' 且 seq > reportSeq）→ 每条的 pending 行。
+
+    kind 按条目原样带出：down 侧绝大多数是 report（汇报），但 L1 的主管
+    反应超时提醒与批次 A 的主管自己待批提示都是 notice——指挥台不该把它们
+    显示成「汇报」（返工：以前一律硬编码 report）。
+    """
     rows = []
     for entry in entries:
-        rows.append({'kind': 'report', 'at': _int(entry.get('at')),
+        rows.append({'kind': entry.get('kind') or 'report', 'at': _int(entry.get('at')),
                      'leadId': lead.get('id') or '',
                      'title': _firstLine(lead.get('name'), TITLE_MAX) or '主管',
                      'detail': _firstLine(entry.get('text')),
                      'seq': _int(entry.get('seq'))})
     return rows
+
+
+def _stallPending(task):
+    """卡住的工具调用（L4）：无主管的任务进指挥台「等你处理」。
+
+    标记由 task_health 巡检写入（task['_toolStall']，只对无主任务），工具
+    收尾即清；行只在该任务还在 running 时出现。有主管的走主管收件箱
+    failure，不进这里（规格 L4 的两路分流）。
+    """
+    stall = task.get('_toolStall')
+    if not isinstance(stall, dict) or (task.get('status') or '') != 'running':
+        return None
+    sec = _int(stall.get('sec')) or _int(stall.get('minutes')) * 60
+    if sec >= 60:
+        waited = '%d 分钟' % (sec // 60)
+    else:
+        waited = '%d 秒' % sec       # toolStallSec < 60：显示秒（0 也曾显示成「?」）
+    return {'kind': 'stall', 'at': _int(stall.get('at')),
+            'taskId': task.get('id') or '', 'leadId': task.get('lead') or '',
+            'title': _firstLine(task.get('title') or task.get('prompt'),
+                                TITLE_MAX) or '任务',
+            'detail': '工具 %s 已 %s无输出'
+                      % (_firstLine(stall.get('name'), TITLE_MAX) or '工具',
+                         waited)}
 
 
 def _problemPending(tasks, now):
@@ -237,87 +261,7 @@ def _leadRow(lead, tasks, unread, hasApproval, tasksById, now):
            'taskId': lead.get('taskId') or '', 'lastSeenAt': _int(lead.get('lastSeenAt')),
            'counts': _taskCounts(tasks), 'lastReport': _lastReport(str(lead.get('id') or '')),
            'unreadReports': unread, 'closedHidden': closedHidden, 'tasks': briefs}
-    own = row['taskId']      # 托管任务是主管节点本身：子项里剔掉，计数仍含它
-    node = {k: v for k, v in row.items() if k != 'tasks'}   # 全量 briefs 留给旧字段
-    return row, dict(node, type='lead', key='lead:' + row['id'],
-                     children=[_taskNode(b) for b in briefs if b['id'] != own])
-
-
-def _taskNode(brief):
-    return dict({k: brief.get(k) for k in TASK_NODE_KEYS}, type='task',
-                key='task:' + str(brief.get('id') or ''))
-
-
-def _attach(node, byLead, kids, depth):
-    """挂下一层主管并递归（最多 TREE_DEPTH 层），后代计数逐级汇总进本节点。"""
-    def tasksOf(kid):                   # 该主管子树里的全部任务（含子主管的）
-        out = list(byLead.get(kid['id'], []))
-        for sub in kids.get(kid['id'], []):
-            out += tasksOf(sub)
-        return out
-
-    deeper = kids.get(node['id'], [])
-    if depth >= TREE_DEPTH:
-        if deeper:      # 超出的层折成一个汇总节点：只给计数，不再展开
-            node['children'].append(dict(
-                type='more', key=node['key'] + ':more', id='', children=[],
-                name='更多层级 %d' % len(deeper),
-                counts=_taskCounts([t for kid in deeper for t in tasksOf(kid)])))
-    else:
-        for kid in deeper:
-            node['children'].append(_attach(kid, byLead, kids, depth + 1))
-    for kid in node['children']:        # 逐级汇总：子主管/折层节点的计数并进来
-        for k, v in (kid.get('counts') or {}).items():
-            node['counts'][k] = node['counts'].get(k, 0) + v
-    return node
-
-
-def _groupOf(task, retiredLeads):
-    """无主管记录的任务 → (分组 key, 分组)。"""
-    leadId = str(task.get('lead') or '')
-    if leadId:
-        return 'lead:' + leadId, {'id': leadId, 'type': 'orphan',
-                                  'name': retiredLeads.get(leadId)
-                                  or ('已停用的主管 ' + leadId)}
-    owner = str(task.get('owner') or '') or PANEL_OWNER
-    if owner == PANEL_OWNER:
-        return 'direct', {'id': '', 'type': 'direct', 'name': '你直接派的'}
-    return 'owner:' + owner, {'id': owner, 'name': owner, 'type': 'owner'}
-
-
-def _buildTree(leads, leadNodes, byLead, tasks, retiredLeads):
-    """指挥树（规格 U2）：一级顺序即建册顺序，未登记指挥者按 owner 分组，面板
-    自己派的排最后；parent 不是活着的主管记录（'human'/空/悬空）都算一级。
-    """
-    kids, roots = {}, []               # 主管 id → 下一层主管节点 / 一级节点
-    for lead in leads:
-        node = leadNodes.get(str(lead.get('id') or ''))
-        if node is None:               # retired 的主管不进树
-            continue
-        parent = str(lead.get('parent') or '')
-        if parent in ('', 'human') or parent not in leadNodes:
-            roots.append(node)
-        else:
-            kids.setdefault(parent, []).append(node)
-    tree = [_attach(node, byLead, kids, 1) for node in roots]
-
-    groups = {}                        # key → 分组（保首次出现顺序）
-    for task in tasks:
-        if str(task.get('lead') or '') in leadNodes:
-            continue                   # 有主任务已归主管节点
-        key, bucket = _groupOf(task, retiredLeads)
-        groups.setdefault(key, bucket).setdefault('tasks', []).append(task)
-    flat = []      # 一级顺序：未登记/已停用在前，面板自己派的排最后
-    for kind in ('orphan', 'owner', 'direct'):
-        for key, bucket in groups.items():
-            if bucket['type'] != kind:
-                continue
-            tasks = bucket.pop('tasks')   # 任务列表只用于裁剪/计数，不进响应
-            briefs, hidden = _splitTasks(tasks)
-            flat.append(dict(bucket, key=key, closedHidden=hidden,
-                             counts=_taskCounts(tasks),
-                             children=[_taskNode(b) for b in briefs]))
-    return tree + flat
+    return row      # 树的 lead 节点由 command_tree.leadNode 从这行长出来
 
 
 def overview():
@@ -331,7 +275,6 @@ def overview():
         byLead.setdefault(str(task.get('lead') or ''), []).append(task)
 
     leadRows, pending = [], []
-    leadNodes = {}                        # 指挥树：id → lead 节点
     retiredLeads = {}                     # 停用主管 id→名字（见模块 docstring）
     liveLeads = sorted(leads_store.list(), key=lambda l: _int(l.get('createdAt')))
     for lead in liveLeads:
@@ -344,9 +287,7 @@ def overview():
             leadId, _int(lead.get('reportSeq')), 'down')
         unread = len(entries)
         approvals = sum(1 for t in own if str(t.get('pendingPermission') or ''))
-        row, node = _leadRow(lead, own, unread, approvals, tasksById, now)
-        leadRows.append(row)
-        leadNodes[leadId] = node
+        leadRows.append(_leadRow(lead, own, unread, approvals, tasksById, now))
         pending += _reportPending(lead, entries)
         # 审批在任务侧统一收集（含无主任务），主管只提供名字
 
@@ -354,12 +295,16 @@ def overview():
         row = _pendingPermission(task)
         if row:
             pending.append(row)
+        row = _stallPending(task)         # L4：卡住的工具调用（无主任务）
+        if row:
+            pending.append(row)
     pending += _problemPending(tasks, now)
     pending.sort(key=lambda p: _int(p.get('at')), reverse=True)
 
     unassigned = byLead.get('', [])
     briefs, closedHidden = _splitTasks(unassigned)
-    tree = _buildTree(liveLeads, leadNodes, byLead, tasks, retiredLeads)
+    tree = command_tree.build(liveLeads, leadRows, byLead, tasks, retiredLeads,
+                              _taskCounts, _splitTasks)
     return {'pending': pending, 'leads': leadRows,
             'retiredLeads': retiredLeads,
             'unassigned': {'count': len(unassigned),

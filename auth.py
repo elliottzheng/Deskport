@@ -21,6 +21,7 @@ EXEMPT_PREFIXES = (
     '/api/agent/handbook',      # 公开接入手册: 令牌之前就要能读
     '/api/agent/tools',         # 公开工具箱: 手册指向的零依赖客户端/驱动/协作原则
     '/api/agent/skill.zip',     # 公开整包: 无令牌下一个 zip 拿全技能目录
+    '/api/system/drain',        # 部署排空: 端点内自检(回环或网页会话), 远程匿名 403
     '/assets/css/tokens.css',
     '/assets/css/login.css',
     '/manifest.webmanifest',
@@ -53,6 +54,32 @@ def safeNextTarget(nextTarget):
     if nextTarget and nextTarget.startswith('/') and not nextTarget.startswith('//'):
         return nextTarget
     return '/'
+
+
+def _feedbackTokenAllowed(path, method):
+    """智能体令牌在反馈系统里的边界（批次 F1，规格 §7.1）。
+
+    放行：提交信封与附件、读自己的（mine/详情）、清未读、评论/确认/重开自己的。
+    不放行：检索（GET /api/feedback）、待受理摘要、统计、PATCH 状态回写、删除
+    ——这些是处理者（网页会话）独有；处理智能体的 feedback:triage 在 F3。
+    「自己的」复核在 modules/feedback.py 各路由里做（令牌越权读别人 403）。
+    """
+    segs = [s for s in path.split('/') if s]        # ['api', 'feedback', ...]
+    if len(segs) < 2 or segs[0] != 'api' or segs[1] != 'feedback':
+        return False
+    rest = segs[2:]
+    if method == 'POST':
+        if not rest or rest == ['attachments'] or rest == ['mine', 'read']:
+            return True
+        return len(rest) == 2 and rest[1] in ('comments', 'confirm', 'reopen')
+    if method == 'GET':
+        if rest == ['mine']:
+            return True
+        if len(rest) == 2 and rest[0] == 'attachments':
+            return True
+        # 单段 = 详情（<id>）；mine/attachments/stats/pending 这些保留段不算 id
+        return len(rest) == 1 and rest[0] not in ('mine', 'attachments', 'stats', 'pending')
+    return False
 
 
 def renderLoginPage(errorMessage, nextTarget):
@@ -156,9 +183,12 @@ def register(app):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
-        # 智能体反馈通道: 持任何有效令牌（含设备/联邦令牌）都能 POST 反馈/附件，
-        # 身份按令牌名留痕；读/改/删（GET/PATCH/DELETE）不进这条，仍是主人会话独有
-        if path.startswith('/api/feedback') and request.method == 'POST':
+        # 智能体反馈通道（批次 F1）：持任何有效令牌（含设备/联邦令牌）可提反馈、
+        # 读自己的、追问/确认/重开自己的；身份按令牌名留痕，on_behalf_of 与主管
+        # 归属随 g 带进 submitter（调研 S5：归属信息不再丢失）。
+        # 检索/状态回写/统计/删除仍是主人会话独有——处理智能体的 feedback:triage
+        # 能力与事件流长轮询在 F3，本批不放行。
+        if path.startswith('/api/feedback') and _feedbackTokenAllowed(path, request.method):
             from modules import agent_api as agentModule
             agent = agentModule.agentFromRequest()
             if agent is not None:

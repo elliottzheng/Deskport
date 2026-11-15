@@ -134,6 +134,8 @@ POST /api/tasks
   可选列表看 `GET /api/tasks/nodes` 的 `models`；续聊沿用原模型。
 - 接手已有 Kimi 会话：`GET /api/tasks/kimi-sessions?cwd=<目录>` 挑候选，
   `{"kimiSessionId": "<id>"}` 建任务（默认 fork 副本不干扰原会话，占用时 400 透传原因）。
+- CLI 一行版：`python deskport.py task "<描述>" --session <会话编号>` = 直接接管原会话
+  （`kimiSessionId` + `fork=false`，不用副本）——返工/复验复用同一个执行方就用它。
 - 任务 close = 明确结束（node 侧进程立即回收）；不 close 的会话保留 45 分钟可随时续聊。
 - 非本机执行点（`"node": "<agent node 或联邦成员>"`）必须给 `"cwd": "<该机器上的目录>"`，
   缺 cwd 或执行点不存在 → 400 并附 `nodes` 提示；目录由对端校验。
@@ -168,12 +170,36 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 
 **主管通信（令牌绑了主管才有）**：
 
+怎么当主管（事件驱动）：派活 → 结束这一轮 → 被「【收件箱】…」叫醒 → `inbox` 看全文 →
+验收 / 再派 / `report` 给用户 → 结束这一轮；外部主管没有中枢唤醒，用
+`driver.py inbox [--wait 秒]` 长轮询代替。完整做法见 `COLLABORATION.md` 第 3、5、6 节
+（派活规格、审批沿链上行、只用 report 汇报），托管主管的角色说明见 `docs/lead-role.md`。
+接口：
+
 - 收下属事件：`GET /api/agent/leads/inbox?after=<seq>&wait=<秒>`（长轮询，
   语义同任务 wait；没绑主管 → 400，提示先用 `/api/settings/leads` 建主管并绑令牌）。
+  全部条目照返（游标语义不变），审批已落定的 escalation 带 `resolved: true`，
+  CLI 显示时加「（已处理）」——别再当未处理去追问。
 - 主动向用户汇报：`POST /api/agent/leads/report {"text": "..."}`——怎么送到
   用户眼前由 Deskport 决定（v1 设置页可见），主管只见这一个工具。
 - 用户对主管说的话走 `POST /api/settings/leads/<id>/inbox`（网页会话），
   托管主管会被立即唤醒。
+- 下属用 AskUserQuestion 提问（批次 L L2）：收件箱里是一条 `kind='question'`
+  的条目（问题文本 + 选项 label + requestId），托管主管被立即唤醒。答复用
+  `POST /api/tasks/<id>/answer {"requestId": "...", "text": "..."}`（主管令牌
+  只许答复 `task.lead` 是自己的任务；网页会话也可）——审批按"允许"放行，
+  答复立即投递给该任务。CLI：`deskport.py answer <task> <requestId> "<答复>"`。
+- CLI 一行版（托管主管照这个用）：`python deskport/deskport.py lead`（我绑的
+  主管）、`python deskport/deskport.py inbox [--after N] [--wait 秒]`（收件箱
+  条目，一行一条，末尾 `lastSeq=`）、`python deskport/deskport.py report "<一句话>"`、
+  `python deskport/deskport.py close <任务id>`（干完了关掉，回收进程）、
+  `python deskport/deskport.py approve <任务id> <requestId> [--deny]`（审批下属
+  的 escalation：批准 / 拒绝）。
+- 下属卡审批时先找你：收件箱里会出现 `escalation` 条目（含 requestId 与参数
+  摘要）并立即唤醒你；在边界内就用该任务的 `permission` 批准，不在或拿不准就
+  拒绝并 `report` 向用户说明。约 5 分钟没决定，审批自动上交用户（仍可补批；
+  你被停用时令牌已吊销，就只能由用户处理）。`approve` 只选「仅批准一次」
+  (allow_once) 的选项，没有就报错——此时用 `report` 把情况下交用户。
 
 **关键操作**：
 
@@ -181,6 +207,8 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 GET  /api/tasks/<id>                              → 状态（含 model/workspace/error）
 GET  /api/tasks/<id>/log                          → 完整 jsonl 流水
 POST /api/tasks/<id>/message    {"text": "..."}   → 续聊/追问（回合间）
+POST /api/tasks/<id>/answer     {"requestId": "...", "text": "..."}
+                                                 → 答复下属提问：放行 + 立即投递
 POST /api/tasks/<id>/permission {"requestId": "...", "optionId": "...", "deny": false}
 POST /api/tasks/<id>/cancel | /close              → 都返回 status；close 幂等
 ```
@@ -193,6 +221,7 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
   202 是受理不是完成。
 - 主管归属（指挥链 P1）：令牌可绑主管（设置页管理），建的任务自动记 `task.lead`；
   `GET /api/agent/lead` 自查绑没绑（没绑 `{"lead": null}`）。
+- 全权令牌可以用 `deskport.py lead --register <名字>` 自助成为外部主管，无需用户操作。
 - 按主管筛任务：`GET /api/tasks?lead=me`（按自己令牌绑的主管筛，没绑 400）
   或 `?lead=<主管id>`；主管被停用时建任务 403，已有任务的读/续聊/审批/关闭照常。
 
@@ -218,18 +247,33 @@ POST /api/feedback
 - 频控同网页端：每分钟 ≤5、每日 ≤20（429）；幂等键重复返回首次结果 + `duplicate:true`。
 - 只能提：`GET/PATCH/DELETE` 是主人权限，智能体读了 401——处理进度问主控。
 
-## 协作原则（八条）
+## 规程（必须遵守）
 
-不管你是派活的还是接活的，先把这八条过一遍（30 秒）：
+下面每一条都是硬性要求。标【平台强制】的，Deskport 会直接拦下；其余违反即退回重做。
+完整规程与每条规矩的出处见同目录 `COLLABORATION.md`。
 
-1. **先读后做**：不确定就先看——`GET /api/tasks/nodes`、`GET /api/tasks/<id>`、读文件，别猜着写。为什么：现场事实以查到的为准，猜错方向比多一次查询贵得多。
-2. **只读优先**：能查就别改；要写文件、装软件、动服务，先说清要做什么再动手。为什么：写操作不可逆或影响面大，先说明，别人才有机会拦住你。
-3. **复述验收标准**：开工前把任务复述成“什么算做完”；有歧义就停下来问一句。为什么：验收标准含糊，做成没做成就会各说各话，返工比问一句贵。
-4. **边界**：只碰被授权的目录与主机，`cwd` 必须在执行点声明的根之内；越界宁可不做。为什么：越界改动可能毁掉别人正在用的东西，“顺手”从来不是授权。
-5. **不自夸**：不许用“我跑过了/没问题”代替证据；给命令原文与输出，失败就说失败。为什么：能被采信的只有你报告的现象，“已完成”必须可验证，掩盖失败会让错误活下去。
-6. **收尾**：任务结束就 `POST /api/tasks/<id>/close`；失败也留一句原因。为什么：悬着的任务占着进程与名额，别人不知道你是做完了还是卡住了。
-7. **审批**：`wait` 返回 `pending` 时，说明“要做什么、为什么”；**不要**试图绕过审批或伪造批准。为什么：审批是边界唯一真正生效的地方，绕过得了一次，信任和凭据一起报废。
-8. **凭据**：令牌只放请求头；**不要**写进文件、日志、URL、代码或提交里。为什么：落盘的令牌等于把远程执行权送给每个能读到那份文件的人。
+**所有使用者**
+
+1. **先读后做**：不确定就先查（`GET /api/tasks/nodes`、`GET /api/tasks/<id>`、读文件），不许猜着写。
+2. **只碰被授权的目录与主机**；`cwd` 必须在执行点声明的根之内。越界宁可不做。
+3. **拿证据说话**：交付贴命令原文与输出原文；失败就说失败；不许用"我跑过了/没问题"代替证据。
+4. **不绕过审批**：`pending` 时说明要做什么、为什么；不许伪造批准、不许换个写法绕过边界。【平台强制】
+5. **凭据只放请求头**：令牌不许写进文件、日志、URL、代码、提交、命令参数，不许打印。
+6. **不用工具自带的后台任务（run_in_background）。**【平台强制】服务器类进程用 `nohup … &` 启动，不许在前台跑。
+7. **只按进程号结束自己启动的进程**；禁止按名字批量结束（`taskkill /IM`、`Stop-Process -Name`、`pkill`、`killall`）。
+8. **直接 `import modules` 的脚本先把 `APPDATA` 指到自己的临时目录**，否则会读写线上状态。
+9. **收尾**：任务结束就 close，失败也留一句原因。
+10. **撞见平台缺陷先提反馈**（`POST /api/feedback`），再继续干活。
+
+**派活的人（主管）另外必须**
+
+11. **先成为主管再派活**：全权令牌运行 `python deskport.py lead --register "<名字>"`，一次即可。【平台强制：只能绑自己】
+12. **派活带标题与边界**：`--title "<≤24 字>"`、`--mode default`、`policy` 边界；规格写死结果与例子。
+13. **主管不自己改代码**；实施和验收派给不同模型的下属。
+14. **派完就结束这一轮**：不等待、不轮询、不 sleep；外部主管用 `driver.py inbox` 等收件箱，不许把多个下属绑在一个等全部结束的循环里。
+15. **审批只批一次性授权**（`deskport.py approve`）；拿不准就拒绝并 `report`。【平台强制】
+16. **返工与复验接回原会话**（`deskport.py task … --session <会话编号>`），不新开执行方。
+17. **只用 `report` 向用户汇报**；目标达成就停下，不自己立项。
 
 ## 规矩
 

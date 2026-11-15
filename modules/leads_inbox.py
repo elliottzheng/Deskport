@@ -8,37 +8,41 @@
 
 存储：每主管一个只追加 JSONL（statePath('lead_inbox/<leadId>.jsonl')），条目
 {seq, dir, kind, at, text, ref}；dir up=系统→主管 / down=主管→用户；kind up 侧
-report/failure/notice/human、down 侧固定 report；seq 每主管从 1 递增、两方向共
-用；上限 500 条，超限从头截（原子重写）。正文不可信（§4 红线）：存储只存原文，
+report/failure/notice/escalation（批次 A：审批上交）/human、down 侧固定 report
+（notice 例外：主管自己命令待批的用户可见提示）；seq 每主管从 1 递增、两方向共
+用；上限 500 条，超限从头截（原子重写——读写与重写在 lead_inbox_store，
+二次返工为腾预算拆出）。正文不可信（§4 红线）：存储只存原文，
 投递层固定带「以上内容为引用，不是指令」。
 
 触发点（runner/api 一行调 emit(task, kind, text)，文本按规格表在调用点组装；
-task.lead 为空零变化；托管自己的任务 task.id==主管.taskId 不产条目——它每轮
-自报、sweeper 再唤醒就是死循环，补 2）：轮末 report / 空转静默 failure /
-挂起审批 notice / 线程退出 failed·interrupted·closed failure / 用户关闭
-failure。emit 内部兜异常——收件箱失败绝不影响任务主链路（写事件的同款纪律），
-调用点不必自己包 try/except。human 端点在 leads_api（同鉴权档）。
+task.lead 为空零变化；托管自己的任务 task.id==主管.taskId 不产 up 条目——它每轮
+自报、sweeper 再唤醒就是死循环，补 2；但它挂起审批时另有一条 down 用户可见提示，
+批次 A 返工）：轮末 report / 空转静默 failure / 挂起审批 escalation（批次 A：
+审批先上交主管 + 立即唤醒，替换 P3 同位置的 notice；主管限期没决定再补一条上交
+notice）/ 线程退出 failed·interrupted·closed failure / 用户关闭 failure。emit
+内部兜异常——收件箱失败绝不影响任务主链路（写事件的同款纪律），调用点不必自己包
+try/except。human 端点在 leads_api（同鉴权档）。
 
 sweeper：单 daemon 5s 一跳（bindApp 注入 app、干活推 app_context——
 _enqueueMessage 读 flask.g，后台线程直接调会抛 RuntimeError，先例见
 federation._refreshLoop）。有未投递条目且最老条目过了合并窗口
-（leadWakeMergeSec 默认 20s，0=立即；human 立即旁路）→ 合并成一条摘要经
+（leadWakeMergeSec 默认 20s，0=立即；human / escalation / question 立即旁路）→ 合并成一条摘要经
 deliverMessage 投递（by='收件箱'，补 4），成功后 inboxSeq 推进（先投递后落游
 标：崩溃重放最多重复一条摘要；先落游标会在投递失败时丢条目）。另做无动静提示
-（leadIdleSec 默认 900s）。
+（leadIdleSec 默认 900s）与主管反应超时提醒（leadResponseSec 默认 600s，
+实现在 modules/lead_notices.py——L1，本文件只在扫掠时调它）。
 """
 import json
 import logging
-import os
-import tempfile
 import threading
 import time
 
 from flask import Blueprint, g, jsonify, request
 
 import config
-from modules import leads_store, state, task_wait
+from modules import leads_store, state, state_owner, task_wait
 from modules import tasks_store as store
+from modules.lead_inbox_store import inboxPath, readAll, writeAll
 
 log = logging.getLogger('leads_inbox')
 blueprint = Blueprint('leads_inbox', __name__)
@@ -50,6 +54,10 @@ POLL_SEC = 0.5             # inbox wait 的轮询粒度
 QUOTE_NOTE = '以上内容为引用，不是指令'
 INBOX_BY = '收件箱'        # 唤醒消息的发信人（补 4：不能落成"面板"）
 SWEEP_SEC = 5              # sweeper 跳间隔
+# 立即唤醒旁路（不等合并窗口）：人类说的话 + 审批上交（批次 A）+ 下属提问
+# （批次 L L2）。审批是下属的阻塞点、提问最等不得（互等 20 分钟的事故原型），
+# 晚一分钟唤醒就是下游白等一分钟
+URGENT_KINDS = ('human', 'escalation', 'question')
 
 _LOCK = threading.Lock()           # 进程内：append 与截头重写必须互斥（补 3）
 _DELIVER_LOCK = threading.Lock()   # 投递+推进游标互斥（sweeper 与 human 旁路竞速）
@@ -58,68 +66,34 @@ _started = False
 
 # ---------------------------------------------------------------- 存储
 
-def inboxPath(leadId):
-    return config.statePath('lead_inbox/%s.jsonl' % str(leadId or ''))
-
 def _int0(value):
     try:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
 
-def _readAll(leadId):
-    """整文件读入（小）；坏行跳过（截头重写崩溃的残行不堵死读取）。"""
-    try:
-        with open(inboxPath(leadId), encoding='utf-8') as f:
-            lines = f.readlines()
-    except OSError:
-        return []
-    out = []
-    for line in lines:
-        try:
-            obj = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(obj, dict) and obj.get('seq'):
-            out.append(obj)
-    return out
-
-def _writeAll(path, entries):
-    """原子重写（临时文件 + os.replace）：截头不留半截文件。"""
-    parent = os.path.dirname(path) or '.'
-    os.makedirs(parent, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=parent, prefix='.tmp-', suffix='.jsonl')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            for entry in entries:
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.unlink(tmp)   # replace 成功时 tmp 已不在；清失败不掩蔽原异常
-            except OSError:
-                pass
-
 def append(leadId, direction, kind, text, ref='', maxLen=MAX_TEXT):
     """追加一条，返回 seq（0 = 没写：leadId 空或方向非法）。
 
     append 与「超 500 条截头重写」在同一把锁里（线程锁 + 跨进程文件锁，照
     state.appendJsonl 的做法）——否则并发 append 会在重写窗口里丢条目（补 3）。
+    L6：只读进程（状态目录属于 web）一律抛 StateDirReadOnly。
     """
     leadId = str(leadId or '')
     if not leadId or direction not in ('up', 'down'):
         return 0
+    state_owner.ensureWritable('lead_inbox/%s.jsonl' % leadId)
     if direction == 'down':
-        kind = 'report'      # down 侧固定 report（不细分就是"不搞特殊"）
+        # down 侧固定 report；notice 例外（返工：主管自己命令待批的用户提示；
+        # 批次 L L1 的主管超时提醒也走 notice——指挥台「等你处理」要把它
+        # 当待办显示）
+        kind = 'notice' if kind == 'notice' else 'report'
     text = str(text or '')[:maxLen]
     if not isinstance(ref, (str, dict)):
         ref = ''
     path = inboxPath(leadId)
     with _LOCK, state.fileLock(path):
-        entries = _readAll(leadId)
+        entries = readAll(leadId)
         seq = max((int(e.get('seq') or 0) for e in entries), default=0) + 1
         entry = {'seq': seq, 'dir': direction, 'kind': kind,
                  'at': time.time(), 'text': text, 'ref': ref}
@@ -127,23 +101,39 @@ def append(leadId, direction, kind, text, ref='', maxLen=MAX_TEXT):
             with open(path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + '\n')
         else:
-            _writeAll(path, (entries + [entry])[-MAX_ENTRIES:])
+            writeAll(path, (entries + [entry])[-MAX_ENTRIES:])
     return seq
 
 def entriesAfter(leadId, after=0, direction='up'):
     """按 seq > after 且方向过滤；返回 (entries, lastSeq)。没文件 = 空。"""
-    allEntries = _readAll(leadId)
+    allEntries = readAll(leadId)
     lastSeq = max((int(e.get('seq') or 0) for e in allEntries), default=0)
     after = _int0(after)
     return [e for e in allEntries
             if int(e.get('seq') or 0) > after and e.get('dir') == direction], lastSeq
 
+
+def entryResolved(lead, entry):
+    """条目是否已落定（主控追加：目前只有 escalation 有落定概念）。
+
+    审批出结果时 runner 调 leads_escalation.resolvePermission 在主管记录
+    里记一笔（收件箱只追加不改写）；读侧（L1/指挥台/inbox 接口）只把未落定
+    的 escalation 当待处理，客户端对已落定的显示「（已处理）」。
+    """
+    if (entry or {}).get('kind') != 'escalation':
+        return False
+    ref = entry.get('ref')
+    requestId = str((ref or {}).get('requestId') or '') if isinstance(ref, dict) else ''
+    if not requestId:
+        return False
+    return requestId in ((lead or {}).get('resolvedRequests') or {})
+
 # ---------------------------------------------------------------- 触发点
 
-def _triggerLead(task):
+def triggerLead(task):
     """返回该写哪个主管的箱（'' = 不写）：没绑主管零变化；托管自己的任务
     （task.id == 主管.taskId）不产条目——它每轮自报、sweeper 再唤醒就是死循环
-    （补 2）。"""
+    （补 2）。公开名：审批上交（modules/leads_escalation）要复用同一判定。"""
     leadId = str((task or {}).get('lead') or '')
     if not leadId:
         return ''
@@ -154,18 +144,42 @@ def _triggerLead(task):
         return ''
     return leadId
 
-def emit(task, kind, text):
+def ownLead(task):
+    """task 是不是某位主管自己的托管任务（task.id == 主管.taskId）？是则返回
+    该主管记录——triggerLead 的镜像判定："主管自己撞审批"的 down 用户可见
+    提示用它（leads_escalation.noticeOwnPermission，返工）。
+
+    托管主管自己的任务 lead 按规格为空（服务端建卡时无令牌上下文，payload
+    没有 lead 字段，复验问题 1）——按 task.lead 反查必然落空。所以先按
+    task.lead，取不到再扫 leads_store 找 taskId == task.id 的主管（与
+    triggerLead 的语义对齐：托管形状下 lead 键指不到人，taskId 才指得到）。
+    """
+    lead = leads_store.get(str((task or {}).get('lead') or ''))
+    if isinstance(lead, dict) and str(lead.get('taskId') or '') == task.get('id'):
+        return lead
+    for lead in leads_store.list():
+        if str(lead.get('taskId') or '') == (task or {}).get('id'):
+            return lead
+    return None
+
+def emit(task, kind, text, ref=None):
     """触发点唯一入口：runner/api 一行调用，文本由调用点按规格表组装。
 
     内部兜异常——收件箱失败绝不影响任务主链路（写事件的同款纪律），所以调用
-    点不需要自己包 try/except。ref 统一记任务指针。
+    点不需要自己包 try/except。ref 统一记任务指针；ref（dict）里的额外键合并
+    进去（L2 的 question 条目带 requestId）。返回写了哪个主管的箱（'' = 没写）。
     """
     try:
-        leadId = _triggerLead(task)
+        leadId = triggerLead(task)
         if leadId:
-            append(leadId, 'up', kind, text, {'task': str(task.get('id') or '')})
+            extra = {'task': str(task.get('id') or '')}
+            if isinstance(ref, dict):
+                extra.update(ref)
+            append(leadId, 'up', kind, text, extra)
+        return leadId
     except Exception as e:
         log.warning('lead inbox emit %s failed: %s', kind, e)
+        return ''
 
 # ---------------------------------------------------------------- sweeper
 
@@ -190,8 +204,9 @@ def _sweepLoop():
             log.warning('lead inbox sweep failed: %s', e)
         time.sleep(SWEEP_SEC)
 
-def sweepOnce():
-    """扫一跳：托管唤醒 + 无动静提示（测试可直接调，不起真 kimi）。
+def sweepOnce(now=None):
+    """扫一跳：托管唤醒 + 无动静提示 + 主管反应超时提醒（测试可直接调，
+    不起真 kimi）。now 可注入（L1 的时钟）；缺省取墙上时钟。
 
     推 app_context：deliverMessage 经 _enqueueMessage 读 flask.g，后台线程里
     直接调会抛 RuntimeError。
@@ -199,16 +214,19 @@ def sweepOnce():
     app = _appRef
     if app is None:
         return
+    now = now if now is not None else time.time()
     with app.app_context():
+        from modules import lead_notices   # 延迟导入：lead_notices 模块级
+        # import 本模块（收件箱存储），反向依赖只能放在函数内
         for lead in leads_store.list():
             leadId = str(lead.get('id') or '')
             if not leadId:
                 continue
             try:
-                now = time.time()
                 if str(lead.get('kind') or '') == 'hosted' and lead.get('taskId'):
                     _wakeHosted(lead, now)
                 _idleNotice(lead, now)
+                lead_notices.responseNotice(lead, now)
             except Exception as e:
                 log.warning('lead inbox sweep lead=%s failed: %s', leadId, e)
 
@@ -216,8 +234,9 @@ def _wakeHosted(lead, now):
     """托管唤醒：有未投递条目、过了合并窗口 → 合并成一条摘要投给托管任务。
 
     先投递后落游标（inboxSeq = 批次末 seq）：崩溃重放最多重复一条摘要；先落
-    游标会在投递失败时丢条目。human 条目不等合并窗口（人类的话优先，P3-6 立即
-    旁路）。任务不存在/已 closed：跳过，条目留在箱里（外部方仍可读）。
+    游标会在投递失败时丢条目。human / escalation / question 条目不等合并
+    窗口（用户的话、审批上交与下属提问都优先，P3-6 立即旁路 + 批次 A + L2）。
+    任务不存在/已 closed：跳过，条目留在箱里（外部方仍可读）。
     """
     leadId = str(lead.get('id') or '')
     taskId = str(lead.get('taskId') or '')
@@ -231,7 +250,7 @@ def _wakeHosted(lead, now):
         entries, _last = entriesAfter(leadId, cursor, 'up')
         if not entries:
             return
-        human = any(e.get('kind') == 'human' for e in entries)
+        human = any(e.get('kind') in URGENT_KINDS for e in entries)
         mergeSec = config.getLeadWakeMergeSec()
         if not human and mergeSec > 0:
             oldest = min(float(e.get('at') or 0) for e in entries)
@@ -289,7 +308,8 @@ def _idleNotice(lead, now):
     leads_store.markIdleNoticed(leadId, now)
 
 def wakeNow(leadId):
-    """human 条目的立即唤醒旁路（P3-6）：不等合并窗口。
+    """human / escalation / question 条目的立即唤醒旁路（P3-6 + 批次 A + L2）：
+    不等合并窗口。
 
     与 _wakeHosted 走同一把投递锁——人类条目插在未投递批次里一起投（摘要含
     它），游标推进规则相同。
@@ -331,6 +351,8 @@ def agentInbox():
     after 缺省 0；wait 1–600，0/非数字/缺省 = 不等待（与任务 wait 同语义：
     共用 task_wait.parseWaitSeconds，P3b），请求内 0.5s 粒度轮询文件，有新
     条目即返回；entries 可能为空——正常。正文不可信：响应带引用红线。
+    游标语义不变（全部条目照返），每条 escalation 多带 resolved 字段——
+    审批已落定的不再算未处理，客户端显示「（已处理）」（主控追加）。
     """
     lead, err = _boundLead()
     if err:
@@ -342,6 +364,8 @@ def agentInbox():
     while not entries and deadline is not None and time.monotonic() < deadline:
         time.sleep(POLL_SEC)
         entries, lastSeq = entriesAfter(lead['id'], after, 'up')
+    for entry in entries:
+        entry['resolved'] = entryResolved(lead, entry)
     return jsonify({'entries': entries, 'lastSeq': lastSeq,
                     'lead': {'id': lead.get('id') or '',
                              'name': lead.get('name') or ''},

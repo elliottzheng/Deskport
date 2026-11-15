@@ -24,6 +24,8 @@ DELETE /api/settings/agent-tokens/<id>   # 吊销
 
 - 三档权限：省略 `scopes` = 全权；`["upload","share"]` = 上传与派活；`["share"]` = 仅派活；其它组合 400；
 - 名称 1-24 字符、不可重名；上限 10 条；
+- **两套名额分开数**（批次 A）：绑定了托管主管的专属令牌（名字 `主管·<name>`，
+  一键建托管主管时自动签发）另设上限 20 条，不占上面 10 个手工名额；
 - **不能吊销最后一条全权令牌**（否则可能把自己锁在门外）→ 400；
 - 吊销即时生效：持该令牌的程序下一个请求就 401。
 
@@ -148,6 +150,14 @@ Content-Type: multipart/form-data
 那台机器的收件箱；远端仍要求签发该票据的令牌带 `upload_remote`。
 
 ```text
+POST /api/agent/share/stage  (scope=share, multipart/form-data)
+  file     可重复 0..10 个（prompt 为空时至少 1 个）
+  prompt   可选，≤4000 字
+→ {"ticket": "<32位>", "files": [{name, size}], "expiresAt": <ts>}
+  交文件换暂存票据（内存、TTL 300s、一次性）；票据不是凭证，泄漏最坏结果是
+  别人多建一个任务（还要先有 Cookie 会话）。给网页分享表单后续提交用，
+  本身不能直接建任务——要直接用令牌建任务/追消息，用下面的 POST /api/agent/share。
+
 GET  /api/agent/share/nodes     (scope=share)
 → {"nodes": [{"name": "local", "label": "本机", "status": "online",
               "models": ["k2"], "defaultModel": "k2"},
@@ -313,7 +323,8 @@ POST /api/agent/ssh/exec
 - 远端默认注入 `LANG=C.UTF-8`：UTF-8 输出是契约。
 
 本机专用别名：`POST /api/agent/local/exec` 等价于 `/api/agent/ssh/exec` + `node: "local"`；
-`/api/agent/local/sftp/{list,get,put}` 同理等价于 `/api/agent/sftp/*` + 本机（免填 `node`）。
+`POST /api/agent/local/sftp/list`、`POST /api/agent/local/sftp/get`、`POST /api/agent/local/sftp/put`
+同理等价于 `/api/agent/sftp/*` + 本机（免填 `node`）。
 
 ## SFTP（读写文件，整读 8MB，可分块）
 
@@ -322,6 +333,12 @@ POST /api/agent/sftp/list  {"node": "...", "path": "/srv"}      → {path, entri
 POST /api/agent/sftp/get   {"node": "...", "path": "...", "offset": 0, "length": 4096}
 POST /api/agent/sftp/put   {"node": "...", "path": "...", "contentB64": "...", "sha256": "<可选>",
                             "mkdirs": true（可选，父目录不存在时自动创建，本机/SSH 主机均支持）}
+POST /api/agent/sftp/delete  {"node": "...", "path": "...", "recursive": false}
+                            文件/软链 remove；目录须为空，recursive=true 才整棵删
+POST /api/agent/sftp/mkdir   {"node": "...", "path": "...", "parents": false}
+                            已存在 → 409；parents=true 逐级创建（已存在的父级跳过）
+POST /api/agent/sftp/rename  {"node": "...", "from": "...", "to": "...", "overwrite": false}
+                            目标已存在且 overwrite=false → 409；overwrite=true 才覆盖
 ```
 
 - 指代机器用 `node`（缺省 `local`）；`host` 是旧名，仍接受（同 exec）。
@@ -384,6 +401,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | GET | /api/tasks/<id>/messages | 排队中的消息 `{items, count}`（只列未投递的） |
 | DELETE | /api/tasks/<id>/messages/<mid> | 撤回一条排队消息 → `{ok, count}`（已投递 404） |
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
+| POST | /api/tasks/<id>/answer | 主管答复下属提问 `{requestId, text}`（批次 L L2）：审批按「允许」放行 + 答复以 steer 立即投递。主管令牌只许答复 `task.lead` 是自己的任务；网页会话均可；requestId 对不上当前挂起的审批 → 409 |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
 | GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`os`/`shells`/`defaultCwd`/`cwdRoots`/`modelStatus`/`usableModels` |
@@ -487,7 +505,27 @@ DELETE /api/agent/ssh/sessions/<sid>
   selected / cancelled 两种 outcome，带不了原因文字）；② 轮次之间收到的
   审批若 callId 在本任务 tool 事件里查不到（后台幽灵审批），自动拒绝
   （`auto_denied rule=orphan`），不挂起、不挡 message。没有 policy 的
-  任务两条都不生效，行为不变；
+  任务两条都不生效，行为不变。命令按 `&& || | ;` 拆段后每段都命中
+  `allowCommands` 才放行；**管道下游的只读消费段**（`|` 右侧的
+  head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段仍须
+  整段命中（`cat .agent-token | head`、`rm -rf x | head` 照旧 ask）——
+  托管主管的自然形状 `cd "<工作区>" && python deskport/deskport.py --help
+  2>&1 | head -40` 不断链；消费段允许带 `2>/dev/null` / `2>&1`，其它重定向
+  仍不豁免。带 `readonlyRoots` 的 policy（一键托管主管建卡时写入：工作区
+  + 项目目录 `cwd`）另有**边界内只读命令自动放行**：cat/type/head/tail/
+  ls/dir/find（不带 -exec/-delete/-fprint 等写或执行参数）/grep/rg/wc/
+  file/stat，且所有路径参数（含 `cd` 段目标）规范化后都落在根内——`..`
+  折叠、符号链接、绝对路径越界都算越界，不可判定的一律询问（`rule=
+  readonly-roots`）；`allowPaths` / 重定向目标判定不受影响（只读放宽，
+  写不放宽）；
+- **按名字批量杀进程一律问（批次 L L5）**：内建询问规则，**所有任务**生效
+  （不只托管主管，也不需要 policy）——`taskkill` 带 `/IM`、`taskkill /F /T`、
+  `Stop-Process -Name`、`Get-Process … | Stop-Process`（管道、无 -Name）、
+  `pkill`、`killall` 命中即 `ask`（`permission_request` 事件带
+  `rule=danger:kill-by-name`），`allowCommands` 与 `default=allow` 都压不掉。
+  Git Bash（MSYS）的 `//IM`、`//F //T` 双斜杠写法同样命中。按 PID 结束进程
+  （`taskkill /PID 1234`、`Stop-Process -Id 1234`）不受影响。启发式：宁多问，
+  引号内文本同样参与匹配；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
   都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
   用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -669,6 +707,36 @@ DELETE /api/settings/leads/<id>/task                 → 解绑（taskId 清空�
 - 绑定托管任务（`POST /api/settings/leads/<id>/task`）把 `kind` 置 `hosted`、
   `taskId` 置该任务；解绑回 `external`。`kind`/`taskId` 不进 PATCH（避免出现
   hosted 却没有 taskId 的状态）；一个任务最多被一个主管绑定。
+- **托管主管的专属令牌随主管生命周期走**（批次 A）：停用（`status=retired`）
+  或删除主管即吊销它绑定的令牌（audit `agent.token.revoked`，之后用它调任何
+  接口 401）；暂停（`paused`）不吊销、只拦建任务。删除主管不关它的托管会话
+  （任务仍在，只是令牌失效）。
+
+一键建托管主管（批次 A，只认网页会话）：
+
+```text
+POST /api/settings/leads/hosted
+{"name": "...", "project"?: "...", "node": "local", "cwd"?: "...", "model"?: "...",
+ "duty": "这个主管负责什么（≤2000 字）"}
+→ 201 {"lead": 记录, "taskId": "..."}
+```
+
+- 服务端按顺序做，任一步失败都回滚已做的步骤、不留半成品，返回 4xx/5xx 带
+  原因：① 建主管记录（`kind='hosted'`）→ ② 签发专属令牌（名字
+  `主管·<name>`，超长截断；绑到该主管）→ ③ 建主管自己的任务（`node` 只支持
+  `local`，其它值 400「托管主管暂只支持本机」；**该任务 `lead` 为空**——它是
+  主管本人不是下属；工作目录用 Deskport 分配的任务目录，给了 `cwd` 只写进
+  角色说明作为「你负责的项目目录」）→ ④ 工作区里放好技能包：解出与
+  `/api/agent/skill.zip` 同内容的整包到 `<workspace>/deskport/`，写
+  `.deskport.json`（url 指向本机 `http://127.0.0.1:<port>`，node=local）与
+  `.agent-token`（令牌明文只写这一个文件，并登记进脱敏来源）→ ⑤ 首条消息 =
+  角色说明（`docs/lead-role.md` 模板）+ `duty`，`mode='default'`，policy 允许
+  工作区内读写与 `python deskport/deskport.py` 命令、其它走审批；**只读命令**
+  （cat/type/head/tail/ls/dir/find/grep/rg/wc/file/stat）的路径参数全部落在
+  工作区或建卡时的项目目录 `cwd` 内（policy 的 `readonlyRoots`）时自动放行，
+  其它命令挂起并提示用户 → ⑥ 绑成该主管的托管任务并启动会话。
+- 首条消息上限 4000 字符（角色说明 + duty 超了 → 400，什么都不建）。
+- 审计 `lead.hosted.created`（记任务 id 与令牌名，不记明文）。
 
 令牌通道自查（任何有效令牌，不要求 full）：
 
@@ -677,6 +745,27 @@ GET /api/agent/lead
 → {"lead": {"id","name","project","kind","parent","status"}}
   没绑主管（含绑定悬空：记录被手删）→ {"lead": null}
 ```
+
+令牌通道自助成为主管（批次 SR，仅全权令牌——全权令牌本就等于整机控制权，
+给它自己建主管不增加任何权限；受限令牌 403 `{"error","need":"full"}`，
+联邦/设备令牌同样 403）：
+
+```text
+POST /api/agent/lead  {"name": "甲", "project": "课题"}   → 201 {"lead": 记录}
+  已绑主管且同名                                        → 200 {"lead": 记录}（幂等）
+  已绑别的名字 / 与现有非 retired 主管重名                → 409（响应体带 lead：已绑的主管）
+```
+
+- 建一个 `kind='external'`、`parent='human'` 的主管（名字规则与设置页相同），
+  把**调用令牌自己**绑上去；之后 `GET /api/agent/lead` 即返回它，该令牌建的
+  任务自动记 `task.lead`；不能绑别的令牌，也不能改别的主管；
+- 注册成功顺手认领：该令牌之前建的、`lead` 为空且 `owner` 等于令牌名的任务
+  改记到新主管名下——未结束的全认，已结束的（closed/cancelled）只认最近
+  7 天内结束的；响应体带 `claimed: N`，审计 `lead.self_registered` 的
+  detail 记 `claimed=N`；
+- 审计 `lead.self_registered`（令牌名、主管 id、名字、认领数）；
+- 客户端一行：`python deskport.py lead --register "<名字>" [--project X]`
+  （已绑定时打印现有主管并退出 0）。
 
 建任务记归属：
 
@@ -720,8 +809,9 @@ GET /api/tasks?lead=me          # 按调用令牌绑定的主管筛；调用方�
 ```text
 {seq, dir, kind, at, text, ref}
   dir   'up' = 系统→主管（下属事件，主管读的）; 'down' = 主管→用户（汇报）
-  kind  up: report（一轮结束）/ failure（失败·空转·静默·被关闭）/ notice（挂起审批·无动静）
-        / human（用户说的话）; down 侧固定 report（不细分）
+  kind  up: report（一轮结束）/ failure（失败·空转·静默·被关闭）/ notice（挂起
+        审批·无动静·审批已上交用户）/ escalation（审批先上交主管，批次 A）/
+        human（用户说的话）; down 侧固定 report（不细分）
   seq   每主管从 1 单调递增，两个方向共用一条序列；文件上限 500 条，超限从头截
 ```
 
@@ -753,16 +843,30 @@ POST /api/agent/leads/inbox/ack   {"seq": n}
 ```
 
 汇报触发（系统侧，只对 `task.lead` 非空的任务）：轮次正常结束 → `report`；
-空转/静默轮 → `failure`；挂起审批 → `notice`（纯提醒，审批沿链上行是 P5）；
-会话线程退出且 failed/interrupted/closed → `failure`；用户关闭 → `failure`。
+空转/静默轮 → `failure`；挂起审批 → `escalation`（批次 A：审批先上交主管，
+见下节；替换了 P3 里同一位置的 notice——不要两条都写）；会话线程退出且
+failed/interrupted/closed → `failure`；用户关闭 → `failure`。
 托管自己的任务（`task.id == 主管.taskId`）**不产条目**——否则它每轮自报、
 被唤醒再自报，死循环。web 重启把在飞任务打 paused **不**报（避免每次部署给
-所有在飞下属刷一条）。
+所有在飞下属刷一条；重启自动续接的那一条见「重启语义」）。
+
+下属提问（批次 L L2）：审批请求若是 AskUserQuestion（工具名或参数形如
+`{questions:[…]}`）→ `question` 条目（问题文本 + 选项 label 列表 + `requestId`
+引用），托管主管**立即唤醒**（与 `human` 同款不等合并窗口）。答复：
+
+```text
+POST /api/tasks/<id>/answer   {"requestId": "...", "text": "..."}
+```
+
+审批按「允许」放行，答复以 steer 立即投递给该任务（不排队）；主管令牌只许
+答复 `task.lead` 是自己的任务，网页会话均可。挂起的是提问时，队列里的消息
+会被当作答复自动走同一条路（不再干等到审批超时）。CLI：
+`deskport.py answer <task> <requestId> "<答复>"`。
 
 托管唤醒：`kind=hosted` 且有未投递条目时，中枢按合并窗口（config
 `leadWakeMergeSec`，默认 20s，0=立即）把窗口内全部条目合并成**一条**摘要投进
 托管任务的消息队列（发信人记 `收件箱`，不是"面板"），投递成功才推进游标；
-`human` 条目（用户说的话）不等窗口、立即唤醒。
+`human`（用户说的话）与 `question`（下属提问）不等窗口、立即唤醒。
 
 用户→主管（网页会话，管理面同鉴权档）：
 
@@ -775,6 +879,50 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
 
 无动静提示：主管有下属在跑、却老于 `leadIdleSec`（默认 900s）没有任何事件 →
 箱内一条 `notice`；同一主管每阈值最多一条。
+
+主管反应超时提醒（批次 L L1）：下属消息（report/failure/escalation/human/
+question）超过 `leadResponseSec`（默认 600s，0=关闭）既没投递（inboxSeq）也没
+被外部主管读（readSeq）→ 该主管 `down` 方向一条 `notice`（指挥台「等你处理」
+因此可见）；托管主管另有第二条分支——条目已投递但唤醒还堵在队列里没人消费、
+超过阈值没有任何新事件，同样提醒。同一主管每阈值最多一条。
+
+## 审批先上交主管（批次 A）
+
+对 `task.lead` 非空、且不是该主管自己托管任务的下属任务，一次审批请求经服务端
+policy 判定为「需要询问」时：
+
+1. 立刻往主管收件箱写一条 `kind='escalation'` 条目：任务 id 八位、工具名、
+   参数摘要（≤200 字，引用形态「」）、`requestId`；**托管主管立即唤醒**
+   （与用户发话同一条旁路，不等合并窗口）。它替换了 P3 里同一位置的
+   `notice`（不要两条都写）；没绑主管的任务不写任何条目，行为与以前逐字一致。
+2. 主管用自己的令牌调现有 `POST /api/tasks/<id>/permission` 作出决定。
+   现有鉴权已允许：`/api/tasks*` 令牌通道只要求全权 scope、不查归属，主管
+   令牌对子树任务直接可调（无需额外放开）。
+3. 主管在 `leadApprovalGraceSec`（config，默认 300 秒）内没有决定：审批**仍
+   挂着、不自动拒绝**，进入用户的「等你处理」（按 `pendingPermission` 列出），
+   并往收件箱补一条 `notice`「审批已上交用户」。主管事后仍可补批；主管被停用
+   （retired）时令牌已吊销、补批只会 401，notice 文案改为「主管已停用，请你
+   直接处理」。
+4. 留痕：事件流里 `permission_result` 结果事件带 `by`（主管令牌名 / 面板）；
+   超时与取消没有决定者，不带这个键。
+5. 时间窗：节点侧审批 900 秒兜底超时不变（节点协议不动）——**主管 + 用户合计
+   有约 15 分钟处理窗口**；`taskPermissionTimeoutSec`（默认 1800s）到点仍按
+   超时拒绝，与以前逐字一致。
+6. **落定（主控追加）**：审批一出结果（任何人批准/拒绝/超时/任务关闭），
+   runner 在写 `permission_result` 的同一处把对应 escalation 标记
+   `resolved`（记在主管记录的 `resolvedRequests`，requestId→{at, by}；收件箱
+   JSONL 只追加不改写）。此后的未读计数、L1 反应超时提醒、指挥台「等你」
+   徽标都只统计**未落定**的 escalation；正好在 grace 到点那一瞬落定的，
+   不再补「已上交用户」。`GET /api/agent/leads/inbox` 游标语义不变（全部
+   条目照返），每条 escalation 多带 `resolved` 字段，客户端 CLI 对已落定的
+   显示「（已处理）」。
+
+主管**自己**的托管任务撞审批（返工项）：不上交、不唤醒（不能当自己的下属），
+但往该主管箱里写一条 `dir='down', kind='notice'` 的用户可见提示——「主管 <名>
+自己的命令需要你批准：<工具名> <参数摘要≤80字>」——指挥台/设置页因此看得见
+卡住的原因；没绑主管的任务仍零条目。主管按 `lead.taskId == task.id` 反查
+（托管自己的任务 `lead` 按规格为空，`task.lead` 指不到人），读到自己的
+`deskport/.agent-token` 仍按敏感文件规则询问。
 
 ## 重启语义（如实版）
 
@@ -794,6 +942,20 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
   补进 tool 事件的 args 也不丢：回填时往 jsonl 追加不带 `seq` 的
   `tool_args_patch` 补丁行，重启后按 `targetSeq` 还原（补丁行本身不是
   事件，`/log` 原样透出）。
+- **重启后自动续接（批次 L L3）**：web 启动时被打成 paused 且
+  `pausedBy='restart'`（只有启动恢复路径设这个标记）的任务，启动 60 秒后
+  自动发一条续接消息，每个任务只自动续一次；用户主动暂停/关闭的不续
+  （构造上不带标记）。自动续接的任务若属于某主管，主管收件箱会多一条
+  notice「任务 <id8> 因重启被打断，已自动续接」。开关 config
+  `autoResumeAfterRestart`（默认开）。
+- **卡住的工具调用（批次 L L4）**：任务 running 且当前工具调用超过
+  `toolStallSec`（默认 900s，0=关闭）没有任何事件 → 一条 status 事件；
+  属于主管的下属往主管收件箱写 `failure`，无主管的进指挥台「等你处理」。
+  每次工具调用只报一次（工具收尾标记即清）。
+- **cancel 的如实回报（批次 L L4）**：重启后重新接上的节点会话里，cancel
+  照常对同一 node sid 发 `session/cancel`（节点协议未改）；发完再读一次
+  节点实况（既有 `GET /api/sessions/<sid>` 的 `running` 字段），回合还在跑
+  时 `/api/tasks/<id>/cancel` 的响应带 `nodeStillRunning: true`——不假装停了。
 
 ## 技能分发（URL 自举）
 
@@ -803,9 +965,9 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
 ```text
 GET /api/agent/skills                     → {skills: [{name, size, mtime, files, pack}]}
 GET /api/agent/skills/<name>              → {name, content}                  SKILL.md 原文
-GET /api/agent/skills/<name>/<file>       → {name, file, content, sha256}
-GET /api/agent/skills/<name>/<file>?raw=1 → text/plain（给 curl -o 直接落盘）
-GET /api/agent/skills/<name>/pack.zip     → application/zip：整包（手册 + 附件 + 现成配置）
+GET /api/agent/skills/<skill>/<name>       → {name, file, content, sha256}
+GET /api/agent/skills/<skill>/<name>?raw=1 → text/plain（给 curl -o 直接落盘）
+GET /api/agent/skills/<skill>/pack.zip     → application/zip：整包（手册 + 附件 + 现成配置）
 ```
 
 - **整包是主推**：zip 里是 `<name>/SKILL.md`、各附件，外加一份按本次请求地址生成的

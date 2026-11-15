@@ -12,6 +12,7 @@ saveSnapshot(path, payload, seq, savedSeq) 收 int 回 int，修后改收 SeqGat
 门对象——同一组断言因此修前红（d）/修后绿。
 """
 import json
+import logging
 import os
 import threading
 
@@ -129,3 +130,63 @@ def test_interleaved_old_save_cannot_clobber_newer_snapshot(tmp_path,
     assert disk['t1']['v'] == 'NEWER-STATE', \
         '旧序号 save 后到不得覆写已落盘的新快照: %r' % disk['t1']['v']
     assert _savedSeqOf(repo) == 2, 'savedSeq 不得回退: %r' % _savedSeqOf(repo)
+
+
+# ---- replace 退避重试（批 PS2 追件：WinError 5/32 不是状态损坏） ----
+# 助手是 state.replaceWithRetry（store_io.saveSnapshot 与 state.atomicWriteJson
+# 共用）；这里穿 store_io 验产品侧语义，state.atomicWriteJson 侧的用例在
+# tests/test_state_lock.py
+
+def test_replace_retries_permission_error_then_succeeds(tmp_path, monkeypatch,
+                                                         caplog):
+    """os.replace 前两次抛 PermissionError（杀毒/索引/并发读者短暂占用目标
+    → WinError 5/32）→ 按 20/40ms 退避重试后成功：落盘、推进 savedSeq、
+    不记 save tasks failed、临时文件不残留。"""
+    caplog.set_level(logging.WARNING, logger='tasks')
+    path = str(tmp_path / 'tasks.json')
+    real = os.replace
+    calls = {'n': 0}
+
+    def flaky(src, dst):
+        if str(dst) == path:
+            calls['n'] += 1
+            if calls['n'] <= 2:
+                raise PermissionError('[WinError 5] 拒绝访问。')
+        return real(src, dst)
+
+    monkeypatch.setattr(store_io.os, 'replace', flaky)
+    gate = store_io.SeqGate()
+    assert store_io.saveSnapshot(path, '{"a": 1}', 1, gate) == 1
+    assert calls['n'] == 3                 # 两次败 + 第三次成
+    assert _disk(path) == '{"a": 1}'
+    assert gate.savedSeq == 1
+    assert not [r for r in caplog.records if 'save tasks failed' in r.message]
+    assert not list(tmp_path.glob('.tasks-*.tmp'))
+
+
+def test_replace_gives_up_after_four_retries(tmp_path, monkeypatch, caplog):
+    """一直 PermissionError → 退避重试 4 次（20/40/80/160ms）后放弃：记一次
+    save tasks failed、savedSeq 不推进、临时文件清掉（不泄露 .tmp）。"""
+    caplog.set_level(logging.WARNING, logger='tasks')
+    path = str(tmp_path / 'tasks.json')
+    real = os.replace
+    calls = {'n': 0}
+
+    def alwaysDeny(src, dst):
+        if str(dst) == path:
+            calls['n'] += 1
+            raise PermissionError('[WinError 32] 另一个程序正在使用此文件。')
+        return real(src, dst)
+
+    monkeypatch.setattr(store_io.os, 'replace', alwaysDeny)
+    gate = store_io.SeqGate()
+    assert store_io.saveSnapshot(path, '{"a": 1}', 1, gate) == 0
+    assert calls['n'] == 5                 # 首发 + 4 次退避重试
+    assert gate.savedSeq == 0
+    failed = [r for r in caplog.records if 'save tasks failed' in r.message]
+    assert len(failed) == 1
+    assert not list(tmp_path.glob('.tasks-*.tmp'))
+    # 放弃不毒化后续：真实 replace 恢复后同一条 path 照常落盘
+    monkeypatch.undo()
+    assert store_io.saveSnapshot(path, '{"b": 2}', 2, gate) == 2
+    assert _disk(path) == '{"b": 2}'

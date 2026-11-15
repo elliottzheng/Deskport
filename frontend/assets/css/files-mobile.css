@@ -1,0 +1,66 @@
+/* 文件页手机宽度不溢出（批次 M2）。
+ *
+ * files.css 已登记「存量只减不增」（tools/check_structure.py LEGACY 表），
+ * 本批新增/改动的规则集中放这里，由 files.html 在 files.css 之后加载
+ * （同特异性后加载者生效，只做增量声明，不重复 files.css 的完整规则）。
+ *
+ * 根因：移动端骨架 .fm-layout 漏了 align-items:stretch，column-flex 下
+ * .fm-main 按 fit-content 取值，被面包屑/工具栏的 min-content 顶到视口外，
+ * body:has(.fm-layout){overflow:hidden} 直接裁掉右侧且无法滚动查看。
+ */
+
+/* ====== 主区严格等于容器宽度, 溢出改由组件内部滚动/省略号消化 ====== */
+@media (max-width: 640px) {
+    .fm-layout { align-items: stretch; min-width: 0; }
+    .fm-main { min-width: 0; max-width: 100%; }
+}
+.fm-addressbar { min-width: 0; position: relative; }   /* position: 「…」跳转弹层锚点 */
+.fm-toolbar { min-width: 0; }
+.crumb-seg { min-width: 0; }
+
+/* ====== 面包屑窄屏折叠: 「… + 当前目录名」, 当前段省略号不顶宽 ====== */
+@media (max-width: 640px) {
+    .crumb-seg.is-current { flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
+    .crumb-seg.crumb-more { min-width: 44px; justify-content: center; padding: 3px 10px; }
+}
+
+/* ====== 「…」上级跳转弹层: 受视口宽度约束 ====== */
+.crumb-jump-mask { position: fixed; inset: 0; z-index: 60; }
+.crumb-jump {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 61;
+    min-width: 240px; max-width: calc(100vw - 24px); max-height: 52vh; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m);
+    box-shadow: var(--shadow-float); padding: var(--sp-1);
+}
+.crumb-jump-title {
+    font-size: 13px; font-weight: 600; color: var(--text-1);
+    padding: 6px 10px; word-break: break-all;
+}
+.crumb-jump-item {
+    display: block; width: 100%; text-align: left; border: none; background: none;
+    cursor: pointer; padding: 7px 10px; border-radius: var(--radius-s);
+}
+.crumb-jump-item:hover { background: var(--brand-bg); }
+.crumb-jump-name { display: block; font-size: 14px; color: var(--text-1); }
+.crumb-jump-path {
+    display: block; font-size: 11px; color: var(--text-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ====== 按钮文字过长省略, 不撑宽所在行 (换行由 flex-wrap 负责) ====== */
+.fm-toolbar .btn { min-width: 0; }
+.fm-toolbar .btn .btn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* ====== 状态栏: 窄屏换行, 长搜索词省略 ====== */
+.statusbar { flex-wrap: wrap; row-gap: 2px; min-width: 0; }
+.statusbar > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ====== 多选底部操作栏: 按钮多, 换行不溢出视口 ====== */
+@media (max-width: 640px) {
+    .bottombar {
+        flex-wrap: wrap; row-gap: var(--sp-2);
+        max-height: 56vh; overflow-y: auto;
+    }
+    .bottombar .btn { min-width: 0; }
+    .bottombar .btn .btn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+}
