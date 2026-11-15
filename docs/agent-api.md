@@ -24,6 +24,8 @@ DELETE /api/settings/agent-tokens/<id>   # 吊销
 
 - 三档权限：省略 `scopes` = 全权；`["upload","share"]` = 上传与派活；`["share"]` = 仅派活；其它组合 400；
 - 名称 1-24 字符、不可重名；上限 10 条；
+- **两套名额分开数**（批次 A）：绑定了托管主管的专属令牌（名字 `主管·<name>`，
+  一键建托管主管时自动签发）另设上限 20 条，不占上面 10 个手工名额；
 - **不能吊销最后一条全权令牌**（否则可能把自己锁在门外）→ 400；
 - 吊销即时生效：持该令牌的程序下一个请求就 401。
 
@@ -487,7 +489,19 @@ DELETE /api/agent/ssh/sessions/<sid>
   selected / cancelled 两种 outcome，带不了原因文字）；② 轮次之间收到的
   审批若 callId 在本任务 tool 事件里查不到（后台幽灵审批），自动拒绝
   （`auto_denied rule=orphan`），不挂起、不挡 message。没有 policy 的
-  任务两条都不生效，行为不变；
+  任务两条都不生效，行为不变。命令按 `&& || | ;` 拆段后每段都命中
+  `allowCommands` 才放行；**管道下游的只读消费段**（`|` 右侧的
+  head/tail/grep/wc/sort/uniq 且只带普通参数）豁免逐段命中，上游段仍须
+  整段命中（`cat .agent-token | head`、`rm -rf x | head` 照旧 ask）——
+  托管主管的自然形状 `cd "<工作区>" && python deskport/deskport.py --help
+  2>&1 | head -40` 不断链；消费段允许带 `2>/dev/null` / `2>&1`，其它重定向
+  仍不豁免。带 `readonlyRoots` 的 policy（一键托管主管建卡时写入：工作区
+  + 项目目录 `cwd`）另有**边界内只读命令自动放行**：cat/type/head/tail/
+  ls/dir/find（不带 -exec/-delete/-fprint 等写或执行参数）/grep/rg/wc/
+  file/stat，且所有路径参数（含 `cd` 段目标）规范化后都落在根内——`..`
+  折叠、符号链接、绝对路径越界都算越界，不可判定的一律询问（`rule=
+  readonly-roots`）；`allowPaths` / 重定向目标判定不受影响（只读放宽，
+  写不放宽）；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
   都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
   用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -669,6 +683,36 @@ DELETE /api/settings/leads/<id>/task                 → 解绑（taskId 清空�
 - 绑定托管任务（`POST /api/settings/leads/<id>/task`）把 `kind` 置 `hosted`、
   `taskId` 置该任务；解绑回 `external`。`kind`/`taskId` 不进 PATCH（避免出现
   hosted 却没有 taskId 的状态）；一个任务最多被一个主管绑定。
+- **托管主管的专属令牌随主管生命周期走**（批次 A）：停用（`status=retired`）
+  或删除主管即吊销它绑定的令牌（audit `agent.token.revoked`，之后用它调任何
+  接口 401）；暂停（`paused`）不吊销、只拦建任务。删除主管不关它的托管会话
+  （任务仍在，只是令牌失效）。
+
+一键建托管主管（批次 A，只认网页会话）：
+
+```text
+POST /api/settings/leads/hosted
+{"name": "...", "project"?: "...", "node": "local", "cwd"?: "...", "model"?: "...",
+ "duty": "这个主管负责什么（≤2000 字）"}
+→ 201 {"lead": 记录, "taskId": "..."}
+```
+
+- 服务端按顺序做，任一步失败都回滚已做的步骤、不留半成品，返回 4xx/5xx 带
+  原因：① 建主管记录（`kind='hosted'`）→ ② 签发专属令牌（名字
+  `主管·<name>`，超长截断；绑到该主管）→ ③ 建主管自己的任务（`node` 只支持
+  `local`，其它值 400「托管主管暂只支持本机」；**该任务 `lead` 为空**——它是
+  主管本人不是下属；工作目录用 Deskport 分配的任务目录，给了 `cwd` 只写进
+  角色说明作为「你负责的项目目录」）→ ④ 工作区里放好技能包：解出与
+  `/api/agent/skill.zip` 同内容的整包到 `<workspace>/deskport/`，写
+  `.deskport.json`（url 指向本机 `http://127.0.0.1:<port>`，node=local）与
+  `.agent-token`（令牌明文只写这一个文件，并登记进脱敏来源）→ ⑤ 首条消息 =
+  角色说明（`docs/lead-role.md` 模板）+ `duty`，`mode='default'`，policy 允许
+  工作区内读写与 `python deskport/deskport.py` 命令、其它走审批；**只读命令**
+  （cat/type/head/tail/ls/dir/find/grep/rg/wc/file/stat）的路径参数全部落在
+  工作区或建卡时的项目目录 `cwd` 内（policy 的 `readonlyRoots`）时自动放行，
+  其它命令挂起并提示用户 → ⑥ 绑成该主管的托管任务并启动会话。
+- 首条消息上限 4000 字符（角色说明 + duty 超了 → 400，什么都不建）。
+- 审计 `lead.hosted.created`（记任务 id 与令牌名，不记明文）。
 
 令牌通道自查（任何有效令牌，不要求 full）：
 
@@ -720,8 +764,9 @@ GET /api/tasks?lead=me          # 按调用令牌绑定的主管筛；调用方�
 ```text
 {seq, dir, kind, at, text, ref}
   dir   'up' = 系统→主管（下属事件，主管读的）; 'down' = 主管→用户（汇报）
-  kind  up: report（一轮结束）/ failure（失败·空转·静默·被关闭）/ notice（挂起审批·无动静）
-        / human（用户说的话）; down 侧固定 report（不细分）
+  kind  up: report（一轮结束）/ failure（失败·空转·静默·被关闭）/ notice（挂起
+        审批·无动静·审批已上交用户）/ escalation（审批先上交主管，批次 A）/
+        human（用户说的话）; down 侧固定 report（不细分）
   seq   每主管从 1 单调递增，两个方向共用一条序列；文件上限 500 条，超限从头截
 ```
 
@@ -753,11 +798,10 @@ POST /api/agent/leads/inbox/ack   {"seq": n}
 ```
 
 汇报触发（系统侧，只对 `task.lead` 非空的任务）：轮次正常结束 → `report`；
-空转/静默轮 → `failure`；挂起审批 → `notice`（纯提醒，审批沿链上行是 P5）；
-会话线程退出且 failed/interrupted/closed → `failure`；用户关闭 → `failure`。
-托管自己的任务（`task.id == 主管.taskId`）**不产条目**——否则它每轮自报、
-被唤醒再自报，死循环。web 重启把在飞任务打 paused **不**报（避免每次部署给
-所有在飞下属刷一条）。
+空转/静默轮 → `failure`；会话线程退出且 failed/interrupted/closed → `failure`；
+用户关闭 → `failure`。托管自己的任务（`task.id == 主管.taskId`）**不产条目**——
+否则它每轮自报、被唤醒再自报，死循环。web 重启把在飞任务打 paused **不**报
+（避免每次部署给所有在飞下属刷一条）。
 
 托管唤醒：`kind=hosted` 且有未投递条目时，中枢按合并窗口（config
 `leadWakeMergeSec`，默认 20s，0=立即）把窗口内全部条目合并成**一条**摘要投进
@@ -775,6 +819,36 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
 
 无动静提示：主管有下属在跑、却老于 `leadIdleSec`（默认 900s）没有任何事件 →
 箱内一条 `notice`；同一主管每阈值最多一条。
+
+## 审批先上交主管（批次 A）
+
+对 `task.lead` 非空、且不是该主管自己托管任务的下属任务，一次审批请求经服务端
+policy 判定为「需要询问」时：
+
+1. 立刻往主管收件箱写一条 `kind='escalation'` 条目：任务 id 八位、工具名、
+   参数摘要（≤200 字，引用形态「」）、`requestId`；**托管主管立即唤醒**
+   （与用户发话同一条旁路，不等合并窗口）。它替换了 P3 里同一位置的
+   `notice`（不要两条都写）；没绑主管的任务不写任何条目，行为与以前逐字一致。
+2. 主管用自己的令牌调现有 `POST /api/tasks/<id>/permission` 作出决定。
+   现有鉴权已允许：`/api/tasks*` 令牌通道只要求全权 scope、不查归属，主管
+   令牌对子树任务直接可调（无需额外放开）。
+3. 主管在 `leadApprovalGraceSec`（config，默认 300 秒）内没有决定：审批**仍
+   挂着、不自动拒绝**，进入用户的「等你处理」（按 `pendingPermission` 列出），
+   并往收件箱补一条 `notice`「审批已上交用户」。主管事后仍可补批；主管被停用
+   （retired）时令牌已吊销、补批只会 401，notice 文案改为「主管已停用，请你
+   直接处理」。
+4. 留痕：事件流里 `permission_result` 结果事件带 `by`（主管令牌名 / 面板）；
+   超时与取消没有决定者，不带这个键。
+5. 时间窗：节点侧审批 900 秒兜底超时不变（节点协议不动）——**主管 + 用户合计
+   有约 15 分钟处理窗口**；`taskPermissionTimeoutSec`（默认 1800s）到点仍按
+   超时拒绝，与以前逐字一致。
+
+主管**自己**的托管任务撞审批（返工项）：不上交、不唤醒（不能当自己的下属），
+但往该主管箱里写一条 `dir='down', kind='notice'` 的用户可见提示——「主管 <名>
+自己的命令需要你批准：<工具名> <参数摘要≤80字>」——指挥台/设置页因此看得见
+卡住的原因；没绑主管的任务仍零条目。主管按 `lead.taskId == task.id` 反查
+（托管自己的任务 `lead` 按规格为空，`task.lead` 指不到人），读到自己的
+`deskport/.agent-token` 仍按敏感文件规则询问。
 
 ## 重启语义（如实版）
 

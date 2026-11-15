@@ -366,6 +366,23 @@ def getLeadIdleSec():
     return value if value >= 0 else 900
 
 
+def getLeadApprovalGraceSec():
+    """主管审批限期（批次 A，秒）：缺省 300，0=不限期（一直等用户）。
+
+    下属的审批请求先上交主管（收件箱 escalation + 立即唤醒）；期限内没决定
+    → 审批仍挂着不自动拒绝，同时上交用户（「等你处理」按 pendingPermission
+    列出），并往收件箱补一条 notice。负数回退缺省。
+    """
+    value = load().get('leadApprovalGraceSec')
+    if value is None:
+        return 300
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 300
+    return value if value >= 0 else 300
+
+
 def getPhoneUploadDir():
     r"""手机分享上传的落盘根目录; 缺失 = <fallbackDir>\手机上传。"""
     path = load().get('phoneUploadDir')

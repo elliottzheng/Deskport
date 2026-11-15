@@ -30,6 +30,7 @@ from modules import settings as settingsModule  # noqa: E402
 from modules import capability_api as capabilityApiModule  # noqa: E402
 from modules import agent_tokens as agentTokensModule  # noqa: E402
 from modules import leads_api as leadsApiModule  # noqa: E402
+from modules import leads_hosted as leadsHostedModule  # noqa: E402
 from modules import leads_inbox as leadsInboxModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
@@ -243,7 +244,8 @@ def skillVersionHeaders(resp):
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
                      capabilityApiModule,
-                     agentTokensModule, leadsApiModule, leadsInboxModule,
+                     agentTokensModule, leadsApiModule, leadsHostedModule,
+                    leadsInboxModule,
                      pluginsModule, agentApiModule, agentHandbookModule,
                      agentToolsModule,
                      agentNodesModule,

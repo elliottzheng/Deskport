@@ -6,7 +6,10 @@
   持有的那份）、federationToken、password、decisionApiKey
 - 本机 agent node 令牌文件 ~/.deskport-agent-node/token（config 与 node
   共享的那份，只读不创建）
-config.json 热改（mtime 变化）即自动重建，无需重启。
+- 批次 A：所有 kind=hosted 主管的任务工作区里的 deskport/.agent-token
+  （一键建托管主管时写的令牌明文，与本机 node 令牌文件同一种"读文件收集"）
+config.json 热改（mtime 变化）即自动重建，托管令牌文件的新建/替换同样按
+mtime 纳入 key，无需重启。
 
 exec / sftp/get 等 API 响应不经此处——那是主控显式取数据，脱敏反而破坏语义。
 """
@@ -33,6 +36,33 @@ def _readTokenFile(path):
         return ''
 
 
+def _hostedTokenFiles():
+    """托管主管的令牌文件清单（批次 A）：[(path, label)]，读失败/无记录 = 空。
+
+    来源 = 所有 kind=hosted 主管的任务工作区里的 deskport/.agent-token（A1-4
+    只往这一个文件写明文）。函数内延迟 import：tasks_store 模块级 import 本
+    模块（事件脱敏），顶层互相 import 会成加载环。任何一步异常都吞掉返回空
+    ——脱敏收集失败不能影响 redactText 的调用方（任务主链路）。
+    """
+    try:
+        from modules import leads_store, tasks_store
+        tasks_store.repo.load()
+        out = []
+        for lead in leads_store.list():
+            if str(lead.get('kind') or '') != 'hosted' or not lead.get('taskId'):
+                continue
+            task = tasks_store.repo.get(str(lead.get('taskId') or ''))
+            workspace = str((task or {}).get('workspace') or '')
+            if not workspace:
+                continue
+            out.append((os.path.join(workspace, 'deskport', '.agent-token'),
+                        'hostedLead.%s.token'
+                        % (lead.get('name') or lead.get('id') or '?')))
+        return out
+    except Exception:
+        return []
+
+
 def _collectPairs():
     pairs = {}
 
@@ -54,6 +84,8 @@ def _collectPairs():
     add(cfg.get('password'), 'password')
     add(cfg.get('decisionApiKey'), 'decisionApiKey')
     add(_readTokenFile(TOKEN_FILE), 'localNode.token')
+    for path, label in _hostedTokenFiles():
+        add(_readTokenFile(path), label)
     # 长值优先：一个令牌是另一个的子串时，先替换长的才不会留下残段
     return tuple(sorted(pairs.items(), key=lambda kv: -len(kv[0])))
 
@@ -61,6 +93,12 @@ def _collectPairs():
 def _statKey():
     key = []
     for path in (config.CONFIG_PATH, TOKEN_FILE):
+        try:
+            key.append(os.stat(path).st_mtime_ns)
+        except OSError:
+            key.append(0)
+    # 批次 A：托管令牌文件不在 config 里，新建/替换要能触发重建
+    for path, _label in _hostedTokenFiles():
         try:
             key.append(os.stat(path).st_mtime_ns)
         except OSError:
@@ -78,6 +116,12 @@ def refresh():
     with _lock:
         _cache['key'] = key
         _cache['pairs'] = pairs
+
+
+def invalidate():
+    """强制下次 pairs() 重建（批次 A：托管令牌刚落盘，mtime 可能同秒）。"""
+    with _lock:
+        _cache['key'] = None
 
 
 def pairs():

