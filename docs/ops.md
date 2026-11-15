@@ -73,7 +73,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 ## 八、测试
 
 ```bash
-# 单元测试（无需服务）
+# 全量（并行：缺省 min(CPU, 6) 组，各组独立 basetemp/APPDATA；约 1–2 分钟）
+# basetemp 在系统临时目录而非仓库 .pytest-tmp：E: 是 USB 机械盘，fsync 慢约
+# 10 倍，存储类测试「每次事件一次 fsync 重写」，落 E: 全量要 4 分半
+.venv\Scripts\python.exe tools\run_tests.py
+
+# 迭代时增量：只跑指定文件 / 相对 main 有改动的模块对应的测试（秒级）
+.venv\Scripts\python.exe tools\run_tests.py --files tests\test_tasks_api.py
+.venv\Scripts\python.exe tools\run_tests.py --changed
+
+# 串行单跑（排查单个文件时用）
 .venv\Scripts\python.exe -m pytest tests -q
 
 # 结构门禁
