@@ -353,7 +353,8 @@ def test_command_endpoints_web_session_only(env):
 
 
 def test_response_size_under_200kb(env):
-    """例 11：253 个任务的合成数据下 overview < 200KB。"""
+    """例 11：300 个任务的合成数据下 overview < 200KB（U2 加了 tree 字段，
+    体积要求不变——树与旧字段承载同一批任务，故树的任务节点只带行内字段）。"""
     login(env.client)
     for i in range(2):
         lead = newLead(env, '主管%02d' % i)
@@ -363,16 +364,16 @@ def test_response_size_under_200kb(env):
         for j in range(40):
             putTask(env, 'L%d-c%03d' % (i, j), lead=lead, status='closed',
                     endedAt=NOW - j, error='e' * 100)
-    for j in range(50):                      # 无主任务：未关闭
+    for j in range(97):                      # 无主任务：未关闭
         putTask(env, 'U-o%03d' % j, status='failed', error='x' * 100)
     for j in range(13):                      # 无主任务：已关闭（只露 5 条）
         putTask(env, 'U-c%03d' % j, status='closed', endedAt=NOW - j)
-    assert len(env.repo.list()) == 253
+    assert len(env.repo.list()) == 300
     resp = call(env, 'get', '/api/command/overview')
     body = resp.get_data(as_text=True)
     size = len(body.encode('utf-8'))
     assert size < 200 * 1024, size
     data = json.loads(body)
-    assert len(data['unassigned']['tasks']) == 50 + 5
+    assert len(data['unassigned']['tasks']) == 97 + 5
     assert data['unassigned']['closedHidden'] == 8
     assert data['unassigned']['running'] == 0

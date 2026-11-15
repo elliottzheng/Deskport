@@ -1,6 +1,6 @@
 # API 参考
 
-本文覆盖：当前全部业务端点（auth、system、command、screen、terminal）的方法、路径、参数、响应与错误码。
+本文覆盖：当前全部业务端点（auth、system、command、screen、terminal、指挥台）的方法、路径、参数、响应与错误码。
 本文不覆盖：`/api/files*` 文件管理 API（已独立成篇，见 [api-files.md](api-files.md)）、终端 WS 帧语义（见 [terminal-protocol.md](terminal-protocol.md)）。
 
 ## 通用约定
@@ -148,3 +148,47 @@ MJPEG 长响应，`Content-Type: multipart/x-mixed-replace; boundary=frame`。�
 ## 文件管理
 
 `/api/files*` 全部端点（浏览/下载/上传/远程下载/启动/重命名/新建/回收站与永久删除/打包下载/解压/压缩/搜索）见 [api-files.md](api-files.md)。
+
+## 指挥台
+
+`/tasks`（指挥台）一屏数据：等你处理 + 一棵指挥树。只读聚合 `tasks_store` /
+`leads_store` / `leads_inbox`，不新建存储；鉴权与 `/api/settings/leads*` 同档——
+**只认网页会话**（设备/智能体令牌与未登录一律 401）。
+
+### `GET /api/command/overview`
+
+无参数。响应四块，前端（批次 U2 起）只渲染 `tree`，其余字段原样保留供回滚与对账：
+
+| 字段 | 说明 |
+|---|---|
+| `pending` | 等你处理：三类行按时间倒序——`permission`（挂起审批，带 `options` 可直接批准/拒绝）、`report`（主管未读汇报）、`problem`（出问题的下属：failed/interrupted/空转/静默轮，限最近 24h） |
+| `tree` | 指挥树（见下） |
+| `leads` | 旧字段：主管卡片（含全量任务 briefs） |
+| `unassigned` | 旧字段：无主任务（含全量任务 briefs） |
+| `retiredLeads` | 停用主管 id→名字（它们名下的任务仍会进 `pending`） |
+
+**树的节点形状**（`children` 递归同形；`type` 为 `task` 时是叶子，不带 `counts`）：
+
+| 键 | 说明 |
+|---|---|
+| `type` | `lead` 主管 / `owner` 未登记的指挥者 / `direct` 面板自己派的 / `orphan` 主管记录已停用或已删 / `task` 任务 / `more` 折起来的更深层级 |
+| `key` | 稳定标识（`lead:<id>`、`owner:<令牌名>`、`direct`、`lead:<已停用id>`、`task:<id>`、`<父key>:more`），前端拿它记展开状态与高亮 |
+| `id` / `name` | 主管 id / 名字；`owner` 的 id 就是令牌名；`direct` 的 id 为空 |
+| `kind` / `state` / `taskId` | 仅 `lead`：`hosted`/`external`、状态徽标（`busy`/`asleep`/`waiting_you`/`paused`）、托管任务 id |
+| `counts` | `{running, waiting_you, failed}`，**逐级汇总含所有后代**（托管主管节点本身即它的托管任务：该任务不计入子项，但计入本节点计数） |
+| `children` | 子节点；`lead` 的子节点 = 名下任务（剔除托管任务本身）+ `parent` 指向它的下一层主管 |
+| `closedHidden` | 该节点下已关闭任务裁剪后还剩几条（默认只显示最近 5 条） |
+| `hint` | 仅 `owner`/`orphan`：登记提示 / 停用提示 |
+
+规则：
+
+- 一级顺序：主管（按建册时间）→ 未登记指挥者（按 owner 分组）→ 已停用的主管 → 面板自己派的（`owner='面板'`，与建任务处同一字面量）。
+- 层级最多 3 层，第 4 层起折成 `more` 节点（只给汇总计数，不再展开）。
+- 任务节点只带行内要用的字段（`id`/`title`/`status`/`node`/`model`/`modelEffective`/`lastActiveAt`），完整摘要走 `GET /api/tasks/<id>`。
+- 体积：300 个任务 < 200KB（树与旧字段承载同一批任务，等于把任务摘要写了两遍）。
+- 已知限制：主管 `parent` 成环时该主管不上树（`leads_store` 目前只接受 `parent='human'`，成环只能靠手改状态文件）。
+
+### `POST /api/command/leads/<leadId>/reports/read`
+
+把该主管的 `reportSeq` 推到 `seq`（用户已读汇报；只增不减）。请求体 `{"seq": <int>}`；
+主管不存在 404，缺 `seq` 或非整数 400。响应 `{"ok": true, "reportSeq": <int>}`。

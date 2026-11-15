@@ -222,7 +222,7 @@
                     if (isLocal) { this.rememberCwd(cwd); }
                     this.newSheetOpen = false;
                     await this.select(data.task);
-                    await this.loadOverview();   // 新任务（无主）立刻进「其它任务」
+                    await this.loadOverview();   // 新任务（无主）立刻进「你直接派的」
                 } catch (err) {
                     this.error = err.message;
                 } finally {
@@ -495,5 +495,6 @@
         },
     });
 app.mixin(WPTasksOverview.mixin());
+app.mixin(WPTasksOverview.tree.mixin());   // 批次 U2：指挥树（tasks-tree.js）
 app.mount('#app');
 })();

@@ -230,6 +230,13 @@ task-back { display: none; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cmd-pending-lead { color: var(--text-3); font-weight: 400; }
+/* 它在树上的路径（U2）：点这一行直接在树里定位并高亮 */
+.cmd-pending-main { cursor: pointer; }
+.cmd-pending-main:hover { background: var(--bg-2); border-radius: var(--radius-s); }
+.cmd-pending-path {
+    font-size: 11px; color: var(--text-3); margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .cmd-pending-sub {
     font-size: 12px; color: var(--text-3); margin-top: 2px;
     word-break: break-all;
@@ -242,41 +249,69 @@ task-back { display: none; }
     color: var(--err); word-break: break-all;
 }
 
-/* ---- 2 主管卡片 ---- */
-.cmd-leads { display: flex; flex-direction: column; gap: var(--sp-2); }
-.cmd-lead-card { padding: var(--sp-3) var(--sp-4); cursor: pointer; }
-.cmd-lead-card.open { border-color: var(--brand); }
-.cmd-lead-head {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    min-height: 44px;
+/* ---- 2 指挥树（批次 U2）---- */
+.cmd-tree { display: flex; flex-direction: column; gap: var(--sp-2); }
+.cmd-sec-side { font-size: 11px; color: var(--text-3); font-weight: 400; }
+.cmd-tree-rows { display: flex; flex-direction: column; }
+/* 每层缩进 16px（手机 12px，见文末断点）+ 左侧细竖线表示层级 */
+.cmd-node {
+    --cmd-indent: 16px;
+    display: flex; align-items: flex-start; gap: 2px; flex-wrap: wrap;
+    min-height: 44px; padding: 4px 0;
 }
-.cmd-lead-name { font-size: 15px; font-weight: 600; }
-.cmd-lead-kind { font-size: 11px; color: var(--text-3); }
-.cmd-lead-unread { font-size: 11px; color: var(--brand); }
+.cmd-node.child { border-left: 1px solid var(--border); padding-left: 8px; }
+.cmd-node.highlight { background: var(--brand-bg); border-radius: var(--radius-s); }
+.cmd-caret {
+    flex-shrink: 0; width: 44px; height: 44px; padding: 0;
+    border: 0; background: transparent; color: var(--text-3);
+    font-size: 12px; line-height: 1; cursor: pointer;
+    transition: transform .15s ease;
+}
+.cmd-caret.open { transform: rotate(90deg); }
+.cmd-caret-blank { display: inline-block; width: 12px; height: 44px; }
+.cmd-node-main {
+    flex: 1; min-width: 0; padding: 6px 4px 6px 0;
+    cursor: pointer; text-align: left;
+}
+.cmd-node-line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cmd-node-line2 {
+    display: flex; flex-wrap: wrap; gap: 2px 12px;
+    font-size: 12px; color: var(--text-3); margin-top: 2px;
+}
+.cmd-node-name {
+    font-size: 14px; font-weight: 600; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-node-name.task { font-weight: 400; font-size: 13px; }
+.cmd-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-3); }
+.cmd-node-counts {
+    font-size: 11px; color: var(--text-3); flex-shrink: 0; margin-left: auto;
+    white-space: nowrap;
+}
 .cmd-badge {
-    padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    padding: 2px 8px; border-radius: 999px; font-size: 11px; flex-shrink: 0;
     background: var(--bg-2); color: var(--text-2);
 }
+.cmd-badge-kind { background: transparent; color: var(--text-3); padding: 2px 0; }
+.cmd-badge-plain { background: var(--bg-2); color: var(--text-3); }
+.cmd-badge-you { background: var(--err-bg); color: var(--err); }
 .cmd-badge-busy { background: var(--brand-bg); color: var(--brand); }
 .cmd-badge-waiting_you { background: var(--err-bg); color: var(--err); }
 .cmd-badge-asleep { color: var(--text-3); }
 .cmd-badge-paused { color: var(--warn); }
-.cmd-lead-sub {
-    display: flex; flex-wrap: wrap; gap: 2px 12px;
-    font-size: 12px; color: var(--text-3); margin-top: 4px;
-}
-.cmd-lead-report {
+.cmd-node-sub, .cmd-node-report {
     min-width: 0; max-width: 100%;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.cmd-lead-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.cmd-lead-actions .btn { min-height: 44px; }
-.cmd-lead-tasks {
-    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
-    display: flex; flex-direction: column; gap: 2px;
-}
+.cmd-node-report { flex: 1; }
+.cmd-node-unread { color: var(--brand); }
+.cmd-node-hint { font-size: 11px; color: var(--text-3); margin: 0; }
+.cmd-node-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; align-items: center; }
+.cmd-node-actions .btn { min-height: 44px; }
+.cmd-more { align-self: flex-start; min-height: 44px; }
+.cmd-more-hint { font-size: 11px; color: var(--text-3); margin: 0; }
 
-/* 下属/无主任务行（主管卡片与「其它任务」同一种行） */
+/* 任务行（树里的叶子节点；与主管卡片已退场的旧行同源，保留类名给 dot 复用） */
 .cmd-task-row {
     display: flex; align-items: center; gap: 10px; width: 100%;
     min-height: 44px; padding: 8px; border: 0; border-radius: var(--radius-s);
@@ -293,23 +328,6 @@ task-back { display: none; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cmd-task-status { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
-.cmd-more { align-self: flex-start; min-height: 44px; }
-.cmd-more-hint { font-size: 11px; color: var(--text-3); margin: 4px 0 0; }
-
-/* ---- 3 其它任务（折叠组） ---- */
-.cmd-unassigned { padding: 0; overflow: hidden; }
-.cmd-unassigned-head {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; width: 100%; min-height: 44px; padding: 10px var(--sp-4);
-    border: 0; background: transparent; color: var(--text-1);
-    font-family: inherit; font-size: 13px; font-weight: 500;
-    text-align: left; cursor: pointer;
-}
-.cmd-unassigned-caret { color: var(--text-3); transition: transform .15s ease; }
-.cmd-unassigned-caret.open { transform: rotate(180deg); }
-.cmd-unassigned .cmd-lead-tasks {
-    margin: 0; padding: 4px var(--sp-3) var(--sp-3); border-top: 1px solid var(--border);
-}
 
 /* ---- 详情面板：所属主管行 + 手机全屏 sheet ---- */
 .task-detail-lead { font-size: 12px; color: var(--text-3); margin-top: 2px; }
@@ -365,6 +383,11 @@ task-back { display: none; }
     .cmd-sheet .task-path-item { min-height: 44px; }
     /* 手机：待办行动作整组换到下一行，不把行撑出横向滚动（U 返工） */
     .cmd-pending-actions { flex-basis: 100%; }
+    /* 手机：每层缩进 12px，计数与动作组各自换行——320 宽度下 3 层缩进仍不横向滚动 */
+    .cmd-node { --cmd-indent: 12px; }
+    .cmd-node-counts { margin-left: 0; flex-basis: 100%; }
+    .cmd-node-actions { flex-basis: 100%; }
+    .cmd-node-line1 { flex-wrap: wrap; }
     /* 手机：详情头部标题独占一行，操作按钮组整组换到下一行——否则按钮列
        flex-shrink:0 会把行内改名输入框压到几十像素（批次 T 实测 20px，没法改名） */
     .task-detail-head { flex-direction: column; align-items: stretch; }

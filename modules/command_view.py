@@ -1,26 +1,22 @@
 # -*- coding: utf-8 -*-
-"""指挥台聚合视图（批次 U）：一个 overview 接口 + 汇报已读。
+"""指挥台聚合视图（批次 U）：一个 overview 接口 + 汇报已读；批次 U2：指挥树。
 
-设计（docs/plan/agent-chain-of-command.md §8，规格 .drive/批次U-指挥台.md）：
-用户只和少数主管说话，待办只来自主管上交的事。本模块把散在三处的数据聚成
-指挥台的一屏——等你处理（审批/汇报/出问题的下属）、主管卡片、其它任务。
-数据全部来自现有存储（tasks_store / leads_store / leads_inbox），不新建存储；
-只读调用现有函数，不改 tasks_store / tasks_runner / leads_api / leads_inbox。
+设计（docs/plan/agent-chain-of-command.md §8，规格 .drive/批次U-指挥台.md、
+.drive/批次U2-指挥台树.md）：用户只和少数主管说话，待办只来自主管上交的事。
+本模块把散在三处的数据聚成指挥台的一屏——等你处理（审批/汇报/出问题的下属）、
+一棵指挥树。数据全部来自现有存储（tasks_store / leads_store / leads_inbox），
+不新建存储；只读调用现有函数，不改它们。鉴权：/api/command/* 只认网页会话
+（不在 authGuard 的令牌通道前缀表里，令牌与未登录一律落到 /api/ 统一 401）。
 
-鉴权：/api/command/* 不在 authGuard 的令牌通道前缀表里（/api/agent、
-/api/tasks、/api/worklines、/api/capability），设备/智能体令牌与未登录一律
-落到 /api/ 统一 401——只认网页会话，与 /api/settings/leads* 同档。
-
-与规格草图的差异（都在草图形状上加键，不改语义）：
-    lead.closedHidden / unassigned.closedHidden——已关闭任务裁剪后还剩几条，
-        前端据此决定显不显示「更多」（草图的 tasks 只有裁剪后的 5 条，看不出
-        还有没有）；brief 由 tasks_store.summaryBrief 加一个 lastActiveAt
-        （行内「最近活跃」要它，summaryBrief 本身不带这个键）。
-    retiredLeads——停用主管的 id→名字（U 返工：停用主管的任务仍会进「等你
-        处理」的问题行，主管卡片又没有它，名字从这里补；详情面板据此显示
-        「已停用的主管」而不是原始 id）。
-
-响应体积：253 个合成任务 < 200KB（tests/test_command_view.py 钉住）。
+U2 起前端改用 tree 字段（旧字段 pending/leads/unassigned/retiredLeads 原样
+保留，供回滚与对账）；节点形状、key 规则、计数口径见 docs/api.md 的 overview
+一节。一级节点五形：lead（非 retired 主管，节点本身即其托管任务，ownTask 从
+子项剔除但计入计数）/ owner（无主管记录却派过任务的令牌，按 owner 分组）/
+direct（面板自己派的，owner='面板'）/ orphan（主管记录已停用或已删、任务还
+挂着）/ more（超过 TREE_DEPTH 层的主管折成一个汇总节点）。任务节点只带
+TASK_NODE_KEYS 里的字段、不带 counts；其它节点带逐级汇总的 counts（等待同时
+给 waiting/waiting_you 两个同值键，旧字段读前者、树读后者）。响应体积：300
+个任务 < 200KB——树与旧字段承载同一批任务，等于把摘要写了两遍。
 """
 import json
 import time
@@ -38,6 +34,11 @@ PROBLEM_STATUSES = ('failed', 'interrupted')  # 出问题的下属（终态两�
 PROBLEM_WINDOW_SEC = 24 * 3600                # 最近 24 小时内结束才算
 LEAD_BUSY_SEEN_SEC = 300                      # 外部主管 5 分钟内见过 = 在忙
 CLOSED_KEEP = 5                               # 已关闭任务每组只留最近 5 条
+PANEL_OWNER = '面板'                          # 面板自己派的活（tasks_api 同字面量）
+TREE_DEPTH = 3                                # 指挥树最多 3 层，更深折成「更多层级 N」
+# 树的任务节点只带行内要用的字段：树与旧字段都带全量 brief，300 个任务就超 200KB（完整摘要走 /api/tasks/<id>，前端 openTask 有兜底）。
+TASK_NODE_KEYS = ('id', 'title', 'status', 'node', 'model', 'modelEffective',
+                  'lastActiveAt')
 ARG_SUMMARY_MAX = 80                          # 审批参数摘要上限（规格：≤80 字）
 REASON_MAX = 80                               # 出问题原因首句上限
 TITLE_MAX = 40                                # 行内标题上限（长标题不撑破行）
@@ -110,10 +111,15 @@ def _splitTasks(tasks):
 
 
 def _taskCounts(tasks):
-    """卡片第二行的下属计数：在跑（running+queued）/ 等待 / 出错。"""
+    """卡片第二行的下属计数：在跑（running+queued）/ 等待 / 出错。
+
+    等待同时给 waiting 与 waiting_you 两个同值键：旧 leads[].counts 用前者，
+    树节点按 U2 规格用后者（前端 countsText 优先读 waiting_you）。
+    """
+    waiting = sum(1 for t in tasks if (t.get('status') or '') == 'waiting')
     return {'running': sum(1 for t in tasks
                            if (t.get('status') or '') in ACTIVE_STATUSES),
-            'waiting': sum(1 for t in tasks if (t.get('status') or '') == 'waiting'),
+            'waiting': waiting, 'waiting_you': waiting,
             'failed': sum(1 for t in tasks
                           if (t.get('status') or '') in PROBLEM_STATUSES)}
 
@@ -229,15 +235,92 @@ def _lastReport(leadId):
 
 def _leadRow(lead, tasks, unread, hasApproval, tasksById, now):
     briefs, closedHidden = _splitTasks(tasks)
-    return {'id': lead.get('id') or '', 'name': lead.get('name') or '',
-            'kind': lead.get('kind') or '', 'status': lead.get('status') or '',
-            'state': _leadState(lead, tasksById, unread, hasApproval, now),
-            'taskId': lead.get('taskId') or '',
-            'lastSeenAt': _int(lead.get('lastSeenAt')),
-            'counts': _taskCounts(tasks),
-            'lastReport': _lastReport(str(lead.get('id') or '')),
-            'unreadReports': unread, 'closedHidden': closedHidden,
-            'tasks': briefs}
+    row = {'id': lead.get('id') or '', 'name': lead.get('name') or '', 'kind': lead.get('kind') or '',
+           'status': lead.get('status') or '', 'state': _leadState(lead, tasksById, unread, hasApproval, now),
+           'taskId': lead.get('taskId') or '', 'lastSeenAt': _int(lead.get('lastSeenAt')),
+           'counts': _taskCounts(tasks), 'lastReport': _lastReport(str(lead.get('id') or '')),
+           'unreadReports': unread, 'closedHidden': closedHidden, 'tasks': briefs}
+    own = row['taskId']      # 托管任务是主管节点本身：子项里剔掉，计数仍含它
+    node = {k: v for k, v in row.items() if k != 'tasks'}   # 全量 briefs 留给旧字段
+    return row, dict(node, type='lead', key='lead:' + row['id'],
+                     children=[_taskNode(b) for b in briefs if b['id'] != own])
+
+
+def _taskNode(brief):
+    return dict({k: brief.get(k) for k in TASK_NODE_KEYS}, type='task',
+                key='task:' + str(brief.get('id') or ''))
+
+
+def _attach(node, byLead, kids, depth):
+    """挂下一层主管并递归（最多 TREE_DEPTH 层），后代计数逐级汇总进本节点。"""
+    def tasksOf(kid):                   # 该主管子树里的全部任务（含子主管的）
+        out = list(byLead.get(kid['id'], []))
+        for sub in kids.get(kid['id'], []):
+            out += tasksOf(sub)
+        return out
+
+    deeper = kids.get(node['id'], [])
+    if depth >= TREE_DEPTH:
+        if deeper:      # 超出的层折成一个汇总节点：只给计数，不再展开
+            node['children'].append(dict(
+                type='more', key=node['key'] + ':more', id='', children=[],
+                name='更多层级 %d' % len(deeper),
+                counts=_taskCounts([t for kid in deeper for t in tasksOf(kid)])))
+    else:
+        for kid in deeper:
+            node['children'].append(_attach(kid, byLead, kids, depth + 1))
+    for kid in node['children']:        # 逐级汇总：子主管/折层节点的计数并进来
+        for k, v in (kid.get('counts') or {}).items():
+            node['counts'][k] = node['counts'].get(k, 0) + v
+    return node
+
+
+def _groupOf(task, retiredLeads):
+    """无主管记录的任务 → (分组 key, 分组)。"""
+    leadId = str(task.get('lead') or '')
+    if leadId:
+        return 'lead:' + leadId, {'id': leadId, 'type': 'orphan',
+                                  'name': retiredLeads.get(leadId)
+                                  or ('已停用的主管 ' + leadId)}
+    owner = str(task.get('owner') or '') or PANEL_OWNER
+    if owner == PANEL_OWNER:
+        return 'direct', {'id': '', 'type': 'direct', 'name': '你直接派的'}
+    return 'owner:' + owner, {'id': owner, 'name': owner, 'type': 'owner'}
+
+
+def _buildTree(leads, leadNodes, byLead, tasks, retiredLeads):
+    """指挥树（规格 U2）：一级顺序即建册顺序，未登记指挥者按 owner 分组，面板
+    自己派的排最后；parent 不是活着的主管记录（'human'/空/悬空）都算一级。
+    """
+    kids, roots = {}, []               # 主管 id → 下一层主管节点 / 一级节点
+    for lead in leads:
+        node = leadNodes.get(str(lead.get('id') or ''))
+        if node is None:               # retired 的主管不进树
+            continue
+        parent = str(lead.get('parent') or '')
+        if parent in ('', 'human') or parent not in leadNodes:
+            roots.append(node)
+        else:
+            kids.setdefault(parent, []).append(node)
+    tree = [_attach(node, byLead, kids, 1) for node in roots]
+
+    groups = {}                        # key → 分组（保首次出现顺序）
+    for task in tasks:
+        if str(task.get('lead') or '') in leadNodes:
+            continue                   # 有主任务已归主管节点
+        key, bucket = _groupOf(task, retiredLeads)
+        groups.setdefault(key, bucket).setdefault('tasks', []).append(task)
+    flat = []      # 一级顺序：未登记/已停用在前，面板自己派的排最后
+    for kind in ('orphan', 'owner', 'direct'):
+        for key, bucket in groups.items():
+            if bucket['type'] != kind:
+                continue
+            tasks = bucket.pop('tasks')   # 任务列表只用于裁剪/计数，不进响应
+            briefs, hidden = _splitTasks(tasks)
+            flat.append(dict(bucket, key=key, closedHidden=hidden,
+                             counts=_taskCounts(tasks),
+                             children=[_taskNode(b) for b in briefs]))
+    return tree + flat
 
 
 def overview():
@@ -251,9 +334,10 @@ def overview():
         byLead.setdefault(str(task.get('lead') or ''), []).append(task)
 
     leadRows, pending = [], []
+    leadNodes = {}                        # 指挥树：id → lead 节点
     retiredLeads = {}                     # 停用主管 id→名字（见模块 docstring）
-    for lead in sorted(leads_store.list(),
-                       key=lambda l: _int(l.get('createdAt'))):
+    liveLeads = sorted(leads_store.list(), key=lambda l: _int(l.get('createdAt')))
+    for lead in liveLeads:
         leadId = str(lead.get('id') or '')
         if (lead.get('status') or '') == 'retired':
             retiredLeads[leadId] = str(lead.get('name') or '')
@@ -263,7 +347,9 @@ def overview():
             leadId, _int(lead.get('reportSeq')), 'down')
         unread = len(entries)
         approvals = sum(1 for t in own if str(t.get('pendingPermission') or ''))
-        leadRows.append(_leadRow(lead, own, unread, approvals, tasksById, now))
+        row, node = _leadRow(lead, own, unread, approvals, tasksById, now)
+        leadRows.append(row)
+        leadNodes[leadId] = node
         pending += _reportPending(lead, entries)
         # 审批在任务侧统一收集（含无主任务），主管只提供名字
 
@@ -282,7 +368,8 @@ def overview():
                            'running': sum(1 for t in unassigned
                                           if (t.get('status') or '')
                                           in ACTIVE_STATUSES),
-                           'closedHidden': closedHidden, 'tasks': briefs}}
+                           'closedHidden': closedHidden, 'tasks': briefs},
+            'tree': _buildTree(liveLeads, leadNodes, byLead, tasks, retiredLeads)}
 
 
 @blueprint.route('/api/command/overview')

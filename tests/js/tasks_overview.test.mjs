@@ -5,7 +5,7 @@ import overview from '../../frontend/assets/js/tasks-overview.js';
 
 const {
     taskStatusText, taskModeText, stateText, firstLine, countsText,
-    unassignedTitle, taskRowView, pendingRows, mergeMoreTasks, newLeadKindChoices,
+    taskRowView, pendingRows, mergeMoreTasks, newLeadKindChoices,
 } = overview;
 
 test('taskStatusText: 九态映射，未知/空原样兜底', () => {
@@ -52,18 +52,13 @@ test('firstLine: 只取首行；超限截断补省略号；空值安全', () => 
     assert.equal(firstLine('只有一行没有上限', 0), '只有一行没有上限');
 });
 
-test('countsText: 三计数拼成一行，缺省 0', () => {
+test('countsText: 三计数拼成一行；树用 waiting_you、旧字段用 waiting', () => {
     assert.equal(countsText({running: 2, waiting: 1, failed: 0}),
-                 '在跑 2 · 等待 1 · 出错 0');
-    assert.equal(countsText({}), '在跑 0 · 等待 0 · 出错 0');
-    assert.equal(countsText(null), '在跑 0 · 等待 0 · 出错 0');
-});
-
-test('unassignedTitle: 「N 个，其中在跑 K」', () => {
-    assert.equal(unassignedTitle(2, 0), '2 个，其中在跑 0');
-    assert.equal(unassignedTitle(0, 0), '0 个，其中在跑 0');
-    assert.equal(unassignedTitle(12, 3), '12 个，其中在跑 3');
-    assert.equal(unassignedTitle(undefined, undefined), '0 个，其中在跑 0');
+                 '在跑 2 · 等你 1 · 出错 0');
+    assert.equal(countsText({running: 2, waiting_you: 3, failed: 1}),
+                 '在跑 2 · 等你 3 · 出错 1');
+    assert.equal(countsText({}), '在跑 0 · 等你 0 · 出错 0');
+    assert.equal(countsText(null), '在跑 0 · 等你 0 · 出错 0');
 });
 
 test('taskRowView: 行字段齐全，执行点/模型/最近活跃拼副行', () => {
