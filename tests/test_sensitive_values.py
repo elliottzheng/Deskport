@@ -3,6 +3,7 @@
 policy 内建 deny（config.json / 令牌文件）。全部用合成令牌，不碰真配置。"""
 import hashlib
 import json
+import time
 
 import pytest
 
@@ -32,7 +33,15 @@ def reg(monkeypatch, tmp_path):
     monkeypatch.setattr(sv, 'TOKEN_FILE', str(tokfile))
     monkeypatch.setattr(sv, '_statKey', lambda: ('test',))
     monkeypatch.setattr(sv, '_cache', {'key': None, 'pairs': ()})
+    # 批 PS2 追件：stat 缓存也是进程级状态，不清会让上个用例的 TTL 时刻
+    # 挡掉本用例的 refresh()
+    monkeypatch.setattr(sv, '_statCache', {'at': 0.0})
     return cfg
+
+
+def _expireStatTtl():
+    """冲掉 stat 缓存（模拟 TTL 已过）——测试里连续 refresh 用。"""
+    sv._statCache['at'] = 0.0
 
 
 def test_sources_labels_and_min_len(reg):
@@ -72,9 +81,102 @@ def test_refresh_follows_config_change(reg, monkeypatch):
     assert sv.redactText('v=' + TOKEN) == 'v=<redacted:remotes.成员A.token>'
     reg['remotes'][0]['token'] = 'fresh-' + 'z' * 16   # config 热改
     stat['k'] = 'k2'
+    _expireStatTtl()          # 批 PS2 追件：TTL 窗口内 refresh 直接返回
     sv.refresh()
     assert sv.redactText('v=' + TOKEN) == 'v=' + TOKEN  # 旧令牌已出册：原样保留
     assert 'fresh-' + 'z' * 16 not in sv.redactText('v=fresh-' + 'z' * 16)
+
+
+# ---------------------------------------------------------------- stat 缓存（批 PS2 追件）
+
+@pytest.fixture
+def realStat(monkeypatch, tmp_path):
+    """真 _statKey / 真收集（不打桩），TOKEN_FILE 指到 tmp 文件。
+
+    不用 reg：它把 _statKey 打成常量，会把这批要测的热路径整个跳过。
+    """
+    monkeypatch.setattr(sv, '_cache', {'key': None, 'pairs': ()})
+    monkeypatch.setattr(sv, '_statCache', {'at': 0.0})
+    tokfile = tmp_path / 'token'
+    tokfile.write_text('', encoding='utf-8')
+    monkeypatch.setattr(sv, 'TOKEN_FILE', str(tokfile))
+    return tokfile
+
+
+def test_no_restat_within_ttl_window(realStat, monkeypatch):
+    """窗口内不重 stat（也就没有每次调用的 makedirs/读盘）；TTL 到期最多
+    重新 stat 一次，mtime+size 没变不重建 pairs。"""
+    stats = {'n': 0}
+    realKey = sv._statKey
+
+    def countingKey():
+        stats['n'] += 1
+        return realKey()
+
+    monkeypatch.setattr(sv, '_statKey', countingKey)
+    for _ in range(50):
+        sv.pairs()
+    assert stats['n'] == 1                    # 首次一次，之后全命中缓存
+    monkeypatch.setattr(sv, 'STAT_TTL_SEC', 0.05)
+    time.sleep(0.1)
+    sv.pairs()
+    assert stats['n'] == 2                    # 到期重新 stat 一次
+    sv.pairs()
+    assert stats['n'] == 2                    # 又在窗口内：不重 stat
+
+    collects = {'n': 0}
+    realCollect = sv._collectPairs
+
+    def countingCollect():
+        collects['n'] += 1
+        return realCollect()
+
+    monkeypatch.setattr(sv, '_collectPairs', countingCollect)
+    sv.pairs()
+    time.sleep(0.1)
+    sv.pairs()
+    assert stats['n'] == 3 and collects['n'] == 0   # key 没变：只 stat 不重建
+
+
+def test_source_change_perceived_within_one_second(realStat):
+    """来源文件变化后 1 秒内被感知（真实 STAT_TTL_SEC，不加速）。"""
+    first = 'first-token-' + 'a' * 16
+    realStat.write_text(first, encoding='utf-8')
+    assert any(v == first for v, _l in sv.pairs())     # 首次收集（同时起 TTL）
+    rotated = 'rotated-tok-' + 'b' * 16
+    realStat.write_text(rotated, encoding='utf-8')
+    changedAt = time.monotonic()
+    deadline = changedAt + 2.0
+    seen = False
+    while time.monotonic() < deadline:
+        if any(v == rotated for v, _l in sv.pairs()):
+            seen = True
+            break
+        time.sleep(0.05)
+    assert seen, '来源变化 2 秒内未被感知（TTL 应 ≤1 秒）'
+    assert time.monotonic() - changedAt <= 1.5
+    assert not any(v == first for v, _l in sv.pairs())
+
+
+def test_append_event_p50_under_2ms(tmp_path):
+    """追件目标：stat 缓存后 append_event p50 <2ms——此前 redactEvent 每次
+    重读来源（~3.7ms）是 p50 的主要来源。不用 reg（它把 _statKey 打成常量，
+    会把这热路径整个跳过）。"""
+    repo = _repo(tmp_path)
+    task = {'id': 'p50', 'seq': 0, 'events': [], 'status': 'running'}
+    repo.put(task)
+    repo.append_event(task, 'assistant', text='预热')      # 首次 stat 进缓存
+    durations = []
+    for i in range(300):
+        t0 = time.perf_counter()
+        repo.append_event(task, 'tool', name='Bash',
+                          args='{"command": "echo %d"}' % i,
+                          full='{"command": "echo %d"}' % i,
+                          truncated=False, callId='c%d' % i, status='completed')
+        durations.append((time.perf_counter() - t0) * 1000)
+    durations.sort()
+    p50 = durations[len(durations) // 2]
+    assert p50 < 2, 'append_event p50 %.2fms（追件目标 <2ms）' % p50
 
 
 # ---------------------------------------------------------------- 事件流

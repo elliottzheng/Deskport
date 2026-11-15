@@ -71,6 +71,7 @@ def test_save_stable_while_writers_add_keys(tmp_path):
     for _ in range(300):
         repo.append_event(task, 'status', text='x')
     writer.join()
+    repo.flush()          # 批 PS2：append_event 不再 save——显式落盘再读文件
     import json
     data = json.loads((tmp_path / 'tasks.json').read_text(encoding='utf-8'))
     assert data['t1']['status'] == 'queued'

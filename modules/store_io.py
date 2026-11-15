@@ -6,6 +6,9 @@
 并发 save 共用同一 .tmp 路径会互替换掉对方的临时文件；Windows 上并发
 os.replace 同一目标必撞访问拒绝；读盘撞上 replace 的瞬间会被当成"无状态"，
 启动时丢全部任务。
+
+批 PS2 追件：落盘步（os.replace）的瞬时拒绝重试不在这里各写一份——
+共用 state.replaceWithRetry（20/40/80/160ms 退避 4 次）。
 """
 import json
 import logging
@@ -13,6 +16,8 @@ import os
 import tempfile
 import threading
 import time
+
+from modules import state
 
 log = logging.getLogger('tasks')
 
@@ -37,6 +42,8 @@ def saveSnapshot(path, payload, seq, gate):
     写盘（并发 os.replace 同一目标必撞 WinError 5/32）、序号门（旧快照不
     覆写已落盘的更新快照）。序号门的读-比-写-更新整段在 _IO_LOCK 内完成，
     比较用锁内读到的 gate.savedSeq，锁外读旧值绕过门的路堵死（P1）。
+    批 PS2 追件：replace 的瞬时 PermissionError 由 state.replaceWithRetry
+    按 20/40/80/160ms 退避重试 4 次（瞬时占用是常态，不是状态损坏）。
     """
     with _IO_LOCK:
         if seq <= gate.savedSeq:
@@ -48,7 +55,7 @@ def saveSnapshot(path, payload, seq, gate):
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as f:
                     f.write(payload)
-                os.replace(tmp, path)
+                state.replaceWithRetry(tmp, path)
             except OSError:
                 try:
                     os.unlink(tmp)
