@@ -63,6 +63,24 @@ psutil 实时快照。无参数。
 - `interfaces`：全部网卡的 IPv4；`169.*` 链路本地地址 `linkLocal` 为 `true`，前端降序展示且置灰。
 - `memory.*` 单位字节；`uptimeSeconds` 基于进程启动时缓存的 `psutil.boot_time()`。
 
+### `POST /api/system/drain`
+
+部署排空（批次 DR）：`deploy.ps1` 同步代码前调用——中枢停止接受新的一轮开始（新消息/新任务照常排队，不拒绝），等在飞回合自然结束或超时。超时也放行部署，仍在跑的任务标记 `pausedBy='restart'`（web 重启后由批次 L3 自动续接）。
+
+只认**网页会话或本机回环地址**调用（远端匿名 403，无需令牌）。请求体 `{"timeoutSec": N}`：缺省 `300`；`0` = 探针（只报在飞回合，不进入排空）。排空进行中再来一次返回 `409`。
+
+```json
+{
+  "drained": true, "timedOut": false,
+  "initial": [{"id": "ab12cd34", "title": "…", "node": "local",
+               "status": "running", "owner": "面板"}],
+  "remaining": [], "waitedSec": 42.3
+}
+```
+
+- `drained`：`true` = 所有在飞回合已自然结束；`false` 且 `timedOut: true` = 超时放行，`remaining` 里的任务已标记 `pausedBy='restart'`。
+- `waitedSec`：实际等待秒数。探针响应为 `{"probe": true, "running": [...], "count": N}`。
+
 ## 命令执行
 
 ### `POST /api/command`
