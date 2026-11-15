@@ -21,6 +21,7 @@ EXEMPT_PREFIXES = (
     '/api/agent/handbook',      # 公开接入手册: 令牌之前就要能读
     '/api/agent/tools',         # 公开工具箱: 手册指向的零依赖客户端/驱动/协作原则
     '/api/agent/skill.zip',     # 公开整包: 无令牌下一个 zip 拿全技能目录
+    '/api/system/drain',        # 部署排空: 端点内自检(回环或网页会话), 远程匿名 403
     '/assets/css/tokens.css',
     '/assets/css/login.css',
     '/manifest.webmanifest',
