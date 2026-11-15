@@ -25,6 +25,8 @@ from modules.tasks_store import TaskRepository
 
 PASSWORD = 'pw-123456'
 SUBMIT_TITLE = 'mcp__deskport__submit_result'
+IMPL_OK = {'summary': '交付了 X', 'commit': 'abc1234',
+           'tests': {'passed': 12, 'failed': 0, 'skipped': 1}}
 
 
 @pytest.fixture
@@ -111,6 +113,36 @@ class StubKimi:
         pass
 
 
+class CloseSpyKimi:
+    """轮中挂住的桩：cancel 时记录令牌状态——那一刻会话线程一定还活着
+    （prompt 里等着），所以令牌失效只能是关闭路径做的，不是线程收尾。"""
+    instances = []
+
+    def __init__(self, cwd, on_update=None, on_permission=None,
+                 mode='auto', prompt_timeout=0):
+        self.mcp_servers, self.stderr_lines = None, []
+        self.entered, self.release = threading.Event(), threading.Event()
+        self.tokenAtCancel = 'unset'
+        CloseSpyKimi.instances.append(self)
+
+    def start(self, session_id=None):
+        return 'sess-spy'
+
+    def prompt(self, text, timeout=None):
+        self.entered.set()
+        assert self.release.wait(10)
+        return {'stopReason': 'end_turn'}
+
+    def cancel(self):
+        # closeTaskCore 先吊销令牌再调 cancel：此刻令牌必须已经失效
+        token = (self.mcp_servers or [{}])[0].get('headers', [{}])[0].get('value', '')
+        self.tokenAtCancel = task_result_mcp.tokenTask(token)
+        self.release.set()
+
+    def close(self):
+        pass
+
+
 # ---------------------------------------------------------------- 本机路径
 
 def test_local_path_injects_mcp_servers(env):
@@ -162,6 +194,38 @@ def test_no_expects_no_injection(env):
     stopThread(env, tid, th)
     assert StubKimi.instances[0].mcp_servers == []
     assert task_result_mcp.tokenTask('whatever') == ''
+
+
+def test_token_dies_at_close_while_session_alive(env):
+    """关闭的同一时刻令牌失效（G1 返工项 2）：不依赖会话线程收尾——线程
+    还卡在轮里（cancel 时才放行），令牌在 cancel 之前就已吊销。"""
+    login(env.client)
+    CloseSpyKimi.instances = []
+    tid = newTask(env, 'impl')
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    th = threading.Thread(target=runner._sessionThread, args=(task, []),
+                          kwargs={'clientFactory': CloseSpyKimi}, daemon=True)
+    th.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not (CloseSpyKimi.instances
+                                          and CloseSpyKimi.instances[0].mcp_servers):
+        time.sleep(0.05)
+    client = CloseSpyKimi.instances[0]
+    token = client.mcp_servers[0]['headers'][0]['value']
+    assert client.entered.wait(10)          # 轮已开：线程活着且卡在 prompt
+    assert task_result_mcp.tokenTask(token) == tid
+    assert env.client.post('/api/tasks/%s/close' % tid).status_code == 200
+    # cancel 被调用时线程仍在 prompt 里：令牌已 '' = 关闭路径吊销的
+    assert client.tokenAtCancel == ''
+    resp = env.app.test_client().post(
+        '/api/tasks/%s/result' % tid,
+        data=json.dumps(IMPL_OK),
+        content_type='application/json',
+        headers={task_result_mcp.TOKEN_HEADER: token})
+    assert resp.status_code == 401
+    th.join(timeout=10)
+    assert env.repo.get(tid)['status'] == 'closed'
 
 
 def test_missing_hub_url_skips_injection(env):

@@ -214,6 +214,18 @@ def validate(data, expects):
 
 # ---------------------------------------------------------------- 呈现
 
+# 终态集合（关闭竞态返工，G1 独立验收项 1）：结果门禁与 runner 收尾共用。
+# closedByUser 单算一项——用户点了关闭、runner 还没落定终态的那一小段窗口里，
+# status 可能还是 failed，但任务已经"算结束了"，不能再收结果。
+ENDED_STATES = ('closed', 'cancelled', 'failed', 'interrupted')
+
+
+def ended(task):
+    """任务是否已终结（用户关闭中 / 已入终态）——结果接口据此 409。"""
+    t = task or {}
+    return bool(t.get('closedByUser')) or (t.get('status') or '') in ENDED_STATES
+
+
 def needsJudgment(clean, expects):
     """本次结果是否需要主管判断（impl 的 questions / verify 的 needs_judgment）。"""
     if expects == 'impl':
@@ -278,7 +290,7 @@ def _storeResult(task, clean, expects, via):
         count = task['resultCount']
         store.repo.save()
     store.repo.append_event(task, 'result', text=resultText(clean, expects),
-                            via=via, **clean)
+                            via=via, expects=expects, **clean)
     return brief, count
 
 

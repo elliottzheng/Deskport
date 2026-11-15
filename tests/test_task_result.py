@@ -4,6 +4,7 @@
 夹具同 test_leads_inbox_store（env/login/call/newToken/newLead）：config.statePath
 与任务仓储指到 tmp，唤醒不起真 kimi。提交面（POST /api/tasks/<id>/result）与
 MCP 面（tests/test_task_result_mcp.py）共用 modules/task_result.submit。
+关闭竞态（窗口序/前置序）的回归在 tests/test_task_result_close.py。
 """
 import json
 import os

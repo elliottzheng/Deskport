@@ -3,7 +3,9 @@
 
 三种身份（规格 §2）：该任务的会话令牌（X-Deskport-Session-Token，与 MCP
 同一个令牌）、任务属主/主管的智能体令牌、网页会话。执行方校验失败可重交
-（400 带逐字段 errors）；已关闭/已取消的任务不再收（409）。
+（400 带逐字段 errors）；已结束的任务不再收（409）——closedByUser 或任何
+终态都算结束（关闭竞态返工：用户关任务到 runner 落定终态之间有窗口，
+窗口里 status 可能还是 failed，但任务已算结束）。
 
 与 MCP 面（task_result_mcp）共用 task_result.submit——存储、事件、主管
 收件箱的规则只有一份。
@@ -42,7 +44,9 @@ def postResult(taskId):
         return jsonify({'error': '任务不存在'}), 404
     if not _authorized(task):
         return jsonify({'error': '无权提交该任务的结果（属主/主管/会话令牌）'}), 403
-    if (task.get('status') or '') in ('closed', 'cancelled'):
+    if task_result.ended(task):
+        # 关闭竞态（G1 返工）：用户已关闭（closedByUser，runner 可能还没落定
+        # 终态）或已入任何终态（failed/interrupted 也算）都不再收
         return jsonify({'error': '任务已结束，不能再提交结果'}), 409
     data = request.get_json(force=True, silent=True) or {}
     payload, code = task_result.submit(task, data, via='http')

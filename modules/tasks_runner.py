@@ -546,14 +546,24 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
     except Exception as e:
         _flushAssistant(task)   # 异常中断也保留已收到的部分回答
         with store.repo.lock:
-            task_state.transition(task, task_state.TaskState.FAILED)
-            task['endedAt'] = store._now()
-            task['error'] = str(e)[:2000]
-            if client and client.stderr_lines:
-                task['error'] += '\n' + '\n'.join(client.stderr_lines[-10:])
+            if task.get('closedByUser'):
+                # 关闭竞态（G1 返工）：用户已关闭 → 直接落 CLOSED，不经过
+                # FAILED——中间态会让结果接口在窗口里放行提交、事件流里
+                # 留一条假的失败
+                task_state.transition(task, task_state.TaskState.CLOSED)
+                task['endedAt'] = store._now()
+            else:
+                task_state.transition(task, task_state.TaskState.FAILED)
+                task['endedAt'] = store._now()
+                task['error'] = str(e)[:2000]
+                if client and client.stderr_lines:
+                    task['error'] += '\n' + '\n'.join(client.stderr_lines[-10:])
             store.repo.save()
-        store.repo.append_event(task, 'error', text=task.get('error') or str(e))
-        log.warning('ACP task failed %s: %s', taskId, e)
+        if not task.get('closedByUser'):
+            # 窗口竞态：上面写完 FAILED 后用户才关闭——错误事件不再落（用户
+            # 关闭 supersede 这次失败），终态由 finally 修回 CLOSED
+            store.repo.append_event(task, 'error', text=task.get('error') or str(e))
+            log.warning('ACP task failed %s: %s', taskId, e)
     finally:
         # 批次 G1：会话线程退出 = MCP 注入的 submit_result 令牌随之作废
         # （任务关闭/失败/重启休眠都不再收提交；续跑时发新令牌）
@@ -581,6 +591,8 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             if task.get('closedByUser'):
                 task_state.transition(task, task_state.TaskState.CLOSED)
                 task['endedAt'] = task.get('endedAt') or store._now()
+                # 关闭竞态残值：窗口里写过的 error 被用户关闭 supersede
+                task['error'] = ''
             elif task.get('status') in ('running', 'waiting'):
                 task_state.transition(task, task_state.TaskState.PAUSED)
                 task['resume'] = bool(task.get('sessionId'))
