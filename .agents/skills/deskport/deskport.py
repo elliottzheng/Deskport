@@ -272,6 +272,23 @@ class Deskport:
     def host(self, name: str, cwd: str | None = None) -> "Host":
         return Host(self, name, cwd)
 
+    # ---- 主管（批次 SR：全权令牌自助成为外部主管，无需用户操作）----
+    def lead(self) -> dict | None:
+        """我（本令牌）绑了哪个主管；没绑返回 None。"""
+        return self._request("GET", "/api/agent/lead").get("lead")
+
+    def register_lead(self, name: str, project: str = "") -> dict:
+        """用本令牌自助成为外部主管（仅全权令牌可用）。
+
+        服务端建 kind=external 主管并把调用令牌绑上去。已绑同名 → 200 返回
+        现有记录；已绑别的名字 / 名字被非 retired 主管占用 → 409
+        （DeskportError，detail 里带回已绑主管）；受限/联邦/设备令牌 403。
+        """
+        body = {"name": name}
+        if project:
+            body["project"] = project
+        return self._request("POST", "/api/agent/lead", body)["lead"]
+
     def upload(self, name: str, data: bytes | str) -> str:
         """上传文件到 Deskport 本机任务区，返回本机路径（可放进 create_task 的 paths）。"""
         if isinstance(data, str):
@@ -621,6 +638,9 @@ if __name__ == "__main__":
     ap.add_argument("-C", "--cwd", help="远端工作目录")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("hosts")
+    p = sub.add_parser("lead", help="主管：--register <名字> 自助成为外部主管（全权令牌）；不带则看当前绑定")
+    p.add_argument("--register", metavar="名字", help="用本令牌注册成为外部主管")
+    p.add_argument("--project", help="主管备注（课题/项目，可空）")
     p = sub.add_parser("run"); p.add_argument("command"); p.add_argument("-t", "--timeout", type=int, default=30)
     p = sub.add_parser("ls"); p.add_argument("path", nargs="?", default=".")
     p = sub.add_parser("cat"); p.add_argument("path")
@@ -668,6 +688,30 @@ if __name__ == "__main__":
                           insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")))
             for h in dp.hosts():
                 print(f"{h['name']}\t{h['host']}:{h['port']}\t{h['id']}")
+            sys.exit(0)
+        if a.cmd == "lead":
+            cfg = _load_config()
+            dp = Deskport(a.url or cfg.get("url"),
+                          insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
+                          cafile=cfg.get("cafile"))
+            if a.register:
+                try:
+                    lead = dp.register_lead(a.register, a.project or "")
+                except DeskportError as e:
+                    if e.status != 409:
+                        raise
+                    existing = dp.lead()   # 已绑定的令牌：看现有主管，退出 0
+                    if not existing:       # 名字被别的主管占用：真冲突，报错
+                        raise
+                    lead = existing
+            else:
+                lead = dp.lead()
+            if not lead:
+                print("未绑定主管（全权令牌可用 lead --register <名字> 自助成为外部主管）")
+            else:
+                print("主管 %s（id %s）%s" % (
+                    lead.get("name") or "?", lead.get("id") or "?",
+                    (" project=%s" % lead["project"]) if lead.get("project") else ""))
             sys.exit(0)
         if a.cmd in ("task", "tasks", "wait"):
             cfg = _load_config()

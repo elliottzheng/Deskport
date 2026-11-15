@@ -667,6 +667,27 @@ GET /api/agent/lead
   没绑主管（含绑定悬空：记录被手删）→ {"lead": null}
 ```
 
+令牌通道自助成为主管（批次 SR，仅全权令牌——全权令牌本就等于整机控制权，
+给它自己建主管不增加任何权限；受限令牌 403 `{"error","need":"full"}`，
+联邦/设备令牌同样 403）：
+
+```text
+POST /api/agent/lead  {"name": "甲", "project": "课题"}   → 201 {"lead": 记录}
+  已绑主管且同名                                        → 200 {"lead": 记录}（幂等）
+  已绑别的名字 / 与现有非 retired 主管重名                → 409（响应体带 lead：已绑的主管）
+```
+
+- 建一个 `kind='external'`、`parent='human'` 的主管（名字规则与设置页相同），
+  把**调用令牌自己**绑上去；之后 `GET /api/agent/lead` 即返回它，该令牌建的
+  任务自动记 `task.lead`；不能绑别的令牌，也不能改别的主管；
+- 注册成功顺手认领：该令牌之前建的、`lead` 为空且 `owner` 等于令牌名的任务
+  改记到新主管名下——未结束的全认，已结束的（closed/cancelled）只认最近
+  7 天内结束的；响应体带 `claimed: N`，审计 `lead.self_registered` 的
+  detail 记 `claimed=N`；
+- 审计 `lead.self_registered`（令牌名、主管 id、名字、认领数）；
+- 客户端一行：`python deskport.py lead --register "<名字>" [--project X]`
+  （已绑定时打印现有主管并退出 0）。
+
 建任务记归属：
 
 - 绑了主管的令牌建任务 → 任务卡带 `lead` = 主管 id（列表 `summaryBrief`、
