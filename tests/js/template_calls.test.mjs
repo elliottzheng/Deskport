@@ -39,6 +39,7 @@ const PAGES = [
         html: 'frontend/settings.html',
         js: ['frontend/assets/js/settings-leads.js',
              'frontend/assets/js/settings-capability.js',
+             'frontend/assets/js/settings-feedback.js',
              'frontend/assets/js/settings.js'],
     },
     {

@@ -50,7 +50,7 @@ FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp'
             'feedback', 'feedback_store', 'files', 'files_archive', 'files_base', 'files_browse',
             'files_federation', 'files_pins', 'files_transfer', 'leads_api', 'leads_escalation', 'leads_hosted', 'leads_inbox', 'leads_store',
             'screen', 'ssh', 'task_cwd', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
-            'terminal', 'worklines_api', 'worklines_store'}
+            'terminal', 'worklines_api', 'worklines_store', 'feedback_envelope', 'feedback_status', 'feedback_rate', 'feedback_views', 'feedback_ops'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
                            ('tasks_api', 'tasks_runner'), ('tasks_api', 'tasks_store'),
@@ -89,8 +89,8 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('files_browse', 'files_base'),   # 家族底座
     ('files_pins', 'files_base'),     # 家族底座
     ('files_transfer', 'files_base'), # 家族底座
-    # —— feedback（路由 → 存储, 同 tasks_api → tasks_store 的形状）——
-    ('feedback', 'feedback_store'),
+    # 批次 F1 拆 feedback 家族：store=表原语/提交/pendingSummary；envelope=信封校验；status=状态机规则（纯）；rate=频控持久化；views=读路径；ops=写操作；feedback.py 聚合路由
+    ('feedback', 'feedback_store'), ('feedback', 'feedback_envelope'), ('feedback', 'feedback_views'), ('feedback', 'feedback_ops'), ('feedback', 'feedback_rate'), ('feedback_store', 'feedback_status'), ('feedback_views', 'feedback_store'), ('feedback_ops', 'feedback_store'), ('feedback_ops', 'feedback_status'),
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
     ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
@@ -129,7 +129,7 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
                   'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads', 'WPTasksOverview',  # 批次 S 主管卡片/任务页筛选 + 批次 U 指挥台一屏（纯函数有 node 单测）
                   # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
-                  'WPSettingsCapability'}
+                  'WPSettingsCapability', 'WPFeedbackMine', 'WPSettingsFeedback'}   # 批次 F1 后两个：反馈「我的反馈」页签 + 设置页「反馈」处理卡片（纯函数有 node 单测）
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。
 # 规则: 跨模块 import 不得出现单下划线前缀（引私有名 / 公有名起私有别名都算）。
 # 本表登记的是「同包内部接缝」——提供方是使用方所在家族的共享底座, 私有助手
