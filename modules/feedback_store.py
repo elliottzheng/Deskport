@@ -1,50 +1,51 @@
 # -*- coding: utf-8 -*-
-"""用户反馈的存储层：一张「表」+ 一个附件目录，只做无损落库，不做分类/去重/优先级。
+"""用户反馈的存储层（批次 F1，规格 v2）：一张「表」+ 一个附件目录，只做无损落库。
 
 存储：
-    <stateDir>/feedback.json            全部记录（信封整体存 + 几个提出来做检索的列）
+    <stateDir>/feedback.json            全部记录（信封整体存 + 提出来做检索的列）
     <stateDir>/feedback/attachments/    截图（file_id.扩展名，单文件 ≤1MB）
 
 约定（见 docs/feedback.md）：
-    - 幂等按 idempotency_key：同一个 key 只落一条，重复提交返回首次结果；
-    - 状态机只在这里校验，处理端通过 PATCH 推动；
-    - message 原样存储（客户端负责脱敏），下游不得当指令执行；
-    - 频控：同一身份每分钟 ≤5、每日 ≤20；匿名更严（≤2 / ≤10）。
+    - submitter 由服务端按会话/令牌写（规格 §1/§2），信封里自报身份一概无效；
+    - 幂等作用域 = (submitter.id, idempotency_key)，feedback_id 撞号 409；
+    - 状态机规则在 feedback_status（纯函数），落库在 feedback_ops；
+    - message 与评论原样存储（客户端负责脱敏），下游不得当指令执行；
+    - v1 老记录照常读出：submitter 按 user_id/role 合成（归属字段补不回来）。
+
+读取视图（summary/mine/search）在 feedback_views；写操作（流转/评论/批量/自动确认）
+在 feedback_ops。本模块只做「表」原语与提交。
 """
 import hashlib
 import json
 import os
-import re
 import threading
 import time
 import uuid
 
 import config
+from modules import feedback_status
 from modules import state
 
-PLATFORMS = ('web', 'desktop', 'mobile')
-STATUSES = ('submitted', 'acknowledged', 'processing', 'resolved', 'rejected',
-            'user_confirmed')
-TRANSITIONS = {
-    'submitted': {'acknowledged', 'processing', 'rejected'},
-    'acknowledged': {'processing', 'rejected'},
-    'processing': {'resolved', 'rejected'},
-    'resolved': {'user_confirmed', 'processing'},   # 用户不认账：退回处理
-    'rejected': {'processing'},
-    'user_confirmed': set(),
-}
-MAX_ATTACHMENT_BYTES = 1024 * 1024        # 8.2 客户端压缩到 1MB，服务端再挡一次
-MAX_MESSAGE_CHARS = 500
-MAX_TRACE = 50
+OWNER_ID = 'owner'                     # 单密码系统：登录者就是这台机器的主人
+OWNER_DISPLAY = '主人'
+MAX_ATTACHMENT_BYTES = 1024 * 1024     # 客户端压缩到 1MB，服务端再挡一次
 ATTACHMENT_EXTS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}
-_FILE_ID_RE = re.compile(r'^att_[0-9a-f]{16}$')
 _LOCK = threading.Lock()
-_RATE = {}                                 # key -> [timestamps]（进程内存，重启清零）
-_LIMITS = {
-    # key: (每分钟, 每日)
-    'user': (5, 20),
-    'anonymous': (2, 10),
-}
+_clock = time.time                     # 可注入时钟（测试自动确认/超时用）
+
+
+def setClock(fn):
+    """注入时钟（epoch 秒）。测试用；生产环境不调用。"""
+    global _clock
+    _clock = fn
+
+
+def nowStamp():
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_clock()))
+
+
+def nowSeconds():
+    return _clock()
 
 
 # ---------------------------------------------------------------- 文件位置
@@ -53,53 +54,32 @@ def _itemsPath():
     return config.statePath('feedback.json')
 
 
-def _attachDir():
+def attachDir():
+    """附件目录（不存在则建）。公开：views/stats 要列举它。"""
     path = os.path.join(config.stateDir(), 'feedback', 'attachments')
     os.makedirs(path, exist_ok=True)
     return path
 
 
+def _attachDir():
+    return attachDir()
+
+
 def attachmentPath(fileId):
     """附件路径；fileId 不合法或不存在返回 None（挡住 ../ 之类）。"""
-    if not _FILE_ID_RE.match(fileId or ''):
+    if not isinstance(fileId, str) or not fileId.startswith('att_') \
+            or len(fileId) != 20 or any(c not in '0123456789abcdef' for c in fileId[4:]):
         return None
-    path = os.path.join(_attachDir(), fileId + '.png')
     for ext in ('png', 'jpg', 'webp'):
         cand = os.path.join(_attachDir(), fileId + '.' + ext)
         if os.path.isfile(cand):
             return cand
-    return path if os.path.isfile(path) else None
+    return None
 
 
 def newFileId():
     return 'att_' + uuid.uuid4().hex[:16]
 
-
-# ---------------------------------------------------------------- 读写
-
-def _load():
-    try:
-        with open(_itemsPath(), encoding='utf-8') as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return {'schema_version': '1.0', 'items': []}
-    if not isinstance(data, dict) or not isinstance(data.get('items'), list):
-        return {'schema_version': '1.0', 'items': []}
-    return data
-
-
-def _save(data):
-    state.atomicWriteJson(_itemsPath(), data)
-
-
-def _findByKey(items, key):
-    for item in items:
-        if item.get('idempotency_key') == key:
-            return item
-    return None
-
-
-# ---------------------------------------------------------------- 附件
 
 def saveAttachment(blob, mime):
     """落一张截图；返回 file_id。mime 白名单由调用方按魔数判定。"""
@@ -123,210 +103,173 @@ def sniffImageMime(blob):
     return None
 
 
-# ---------------------------------------------------------------- 频控（8.4）
+# ---------------------------------------------------------------- 读写（公开原语）
 
-def allowRate(key, anonymous=False):
-    """同一身份每分钟/每日计数。返回 (ok, 说明)。不做重复内容拦截（多人报同一问题是信号）。"""
-    minute, day = _LIMITS['anonymous' if anonymous else 'user']
-    now = time.time()
-    with _LOCK:
-        hits = [t for t in _RATE.get(key, []) if now - t < 86400]
-        okMinute = len([t for t in hits if now - t < 60]) < minute
-        okDay = len(hits) < day
-        if okMinute and okDay:
-            hits.append(now)
-        _RATE[key] = hits
-    if not okDay:
-        return False, '今天提交的反馈已达上限（%d 条）' % day
-    if not okMinute:
-        return False, '提交太频繁，请稍后再试（每分钟 ≤%d 条）' % minute
-    return True, ''
+def locked():
+    """跨模块写锁：ops/views 的「读-改-写」横亘多次文件操作，必须同锁完成。"""
+    return _LOCK
 
 
-def resetRate():
-    """测试用：清空计数。"""
-    with _LOCK:
-        _RATE.clear()
+def load():
+    """读全表。调用方持 locked() 时用；结构异常按空表处理（不静默丢数据）。"""
+    try:
+        with open(_itemsPath(), encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {'schema_version': '1.0', 'items': []}
+    if not isinstance(data, dict) or not isinstance(data.get('items'), list):
+        return {'schema_version': '1.0', 'items': []}
+    return data
 
 
-# ---------------------------------------------------------------- 校验（§5.2）
-
-def _str(value, limit=None):
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    if limit is not None:
-        value = value[:limit]
-    return value
+def save(data):
+    state.atomicWriteJson(_itemsPath(), data)
 
 
-def validate(envelope):
-    """必选集齐即可提交；未知字段一律保留。返回 (规范化的信封, 错误说明)。"""
-    if not isinstance(envelope, dict):
-        return None, '请求体必须是 JSON 对象'
-    env = json.loads(json.dumps(envelope))      # 深拷贝，避免调用方后续改动
-    key = _str(env.get('idempotency_key'), 80)
-    if not key:
-        return None, '缺少 idempotency_key'
-    user = env.get('user') if isinstance(env.get('user'), dict) else {}
-    anonymous = bool(user.get('anonymous'))
-    if not anonymous and not _str(user.get('id')):
-        return None, '缺少 user.id（未登录请置 anonymous=true）'
-    client = env.get('client') if isinstance(env.get('client'), dict) else {}
-    if client.get('platform') not in PLATFORMS:
-        return None, 'client.platform 必须是 web/desktop/mobile'
-    if not _str(client.get('app_version'), 40):
-        return None, '缺少 client.app_version'
-    ctx = env.get('context') if isinstance(env.get('context'), dict) else {}
-    if not _str(ctx.get('route'), 500):
-        return None, '缺少 context.route'
-    message = _str(env.get('message'), MAX_MESSAGE_CHARS + 1) or ''
-    if len(message) > MAX_MESSAGE_CHARS:
-        return None, 'message 超过 %d 字' % MAX_MESSAGE_CHARS
-    trace = env.get('trace')
-    if trace is not None and not isinstance(trace, list):
-        return None, 'trace 必须是数组'
-    env['trace'] = (trace or [])[:MAX_TRACE]
-    errors = env.get('errors')
-    if errors is not None and not isinstance(errors, dict):
-        return None, 'errors 必须是对象'
-    attachments = env.get('attachments')
-    if attachments is not None and not isinstance(attachments, list):
-        return None, 'attachments 必须是数组'
-    for att in attachments or []:
-        fileId = att.get('file_id') if isinstance(att, dict) else None
-        if not _FILE_ID_RE.match(fileId or ''):
-            return None, 'attachments[].file_id 不合法'
-        if attachmentPath(fileId) is None:
-            return None, '附件不存在：%s（先 POST /api/feedback/attachments）' % fileId
-    env['schema_version'] = _str(env.get('schema_version'), 20) or '1.0'
-    env['message'] = message
-    env['status'] = 'submitted'
-    return env, ''
+# ---------------------------------------------------------------- 身份（服务端定）
+
+def submitterOf(g):
+    """当前请求的 submitter（规格 §2）：令牌 = 智能体实名；会话 = 机器主人。
+
+    网页会话：kind=human, id=owner。智能体令牌：kind=agent, id=令牌名，
+    group=令牌绑定的主管 id，on_behalf_of 照记（调研 S5：归属信息不再丢失）。
+    """
+    name = getattr(g, 'agentTokenName', '') or ''
+    if name:
+        return {'kind': 'agent', 'id': name, 'display_name': name,
+                'on_behalf_of': str(getattr(g, 'agentOnBehalfOf', '') or ''),
+                'group': str(getattr(g, 'agentLead', '') or '')}
+    return {'kind': 'human', 'id': OWNER_ID, 'display_name': OWNER_DISPLAY,
+            'on_behalf_of': '', 'group': ''}
 
 
-# ---------------------------------------------------------------- 记录
+def submitterOfRecord(item):
+    """记录里的 submitter；v1 老记录按 user_id/role 合成（9 条线上数据照常读）。"""
+    existing = item.get('submitter')
+    if isinstance(existing, dict) and existing.get('id'):
+        return {'kind': existing.get('kind') or 'human',
+                'id': existing.get('id') or '',
+                'display_name': existing.get('display_name') or existing.get('id') or '',
+                'on_behalf_of': existing.get('on_behalf_of') or '',
+                'group': existing.get('group') or ''}
+    uid = str(item.get('user_id') or '')
+    if str(item.get('role') or '') == 'agent':
+        # v1 智能体记录：id 是令牌名；group/on_behalf_of 线上已丢失，补不回来
+        return {'kind': 'agent', 'id': uid, 'display_name': uid,
+                'on_behalf_of': '', 'group': ''}
+    return {'kind': 'human', 'id': uid or OWNER_ID, 'display_name': OWNER_DISPLAY,
+            'on_behalf_of': '', 'group': ''}
 
-def submit(envelope, user):
-    """落一条反馈。返回 (item, created)；重复 idempotency_key 返回首次记录。"""
+
+def submitterIdOf(item):
+    return submitterOfRecord(item).get('id') or ''
+
+
+def sameSubmitter(recordSubmitter, identity):
+    return (recordSubmitter.get('kind') == identity.get('kind')
+            and recordSubmitter.get('id') == identity.get('id'))
+
+
+# ---------------------------------------------------------------- 提交
+
+def submit(envelope, submitter):
+    """落一条反馈。返回 (item, created, err)。
+
+    err 为 (httpCode, 说明)：feedback_id 撞号 409；附件不存在/被占用 400。
+    幂等：同 (submitter.id, idempotency_key) 重复提交返回首次记录（created=False）；
+    不同身份用同一个键各落一条（规格 §4.2，v1 的全局键会静默吞反馈）。
+    """
+    sid = submitter.get('id') or ''
     key = envelope['idempotency_key']
+    fid = envelope.get('feedback_id') or ''
     with _LOCK:
-        data = _load()
-        existing = _findByKey(data['items'], key)
-        if existing is not None:
-            return existing, False
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        data = load()
+        for item in data['items']:
+            if item.get('idempotency_key') == key \
+                    and submitterIdOf(item) == sid:
+                return item, False, None
+        if fid:
+            for item in data['items']:
+                if item.get('feedback_id') == fid:
+                    return None, False, (409, 'feedback_id 已存在：%s' % fid)
+        used = _usedFileIds(data['items'])
+        for att in envelope.get('attachments') or []:
+            fileId = att.get('file_id')
+            if attachmentPath(fileId) is None:
+                return None, False, (400, '附件不存在：%s（先 POST /api/feedback/attachments）' % fileId)
+            if fileId in used:
+                return None, False, (400, '附件已被其他反馈引用：%s' % fileId)
+        now = nowStamp()
+        envelope['received_at'] = now
+        envelope['submitter'] = {k: submitter.get(k, '') for k in
+                                 ('kind', 'id', 'display_name', 'on_behalf_of', 'group')}
+        ctx = envelope.get('context') or {}
         item = {
-            'feedback_id': _str(envelope.get('feedback_id'), 60) or uuid.uuid4().hex,
+            'feedback_id': fid or uuid.uuid4().hex,
             'idempotency_key': key,
             'received_at': now,
-            'submitted_at': _str(envelope.get('submitted_at'), 40) or now,
+            'submitted_at': (envelope.get('submitted_at') or '').strip() or now,
             'status': 'submitted',
             'status_note': '',
-            'history': [{'status': 'submitted', 'at': now, 'note': ''}],
-            'user_id': (envelope.get('user') or {}).get('id') or user.get('id') or '',
-            'role': (envelope.get('user') or {}).get('role') or user.get('role') or '',
-            'anonymous': bool((envelope.get('user') or {}).get('anonymous')),
-            'route': (envelope.get('context') or {}).get('route') or '',
-            'page_id': (envelope.get('context') or {}).get('page_id') or '',
+            'submitter': envelope['submitter'],
+            'user_id': sid,                      # 索引列（v1 检索与迁移读取）
+            'role': 'agent' if submitter.get('kind') == 'agent' else 'owner',
+            'anonymous': False,
+            'route': ctx.get('route') or '',
+            'page_id': ctx.get('page_id') or '',
             'message': envelope.get('message') or '',
+            'comments': [],
+            'unread': False,
+            'history': [{'from': '', 'to': 'submitted', 'actor': 'submitter',
+                         'reason': '', 'at': now}],
             'envelope': envelope,
         }
         data['items'].append(item)
-        _save(data)
-        return item, True
+        save(data)
+        return item, True, None
 
 
-def _summary(item):
-    """列表/详情用的视图：信封 + 状态，附件带可取的 URL。"""
-    env = item.get('envelope') or {}
-    atts = []
-    for att in env.get('attachments') or []:
-        fileId = att.get('file_id')
-        atts.append({'type': att.get('type') or 'screenshot', 'file_id': fileId,
-                     'has_annotations': bool(att.get('has_annotations')),
-                     'source': att.get('source') or 'page',
-                     'url': '/api/feedback/attachments/' + fileId})
-    return {
-        'feedback_id': item.get('feedback_id'),
-        'status': item.get('status'),
-        'status_note': item.get('status_note') or '',
-        'submitted_at': item.get('submitted_at'),
-        'received_at': item.get('received_at'),
-        'user_id': item.get('user_id'),
-        'route': item.get('route'),
-        'page_id': item.get('page_id'),
-        'message': item.get('message'),
-        'contact': env.get('contact') or '',
-        'client': env.get('client') or {},
-        'context': env.get('context') or {},
-        'trace': env.get('trace') or [],
-        'errors': env.get('errors') or {},
-        'attachments': atts,
-        'history': item.get('history') or [],
-    }
+def _usedFileIds(items):
+    used = set()
+    for item in items:
+        for att in (item.get('envelope') or {}).get('attachments') or []:
+            if isinstance(att, dict) and att.get('file_id'):
+                used.add(att['file_id'])
+    return used
 
 
-def get(feedbackId):
-    for item in _load()['items']:
-        if item.get('feedback_id') == feedbackId:
-            return _summary(item)
-    return None
+# ---------------------------------------------------------------- history / 未读
+
+def appendHistory(item, frm, to, actor, reason, at):
+    """history 条目形状按规格 §5：{from, to, actor, reason, at}。
+
+    v1 老条目是 {status, at, note}，读取方两种都认（feedback_status.resolvedAt）。
+    """
+    item.setdefault('history', []).append(
+        {'from': frm, 'to': to, 'actor': actor, 'reason': reason, 'at': at})
 
 
-def search(route='', dateFrom='', dateTo='', status='', userId='',
-           page=1, size=20):
-    """检索（§6.3）。route 走子串匹配，日期按 submitted_at 前缀比较（ISO8601 可直接比）。"""
-    items = _load()['items']
-    if route:
-        needle = route.lower()
-        items = [i for i in items if needle in (i.get('route') or '').lower()]
-    if status:
-        items = [i for i in items if i.get('status') == status]
-    if userId:
-        items = [i for i in items if (i.get('user_id') or '') == userId]
-    if dateFrom:
-        items = [i for i in items if (i.get('submitted_at') or '') >= dateFrom]
-    if dateTo:
-        items = [i for i in items if (i.get('submitted_at') or '') <= dateTo]
-    items = sorted(items, key=lambda i: i.get('submitted_at') or '', reverse=True)
-    total = len(items)
-    page = max(1, page)
-    size = max(1, min(100, size))
-    chunk = items[(page - 1) * size:page * size]
-    return {'total': total, 'page': page, 'size': size,
-            'items': [_summary(i) for i in chunk]}
+def markUnread(item):
+    """提交者未读 +1（规格 §6.3）：状态变化或处理者评论时由 ops 调。"""
+    item['unread'] = True
 
 
-def setStatus(feedbackId, status, note=''):
-    """状态回写（§7.1）。返回 (item, 错误)。"""
-    if status not in STATUSES:
-        return None, '未知状态：%s' % status
-    note = (note or '').strip()
-    if status == 'rejected' and not note:
-        return None, 'rejected 必须附一句原因'
-    with _LOCK:
-        data = _load()
-        for item in data['items']:
-            if item.get('feedback_id') != feedbackId:
-                continue
-            current = item.get('status') or 'submitted'
-            if status != current and status not in TRANSITIONS.get(current, set()):
-                return None, '状态不能从 %s 直接变成 %s' % (current, status)
-            now = time.strftime('%Y-%m-%d %H:%M:%S')
-            item['status'] = status
-            item['status_note'] = note
-            item.setdefault('history', []).append(
-                {'status': status, 'at': now, 'note': note})
-            _save(data)
-            return _summary(item), ''
-    return None, '反馈不存在'
+def isOverdue(item, now=None):
+    """待受理超时（>24h 无人 acknowledged）。规则在 feedback_status，这里转公开
+    接口给 views/summary 用——读取方只跟 store 说话，不横向 import 规则模块。"""
+    return feedback_status.isOverdue(item, now)
 
+
+def clearUnread(item):
+    item['unread'] = False
+
+
+# ---------------------------------------------------------------- 删除 / 摘要
 
 def delete(feedbackId):
-    """删除记录与附件（§8.7 预留）。返回是否删掉。"""
+    """删除记录与附件。返回是否删掉。"""
     with _LOCK:
-        data = _load()
+        data = load()
         keep, removed = [], None
         for item in data['items']:
             if item.get('feedback_id') == feedbackId:
@@ -343,24 +286,36 @@ def delete(feedbackId):
                 except OSError:
                     pass
         data['items'] = keep
-        _save(data)
+        save(data)
         return True
 
 
-def stats():
-    """运维视图：条数、状态分布、附件占用。"""
-    data = _load()
-    counts = {}
-    for item in data['items']:
-        counts[item.get('status') or '?'] = counts.get(item.get('status') or '?', 0) + 1
-    total = 0
-    for name in os.listdir(_attachDir()):
-        try:
-            total += os.path.getsize(os.path.join(_attachDir(), name))
-        except OSError:
-            pass
-    return {'count': len(data['items']), 'byStatus': counts,
-            'attachmentBytes': total, 'attachmentCount': len(os.listdir(_attachDir()))}
+def pendingSummary(now=None):
+    """只读摘要，供指挥台「等你处理」接入（批次 F1 第 9 项）。
+
+    待受理 = status submitted；超时未受理 = submitted 且超过 24h 无人 acknowledged。
+    recent 是最近 5 条的展示用摘要（message 截 50 字，只给处理者看）。
+    """
+    now = nowSeconds() if now is None else now
+    items = load()['items']
+    pending = [i for i in items if (i.get('status') or 'submitted') == 'submitted']
+    overdue = [i for i in pending if feedback_status.isOverdue(i, now)]
+    recent = sorted(items, key=lambda i: i.get('received_at') or '', reverse=True)[:5]
+    return {'pending': len(pending), 'overdue': len(overdue),
+            'recent': [_brief(i) for i in recent]}
+
+
+def _brief(item):
+    return {
+        'feedback_id': item.get('feedback_id'),
+        'status': item.get('status') or 'submitted',
+        'route': item.get('route') or '',
+        'submitter': submitterOfRecord(item),
+        'received_at': item.get('received_at') or '',
+        'submitted_at': item.get('submitted_at') or '',
+        'message': (item.get('message') or '')[:50],
+        'unread': bool(item.get('unread')),
+    }
 
 
 def digest(env):
