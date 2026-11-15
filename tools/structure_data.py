@@ -40,7 +40,8 @@ FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp'
             'feedback', 'feedback_store', 'files', 'files_archive', 'files_base', 'files_browse',
             'files_federation', 'files_pins', 'files_transfer', 'lead_notices', 'leads_api', 'leads_escalation', 'leads_hosted', 'leads_inbox', 'leads_store',
             'screen', 'ssh', 'task_cwd', 'task_health', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
-            'terminal', 'worklines_api', 'worklines_store', 'feedback_envelope', 'feedback_status', 'feedback_rate', 'feedback_views', 'feedback_ops'}
+            'terminal', 'worklines_api', 'worklines_store', 'feedback_envelope', 'feedback_status', 'feedback_rate', 'feedback_views', 'feedback_ops',
+            'workitem_store', 'workitem_state', 'workitem_projects'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
                            ('tasks_api', 'tasks_runner'), ('tasks_api', 'tasks_store'),
@@ -115,6 +116,11 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('tasks_runner', 'task_permission'), ('tasks_runner', 'task_result'), ('tasks_runner', 'task_result_mcp'),
     ('tasks_api', 'task_result'), ('tasks_api', 'task_result_mcp'),
     ('agent_nodes', 'task_result'),       # 联邦工厂镜像对端 result 事件（on_result 回调）
+    # 批次 G2（流水线：实施→验收→返工→集成）：workitem_store=工作项存储、
+    # workitem_state=状态机/创建校验/足迹判定、workitem_projects=项目配置。
+    # 方向：存储 → 状态机（history/迁移唯一出处）；配置 → 审批边界校验
+    ('workitem_store', 'workitem_state'),
+    ('workitem_projects', 'task_policy'),
 })
 # 基础设施层: 可被任何层依赖, 但自己不得 import 特性层 (依赖只能向上)
 # termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性;
