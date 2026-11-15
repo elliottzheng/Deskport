@@ -44,13 +44,11 @@
     }
 
     function countsText(counts) {
+        // 树节点用 waiting_you（规格 U2 键名），旧 leads[].counts 用 waiting
         var c = counts || {};
-        return '在跑 ' + (Number(c.running) || 0) + ' · 等待 '
-            + (Number(c.waiting) || 0) + ' · 出错 ' + (Number(c.failed) || 0);
-    }
-
-    function unassignedTitle(count, running) {
-        return (Number(count) || 0) + ' 个，其中在跑 ' + (Number(running) || 0);
+        var waiting = c.waiting_you !== undefined ? c.waiting_you : c.waiting;
+        return '在跑 ' + (Number(c.running) || 0) + ' · 等你 '
+            + (Number(waiting) || 0) + ' · 出错 ' + (Number(c.failed) || 0);
     }
 
     // overview 的 summaryBrief → 行视图。agoText 由调用方给（WPCommon.fmtAgo
@@ -91,6 +89,9 @@
                 kindText: KIND_TEXT[kind] || kind || '待办',
                 title: p.title || '',
                 detail: p.detail || '',
+                // U3：审批行的「下属自述的用途」与派活令牌名（后端 _pendingPermission）
+                purpose: p.purpose || '',
+                owner: p.owner || '',
                 at: p.at || 0,
                 taskId: p.taskId || '',
                 leadId: p.leadId || '',
@@ -135,18 +136,6 @@
             ? WPCommon.fmtAgo(ts) : '';
     }
 
-    function kindTextOf(kind) {
-        return (typeof WPSettingsLeads !== 'undefined' && WPSettingsLeads.kindText)
-            ? WPSettingsLeads.kindText(kind) : (kind || '');
-    }
-
-    function lastSeenTextOf(lastSeenAt) {
-        return (typeof WPSettingsLeads !== 'undefined'
-                && WPSettingsLeads.lastSeenText)
-            ? WPSettingsLeads.lastSeenText(lastSeenAt, Date.now() / 1000)
-            : '';
-    }
-
     function mixin() {
         return {
             data() {
@@ -155,9 +144,6 @@
                     overviewState: 'loading',   // loading | ok | error（仅首屏）
                     overviewError: '',
                     overviewTimer: null,
-                    expandedLeadId: '',
-                    moreTasks: {},              // leadId → 更全的任务列表（「更多」）
-                    unassignedOpen: false,
                     newSheetOpen: false,
                     newSheetTab: '',            // '' 选项 | 'lead' | 'task'
                     newLeadName: '',
@@ -171,7 +157,7 @@
                     speakText: '',
                     speakBusy: false,
                     speakError: '',
-                    rowErrors: {}, leadErrors: {}, moreCapped: {},
+                    rowErrors: {}, leadErrors: {},
                 };
             },
             computed: {
@@ -184,51 +170,6 @@
                 pendingRows() {
                     return pendingRows(this.overview && this.overview.pending,
                                        this.leadsById, (this.overview && this.overview.retiredLeads) || {});
-                },
-                leadCards() {
-                    var self = this;
-                    var rows = (this.overview && this.overview.leads) || [];
-                    return rows.map(function (l) {
-                        var merged = self.moreTasks[l.id]
-                            ? mergeMoreTasks(l.tasks, self.moreTasks[l.id])
-                            : (l.tasks || []);
-                        return {
-                            id: l.id,
-                            name: l.name || '未命名',
-                            kind: l.kind || '',
-                            kindText: kindTextOf(l.kind),
-                            status: l.status || '',
-                            state: l.state || 'asleep',
-                            stateText: stateText(l.state),
-                            taskId: l.taskId || '',
-                            counts: l.counts || {running: 0, waiting: 0, failed: 0},
-                            countsText: countsText(l.counts),
-                            lastSeenAt: l.lastSeenAt || 0,
-                            lastSeenText: lastSeenTextOf(l.lastSeenAt),
-                            lastReportText: l.lastReport
-                                ? firstLine(l.lastReport.text, 60) : '',
-                            unreadReports: l.unreadReports || 0,
-                            closedHidden: l.closedHidden || 0,
-                            expanded: self.expandedLeadId === l.id,
-                            tasks: merged.map(function (t) {
-                                return taskRowView(t, ago(t.lastActiveAt || 0));
-                            }),
-                        };
-                    });
-                },
-                unassignedView() {
-                    var u = (this.overview && this.overview.unassigned)
-                        || {count: 0, running: 0, tasks: []};
-                    return {
-                        count: u.count || 0,
-                        running: u.running || 0,
-                        title: unassignedTitle(u.count, u.running),
-                        closedHidden: u.closedHidden || 0,
-                        open: this.unassignedOpen,
-                        tasks: (u.tasks || []).map(function (t) {
-                            return taskRowView(t, ago(t.lastActiveAt || 0));
-                        }),
-                    };
                 },
                 newLeadKinds() {
                     return newLeadKindChoices();
@@ -246,7 +187,6 @@
                 // 模板直接调的纯函数：复用同一实现，不复制
                 statusLabel: taskStatusText,
                 modeLabel: taskModeText,
-                kindTextOf: kindTextOf,
                 fmtAgo: function (ts) { return ago(ts); },
                 leadNameOf(leadId) {
                     // 停用/悬空的主管不露原始 id：详情里显示「已停用的主管」
@@ -302,10 +242,6 @@
                         this.newLeadBusy = false;
                     }
                 },
-                toggleLead(lead) {
-                    this.expandedLeadId = this.expandedLeadId === lead.id
-                        ? '' : lead.id;
-                },
                 async toggleLeadPause(lead) {
                     var status = lead.status === 'paused' ? 'active' : 'paused';
                     try {
@@ -357,16 +293,17 @@
                     }
                 },
                 findTask(taskId) {
-                    var rows = [];
-                    var ov = this.overview || {};
-                    (ov.leads || []).forEach(function (l) {
-                        rows = rows.concat(l.tasks || []);
-                    });
-                    rows = rows.concat((ov.unassigned || {}).tasks || []);
-                    for (var i = 0; i < rows.length; i += 1) {
-                        if (rows[i].id === taskId) { return rows[i]; }
-                    }
-                    return null;
+                    // 树里找（裁剪掉的/更早的已关闭不在这），找不到由 openTask 拉详情
+                    var found = null;
+                    var walk = function (nodes) {
+                        (Array.isArray(nodes) ? nodes : []).forEach(function (n) {
+                            if (found) { return; }
+                            if (n.type === 'task' && n.id === taskId) { found = n; }
+                            else { walk(n.children); }
+                        });
+                    };
+                    walk((this.overview || {}).tree);
+                    return found;
                 },
                 async openTask(taskId, row) {
                     var hit = this.findTask(taskId);
@@ -447,34 +384,6 @@
                         WPCommon.flashError(this, 'rowErrors', row.key, err.message);
                     }
                 },
-                async loadMoreTasks(lead) {
-                    if (this.moreTasks[lead.id]) { return; }
-                    try {
-                        const url = WPTasksLeads.taskListUrl(
-                            '/api/tasks?full=1', lead.id);
-                        const r = await fetch(url);
-                        const data = await r.json();
-                        if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                        this.moreTasks[lead.id] =
-                            mergeMoreTasks(lead.tasks, data.tasks || []);
-                        // 拉满 50 条被截断：按钮换成置灰提示，不静默消失
-                        this.moreCapped[lead.id] = !!data.truncated;
-                        WPCommon.clearError(this, 'leadErrors', lead.id);
-                    } catch (err) {
-                        WPCommon.flashError(this, 'leadErrors', lead.id, err.message);
-                    }
-                },
-                gotoLead(leadId) {
-                    this.expandedLeadId = leadId || '';
-                    this.backToList(false);
-                    this.$nextTick(function () {
-                        var el = document.querySelector(
-                            '.cmd-lead-card[data-lead-id="' + leadId + '"]');
-                        if (el && el.scrollIntoView) {
-                            el.scrollIntoView({block: 'start'});
-                        }
-                    });
-                },
             },
         };
     }
@@ -483,7 +392,7 @@
         window.WPTasksOverview = {
             taskStatusText: taskStatusText, taskModeText: taskModeText,
             stateText: stateText, firstLine: firstLine, countsText: countsText,
-            unassignedTitle: unassignedTitle, taskRowView: taskRowView,
+            taskRowView: taskRowView,
             pendingRows: pendingRows, mergeMoreTasks: mergeMoreTasks,
             newLeadKindChoices: newLeadKindChoices, mixin: mixin,
         };
@@ -492,7 +401,7 @@
         module.exports = {
             taskStatusText: taskStatusText, taskModeText: taskModeText,
             stateText: stateText, firstLine: firstLine, countsText: countsText,
-            unassignedTitle: unassignedTitle, taskRowView: taskRowView,
+            taskRowView: taskRowView,
             pendingRows: pendingRows, mergeMoreTasks: mergeMoreTasks,
             newLeadKindChoices: newLeadKindChoices,
         };

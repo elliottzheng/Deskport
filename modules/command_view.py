@@ -1,33 +1,25 @@
 # -*- coding: utf-8 -*-
-"""指挥台聚合视图（批次 U）：一个 overview 接口 + 汇报已读。
+"""指挥台聚合视图（批次 U）：一个 overview 接口 + 汇报已读；批次 U2：指挥树，
+外加指挥者的直接活动（读审计日志，汇总在 modules/command_activity.py）。
 
-设计（docs/plan/agent-chain-of-command.md §8，规格 .drive/批次U-指挥台.md）：
-用户只和少数主管说话，待办只来自主管上交的事。本模块把散在三处的数据聚成
-指挥台的一屏——等你处理（审批/汇报/出问题的下属）、主管卡片、其它任务。
-数据全部来自现有存储（tasks_store / leads_store / leads_inbox），不新建存储；
-只读调用现有函数，不改 tasks_store / tasks_runner / leads_api / leads_inbox。
+设计见 docs/plan/agent-chain-of-command.md §8 与规格 .drive/批次U-指挥台.md、
+.drive/批次U2-指挥台树.md：用户只和少数主管说话，待办只来自主管上交的事。本模块
+把散在各处的数据聚成指挥台的一屏——等你处理 + 一棵指挥树；数据全部来自现有存储
+（tasks_store / leads_store / leads_inbox / 审计日志），只读、不改它们。鉴权：
+/api/command/* 只认网页会话。
 
-鉴权：/api/command/* 不在 authGuard 的令牌通道前缀表里（/api/agent、
-/api/tasks、/api/worklines、/api/capability），设备/智能体令牌与未登录一律
-落到 /api/ 统一 401——只认网页会话，与 /api/settings/leads* 同档。
-
-与规格草图的差异（都在草图形状上加键，不改语义）：
-    lead.closedHidden / unassigned.closedHidden——已关闭任务裁剪后还剩几条，
-        前端据此决定显不显示「更多」（草图的 tasks 只有裁剪后的 5 条，看不出
-        还有没有）；brief 由 tasks_store.summaryBrief 加一个 lastActiveAt
-        （行内「最近活跃」要它，summaryBrief 本身不带这个键）。
-    retiredLeads——停用主管的 id→名字（U 返工：停用主管的任务仍会进「等你
-        处理」的问题行，主管卡片又没有它，名字从这里补；详情面板据此显示
-        「已停用的主管」而不是原始 id）。
-
-响应体积：253 个合成任务 < 200KB（tests/test_command_view.py 钉住）。
+U2 起前端改用 tree 字段（旧字段 pending/leads/unassigned/retiredLeads 原样保留，
+供回滚与对账）；节点形状、key、计数口径、activity 与审批行人话字段都见 docs/api.md
+的 overview 一节。lead 节点本身即它的托管任务（ownTask 从子项剔除但计入计数）；任务
+节点只带 TASK_NODE_KEYS；其它节点带逐级汇总的 counts（等待给 waiting/waiting_you
+两个同值键）。响应体积：300 个任务 < 200KB（树与旧字段各写一遍任务摘要）。
 """
 import json
 import time
 
 from flask import Blueprint, jsonify, request
 
-from modules import leads_inbox, leads_store, task_title
+from modules import command_activity, command_tree, leads_inbox, leads_store, task_title
 from modules import tasks_store as store
 
 blueprint = Blueprint('command_view', __name__)
@@ -71,10 +63,9 @@ def _argsSummary(args):
                 value = stripped
         else:
             value = stripped
-    if isinstance(value, dict):
-        parts = [str(v) for v in value.values() if v not in (None, '')]
-    elif isinstance(value, list):
-        parts = [str(v) for v in value if v not in (None, '')]
+    if isinstance(value, (dict, list)):
+        seq = value.values() if isinstance(value, dict) else value
+        parts = [str(v) for v in seq if v not in (None, '')]
     else:
         parts = [str(value)] if value not in (None, '') else []
     return _firstLine(' · '.join(parts), ARG_SUMMARY_MAX)
@@ -99,10 +90,8 @@ def _splitTasks(tasks):
             closedTasks.append(task)
         else:
             openTasks.append(task)
-    openTasks.sort(key=lambda t: -(_int(t.get('lastActiveAt'))
-                                   or _int(t.get('createdAt'))))
-    closedTasks.sort(key=lambda t: -(_int(t.get('endedAt'))
-                                     or _int(t.get('createdAt'))))
+    openTasks.sort(key=lambda t: -(_int(t.get('lastActiveAt')) or _int(t.get('createdAt'))))
+    closedTasks.sort(key=lambda t: -(_int(t.get('endedAt')) or _int(t.get('createdAt'))))
     hidden = max(0, len(closedTasks) - CLOSED_KEEP)
     briefs = [_brief(t) for t in openTasks]
     briefs += [_brief(t) for t in closedTasks[:CLOSED_KEEP]]
@@ -110,10 +99,14 @@ def _splitTasks(tasks):
 
 
 def _taskCounts(tasks):
-    """卡片第二行的下属计数：在跑（running+queued）/ 等待 / 出错。"""
+    """卡片第二行的下属计数：在跑（running+queued）/ 等待 / 出错。
+
+    等待同时给 waiting 与 waiting_you 两个同值键（旧字段读前者、树读后者）。
+    """
+    waiting = sum(1 for t in tasks if (t.get('status') or '') == 'waiting')
     return {'running': sum(1 for t in tasks
                            if (t.get('status') or '') in ACTIVE_STATUSES),
-            'waiting': sum(1 for t in tasks if (t.get('status') or '') == 'waiting'),
+            'waiting': waiting, 'waiting_you': waiting,
             'failed': sum(1 for t in tasks
                           if (t.get('status') or '') in PROBLEM_STATUSES)}
 
@@ -133,8 +126,7 @@ def _problemReason(task):
 
 def _problemEndedAt(task):
     """结束时间：endedAt 优先，老数据没有就退 lastActiveAt/createdAt。"""
-    return (_int(task.get('endedAt')) or _int(task.get('lastActiveAt'))
-            or _int(task.get('createdAt')))
+    return _int(task.get('endedAt')) or _int(task.get('lastActiveAt')) or _int(task.get('createdAt'))
 
 
 def _pendingPermission(task):
@@ -157,10 +149,16 @@ def _pendingPermission(task):
             options = [o for o in (event.get('options') or [])
                        if isinstance(o, dict)]
             break
+    # U3：审批行要说人话——命令/路径单独一条，下属自述的用途（description）
+    # 单独一条，派活令牌名也带上（未登记成主管时前端据此标「未登记的指挥者」）
+    cmd = args.get('command') if isinstance(args, dict) else None
+    purpose = _firstLine(args.get('description'), REASON_MAX) if isinstance(args, dict) else ''
+    command = _firstLine(cmd, ARG_SUMMARY_MAX) if cmd else _argsSummary(args)
     return {'kind': 'permission', 'at': at,
             'taskId': task.get('id') or '', 'leadId': task.get('lead') or '',
             'title': _firstLine(title, TITLE_MAX) or '工具调用',
-            'detail': _argsSummary(args), 'requestId': requestId,
+            'detail': command, 'purpose': purpose, 'requestId': requestId,
+            'owner': str(task.get('owner') or ''),
             'options': [{'optionId': str(o.get('optionId') or ''),
                          'name': str(o.get('name') or ''),
                          'kind': str(o.get('kind') or '')} for o in options]}
@@ -258,15 +256,12 @@ def _lastReport(leadId):
 
 def _leadRow(lead, tasks, unread, hasApproval, tasksById, now):
     briefs, closedHidden = _splitTasks(tasks)
-    return {'id': lead.get('id') or '', 'name': lead.get('name') or '',
-            'kind': lead.get('kind') or '', 'status': lead.get('status') or '',
-            'state': _leadState(lead, tasksById, unread, hasApproval, now),
-            'taskId': lead.get('taskId') or '',
-            'lastSeenAt': _int(lead.get('lastSeenAt')),
-            'counts': _taskCounts(tasks),
-            'lastReport': _lastReport(str(lead.get('id') or '')),
-            'unreadReports': unread, 'closedHidden': closedHidden,
-            'tasks': briefs}
+    row = {'id': lead.get('id') or '', 'name': lead.get('name') or '', 'kind': lead.get('kind') or '',
+           'status': lead.get('status') or '', 'state': _leadState(lead, tasksById, unread, hasApproval, now),
+           'taskId': lead.get('taskId') or '', 'lastSeenAt': _int(lead.get('lastSeenAt')),
+           'counts': _taskCounts(tasks), 'lastReport': _lastReport(str(lead.get('id') or '')),
+           'unreadReports': unread, 'closedHidden': closedHidden, 'tasks': briefs}
+    return row      # 树的 lead 节点由 command_tree.leadNode 从这行长出来
 
 
 def overview():
@@ -281,8 +276,8 @@ def overview():
 
     leadRows, pending = [], []
     retiredLeads = {}                     # 停用主管 id→名字（见模块 docstring）
-    for lead in sorted(leads_store.list(),
-                       key=lambda l: _int(l.get('createdAt'))):
+    liveLeads = sorted(leads_store.list(), key=lambda l: _int(l.get('createdAt')))
+    for lead in liveLeads:
         leadId = str(lead.get('id') or '')
         if (lead.get('status') or '') == 'retired':
             retiredLeads[leadId] = str(lead.get('name') or '')
@@ -308,13 +303,18 @@ def overview():
 
     unassigned = byLead.get('', [])
     briefs, closedHidden = _splitTasks(unassigned)
+    tree = command_tree.build(liveLeads, leadRows, byLead, tasks, retiredLeads,
+                              _taskCounts, _splitTasks)
     return {'pending': pending, 'leads': leadRows,
             'retiredLeads': retiredLeads,
             'unassigned': {'count': len(unassigned),
                            'running': sum(1 for t in unassigned
                                           if (t.get('status') or '')
                                           in ACTIVE_STATUSES),
-                           'closedHidden': closedHidden, 'tasks': briefs}}
+                           'closedHidden': closedHidden, 'tasks': briefs},
+            # 指挥者的直接活动（读审计日志，modules/command_activity.py）
+            'tree': command_activity.decorate(
+                tree, command_activity.nodeIndex(liveLeads, now))}
 
 
 @blueprint.route('/api/command/overview')
