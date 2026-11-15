@@ -13,12 +13,15 @@ r"""并行跑全量 pytest：按历史耗时分组，子进程并行，全量压
   - 每组一个独立子进程：独立 --basetemp 与独立临时 APPDATA，互不踩
     （pyproject 的 addopts 把所有运行都指到同一个 .pytest-tmp，串行跑无所谓，
     并行必须按组分流）；
-  - basetemp 缺省在系统临时目录（%TEMP%\wp-test-shards\shard-<i>）而不是仓库
-    的 .pytest-tmp：本机 E: 是 USB 机械盘，fsync+replace 约 60ms/次（C: NVMe
-    约 6ms，慢 10 倍），而快照/收件箱这类存储是「每次事件一次 fsync 重写」，
-    basetemp 落在 E: 时全量最好 265s、达不到 2 分钟目标；落 C: 后全量约 66s。
-    每次运行先清空再建、结束即删（C: 空间有限，不留垃圾）。想回到规格字面的
-    仓库内目录可传 --basetemp-root .pytest-tmp；
+  - basetemp 缺省在系统临时目录（%TEMP%\wp-test-shards\<pid>-<时间戳>\shard-<i>）
+    而不是仓库的 .pytest-tmp：本机 E: 是 USB 机械盘，fsync+replace 约 60ms/次
+    （C: NVMe 约 6ms，慢 10 倍），而快照/收件箱这类存储是「每次事件一次 fsync
+    重写」，basetemp 落在 E: 时全量最好 265s、达不到 2 分钟目标；落 C: 后全量
+    约 66s。每次运行一个唯一根目录（带 pid+时间戳），只删自己这次的；多个执行方
+    同时跑也互不踩。启动时顺手回收超过 2 小时、且对应 pid 已不在的旧根目录
+    （被杀进程留下的残余）；想改根目录的父级可传 --basetemp-root；
+  - durations.json 读写并发安全：写走带 pid 的临时文件 + 原子替换，读失败按
+    文件大小兜底；
   - 跑完核对「分组合计条数 == --collect-only 条数」，防某组静默少跑；
   - 任一组失败打印该组失败原文片段（最多 40 行），退出码非 0；
   - 本次各文件耗时回写 durations.json，下次分组更准。
@@ -27,6 +30,8 @@ ignore 规则与 .drive/verify.py 保持一致：test_protocol.py / test_ssh_ws.
 需要真服务与 WebSocket，不在全量里跑。
 """
 import argparse
+import ctypes
+import datetime
 import json
 import os
 import re
@@ -43,6 +48,9 @@ TMP = ROOT / '.pytest-tmp'
 DURATIONS = TMP / 'durations.json'
 IGNORED = ('test_protocol.py', 'test_ssh_ws.py')   # 需真服务/WS，见 .drive/verify.py
 SHARD_TIMEOUT = 600
+STALE_MAX_AGE = 7200            # 旧运行根超过 2 小时才考虑回收
+# 运行根目录名: <pid>-<YYYYMMDD-HHMMSS-ffffff>，pid 用于判断是否还有活进程
+RUN_ROOT_RE = re.compile(r'^(\d+)-\d{8}-\d{6}(?:-\d+)?$')
 
 # pytest -q 最后一行计数: "234 passed, 1 failed, 2 skipped in 12.3s"
 COUNT_RE = re.compile(r'(\d+)\s+(passed|failed|skipped|errors?|xfailed|xpassed)')
@@ -66,11 +74,58 @@ def load_durations():
 
 
 def save_durations(data):
+    """原子写：带 pid 的临时文件 + os.replace，多个运行同时写不互相踩
+    （后者覆盖前者，丢一次更新只是分组权重糙一点，不写坏文件）。"""
     TMP.mkdir(exist_ok=True)
-    tmp = DURATIONS.with_suffix('.json.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True),
-                   encoding='utf-8')
-    os.replace(tmp, DURATIONS)
+    tmp = TMP / ('durations.%d.tmp' % os.getpid())
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1,
+                                  sort_keys=True), encoding='utf-8')
+        os.replace(tmp, DURATIONS)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _pid_alive(pid):
+    """Windows：pid 是否还有活进程。OpenProcess 成功 = 活着；被拒绝访问
+    （ERROR_ACCESS_DENIED）也是活着——只是没权限看；其它错误按不存在算。"""
+    if pid <= 0:
+        return False
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    handle = kernel32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if handle:
+        kernel32.CloseHandle(handle)
+        return True
+    return ctypes.get_last_error() == 5
+
+
+def reclaim_stale_roots(base, max_age_sec=STALE_MAX_AGE):
+    """回收被杀进程留下的旧运行根：名字是 <pid>-<时间戳>、超过 max_age_sec、
+    且该 pid 已不存在。正在跑的运行（目录年轻）和活着的 pid 一概不动——
+    所以多个执行方同时跑不会互相删。"""
+    base = Path(base)
+    if not base.is_dir():
+        return []
+    now = time.time()
+    reclaimed = []
+    for child in base.iterdir():
+        m = RUN_ROOT_RE.match(child.name)
+        if not m or not child.is_dir():
+            continue
+        try:
+            if now - child.stat().st_mtime < max_age_sec:
+                continue
+        except OSError:
+            continue
+        if _pid_alive(int(m.group(1))):
+            continue
+        shutil.rmtree(child, ignore_errors=True)
+        reclaimed.append(child.name)
+    return reclaimed
 
 
 def estimate(name, durations):
@@ -219,17 +274,6 @@ def resolve_files(args):
     return list_test_files()
 
 
-def clear_run_dirs(root):
-    """清掉 root 下上次运行的 shard-*/appdata-*（不动 durations.json 等其它
-    内容——root 也可能被指到 .pytest-tmp，那里放着 durations.json）。"""
-    root = Path(root)
-    if not root.is_dir():
-        return
-    for child in root.iterdir():
-        if child.name.startswith(('shard-', 'appdata-')):
-            shutil.rmtree(child, ignore_errors=True)
-
-
 def main():
     ap = argparse.ArgumentParser(description='并行跑全量 pytest')
     ap.add_argument('--jobs', '-j', type=int, default=0,
@@ -241,39 +285,43 @@ def main():
     ap.add_argument('--basetemp-root', default=os.path.join(tempfile.gettempdir(),
                                                             'wp-test-shards'),
                     help='各组 basetemp 的父目录，缺省系统临时目录下的 '
-                         'wp-test-shards（每组一个 shard-<i> 子目录，运行前 '
-                         '清空、结束后删除）；E: 是 USB 机械盘 fsync 慢约 10 '
-                         '倍，别指回仓库内的 .pytest-tmp')
+                         'wp-test-shards；本次运行根是该目录下唯一的 '
+                         '<pid>-<时间戳> 子目录（多个执行方同时跑互不踩），'
+                         '只删自己这次的。E: 是 USB 机械盘 fsync 慢约 10 倍，'
+                         '别指回仓库内的 .pytest-tmp')
     args = ap.parse_args()
 
     jobs = args.jobs or min(os.cpu_count() or 1, 6)
     files = resolve_files(args)
     durations = load_durations()
     shards = make_shards(files, jobs, durations)
-    # 上次残留（含上次异常退出没删的）先清空；本次的跑完即删，C: 不留垃圾
-    root = Path(args.basetemp_root)
-    made_root = not root.exists()
-    clear_run_dirs(root)
-    root.mkdir(parents=True, exist_ok=True)
+    # 本次运行一个唯一根目录（pid+时间戳）：只删自己这次的，别人的运行、
+    # 别人的残留一概不碰；顺手回收超过 2 小时且 pid 已不在的旧根（被杀残留）
+    base = Path(args.basetemp_root)
+    reclaimed = reclaim_stale_roots(base)
+    run_root = base / ('%d-%s' % (os.getpid(),
+                                  datetime.datetime.now()
+                                  .strftime('%Y%m%d-%H%M%S-%f')))
+    run_root.mkdir(parents=True, exist_ok=True)
 
     expected, err = collect_total(files)
     if expected is None:
         print('--collect-only 失败：\n%s' % err)
+        shutil.rmtree(run_root, ignore_errors=True)
         sys.exit(1)
 
     print('%d 个文件分 %d 组并行（collect-only 基线 %d 条）'
           % (len(files), len(shards), expected))
+    print('basetemp 根目录: %s' % run_root)
+    if reclaimed:
+        print('回收陈旧运行根 %d 个: %s' % (len(reclaimed), ', '.join(reclaimed)))
     t0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=len(shards)) as pool:
         results = list(pool.map(
-            lambda s: run_shard(s[0], s[1], args.basetemp_root),
+            lambda s: run_shard(s[0], s[1], str(run_root)),
             enumerate(shards, 1)))
     total_sec = time.perf_counter() - t0
-    # C: 空间有限，不留垃圾：自己建的根目录整棵删，用户指定的已有目录只清子目录
-    if made_root:
-        shutil.rmtree(root, ignore_errors=True)
-    else:
-        clear_run_dirs(root)
+    shutil.rmtree(run_root, ignore_errors=True)   # 只删自己这次的，C: 不留垃圾
 
     totals = {}
     bad = []
