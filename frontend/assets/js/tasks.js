@@ -222,7 +222,7 @@
                     if (isLocal) { this.rememberCwd(cwd); }
                     this.newSheetOpen = false;
                     await this.select(data.task);
-                    await this.loadOverview();   // 新任务（无主）立刻进「其它任务」
+                    await this.loadOverview();   // 新任务（无主）立刻进「你直接派的」
                 } catch (err) {
                     this.error = err.message;
                 } finally {
@@ -479,15 +479,6 @@
             fmtTime(ts) {
                 return WPCommon.fmtTime(ts);
             },
-            shortArgs(a) {
-                try {
-                    const obj = JSON.parse(a || '{}');
-                    const vals = Object.keys(obj).map(function (k) { return obj[k]; });
-                    return String(vals.join(' · ')).slice(0, 120);
-                } catch (err) {
-                    return String(a || '').slice(0, 120);
-                }
-            },
             downloadUrl(p) {
                 return '/api/tasks/' + encodeURIComponent(this.selectedId)
                     + '/download?path=' + encodeURIComponent(p);
@@ -495,5 +486,7 @@
         },
     });
 app.mixin(WPTasksOverview.mixin());
+app.mixin(WPTasksOverview.tree.mixin());   // 批次 U2：指挥树（tasks-tree.js）
+app.mixin(WPTasksOverview.events.mixin());   // 批次 U3：事件流说人话（tasks-events.js）
 app.mount('#app');
 })();
