@@ -65,6 +65,13 @@ def webEnv(tmp_path, monkeypatch):
                              'models': ['bad/m1', 'good/m2', 'idle/m3'],
                              'default': 'good/m2', 'modelStatus': MS,
                              'usableModels': ['good/m2']}}})
+    # 刷新函数本身也打桩：并行分组里邻居文件（share/replay/adopt）的用例会
+    # 用没打桩的真缓存 spawn 后台刷新线程，活约 40s（8 轮 × 5s），每轮结束把
+    # _healthModels['data'] 写成真实探测结果（测试里全失败 → 空）——上面刚打
+    # 的桩会被它冲掉，'bad/m1' 消失、模型门不放行（202≠400）。刷新打成空转，
+    # 线程就算被 spawn 出来也动不了桩（2026-11-15 合并批次 A/SR 后分片构成
+    # 变化首次稳定复现，三跑三挂）。
+    monkeypatch.setattr(nodesMod, '_refreshHealthModels', lambda *a, **k: None)
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
     return SimpleNamespace(client=app.test_client(), app=app,
