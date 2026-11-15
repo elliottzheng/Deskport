@@ -95,14 +95,20 @@ def _nameOf(entry):
     action = str(entry.get('action') or '')
     if not action.startswith('agent.'):
         return ''
+    if action.startswith('agent.task'):
+        # agent.task.* 的 target 就是令牌名（tasks_api 建任务/上传/改名处）；
+        # detail 是提示词/文件名，可能以 '[xx] ' 开头，先认 detail 会归出幽灵
+        # 节点（如提示词 '[[场景:长命令]] …' 归成 owner:[场景:长命令]）
+        name = str(entry.get('target') or '').strip()
+        if name == PANEL_OWNER:
+            return ''            # 面板自己不是指挥者
+        if name:
+            return name
     detail = str(entry.get('detail') or '')
     if detail.startswith('['):
         end = detail.find('] ')
         if end > 1:
             return detail[1:end]
-    if action.startswith('agent.task'):
-        name = str(entry.get('target') or '').strip()
-        return '' if name == PANEL_OWNER else name    # 面板自己不是指挥者
     return ''
 
 

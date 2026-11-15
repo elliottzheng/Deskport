@@ -198,10 +198,12 @@
                             <span class="ev-tool-text" :class="'ev-tool-' + row.kind">{{ row.headline }}</span>
                             <button type="button" class="ev-tool-more" v-if="row.expandable"
                                     @click="toggleTool(row)">
-                                {{ row.open ? '收起' : '展开全部（' + row.totalLines + ' 行）' }}
+                                {{ row.open ? '收起' : row.expandLabel }}
                             </button>
                         </div>
-                        <pre class="ev-tool-body" v-if="row.open && row.preview.length">{{ row.preview.join('\n') }}</pre>
+                        <!-- 多行命令/Write：默认前 3 行，展开后看全文（U3 规格） -->
+                        <pre class="ev-tool-body" v-if="row.open && row.fullText">{{ row.fullText }}</pre>
+                        <pre class="ev-tool-body" v-else-if="!row.open && row.preview.length">{{ row.preview.join('\n') }}</pre>
                         <div class="ev-tool-diff" v-if="row.open && row.diff">
                             <pre class="ev-diff-old" v-if="row.diff.oldLines.length">- {{ row.diff.oldLines.join('\n- ') }}</pre>
                             <pre class="ev-diff-new" v-if="row.diff.newLines.length">+ {{ row.diff.newLines.join('\n+ ') }}</pre>

@@ -63,24 +63,33 @@
     }
 
     // ---- 工具调用 → 人话的一行 ----
+    // preview 是默认显示的前几行（多行命令/Write 内容前 BASH_MAX_LINES 行），
+    // fullText 是展开后的全文；expandLabel 是展开按钮文案（Edit 说「看改动」，
+    // 不说「展开全部（0 行）」——它没有"行数"可数，数的是改动片段）。
+    function expandLabel(total) {
+        return '展开全部（' + total + ' 行）';
+    }
+
     function toolView(name, args) {
-        /**返回 {kind, headline, preview, totalLines, purpose, diff, loading}。*/
+        /**返回 {kind, headline, preview, fullText, totalLines, purpose, diff,
+        loading, expandable, expandLabel}。*/
         var tool = String(name || '工具');
+        var base = {kind: 'params', headline: tool, preview: [], fullText: '',
+                    totalLines: 0, purpose: '', diff: null, loading: false,
+                    expandable: false, expandLabel: ''};
         if (isPartial(args)) {
-            return {kind: 'loading', headline: '参数加载中…', preview: [],
-                    totalLines: 0, purpose: '', diff: null, loading: true};
+            return Object.assign({}, base, {kind: 'loading',
+                                           headline: '参数加载中…', loading: true});
         }
         var obj = parseArgs(args);
         if (!obj) {
-            return {kind: 'params', headline: tool, preview: [], totalLines: 0,
-                    purpose: '', diff: null, loading: false};
+            return base;
         }
-        var purpose = obj.description ? firstLine(obj.description, PARAM_MAX) : '';
+        base.purpose = obj.description ? firstLine(obj.description, PARAM_MAX) : '';
         if (FILE_TOOLS[tool]) {
             var path = firstPath(obj);
-            var view = {kind: 'file', headline: path || tool, preview: [],
-                        totalLines: 0, purpose: purpose, diff: null,
-                        loading: false};
+            var view = Object.assign({}, base, {kind: 'file',
+                                               headline: path || tool});
             if (tool === 'Edit' || tool === 'MultiEdit') {
                 var old = String(obj.old_string || '');
                 var now = String(obj.new_string || obj.edits || '');
@@ -88,19 +97,29 @@
                              oldLines: old ? old.split('\n').slice(0, DIFF_MAX_LINES) : [],
                              newLines: now ? now.split('\n').slice(0, DIFF_MAX_LINES) : [],
                              oldTotal: lineCount(old), newTotal: lineCount(now)};
+                view.expandable = true;
+                view.expandLabel = '看改动';
             }
             if (tool === 'Write' && obj.content) {
-                view.totalLines = lineCount(obj.content);
+                var content = String(obj.content);
+                var wlines = content.split('\n');
+                view.totalLines = wlines.length;
+                view.preview = wlines.slice(0, BASH_MAX_LINES);
+                view.fullText = content;
+                view.expandable = wlines.length > BASH_MAX_LINES;
+                view.expandLabel = expandLabel(wlines.length);
             }
             return view;
         }
         var command = obj.command ? String(obj.command) : '';
         if (command) {
             var lines = command.split('\n');
-            return {kind: 'command', headline: firstLine(command, PARAM_MAX),
-                    preview: lines.slice(0, BASH_MAX_LINES),
-                    totalLines: lines.length, purpose: purpose, diff: null,
-                    loading: false};
+            return Object.assign({}, base, {
+                kind: 'command', headline: firstLine(command, PARAM_MAX),
+                preview: lines.slice(0, BASH_MAX_LINES), totalLines: lines.length,
+                fullText: command, expandable: lines.length > BASH_MAX_LINES,
+                expandLabel: expandLabel(lines.length),
+            });
         }
         // 其它工具：工具名 · 关键参数（第一个像样的标量/短值）
         var keys = Object.keys(obj).filter(function (k) { return k !== 'description'; });
@@ -111,9 +130,10 @@
                 ? JSON.stringify(value) : String(value);
             if (text) { bits.push(keys[i] + '=' + firstLine(text, PARAM_MAX)); }
         }
-        return {kind: 'params', headline: tool + (bits.length ? ' · ' + bits.join(' · ') : ''),
-                preview: [], totalLines: 0, purpose: purpose, diff: null,
-                loading: false};
+        return Object.assign({}, base, {
+            kind: 'params',
+            headline: tool + (bits.length ? ' · ' + bits.join(' · ') : ''),
+        });
     }
 
     // ---- tool_result 标题：说几行，不说「工具结果」 ----
@@ -148,7 +168,10 @@
 
     // ---- 「等你处理」一行该说的人话 ----
     function pendingView(row, index, leadsById, retiredById) {
-        /**后端 pending 行 + 树上索引 → 显示字段（谁的活、干什么、要我做什么）。*/
+        /**后端 pending 行 + 树上索引 → 显示字段（谁的活、干什么、要我做什么）。
+        入参行原样带回（taskId/leadId/options/requestId/seq 都不能丢：模板的
+        定位、解决审批、查看详情都读它们——批次 U2 返工：只回显示字段时
+        locatePending 取到 undefined 直接早退，点击定位/高亮全失效）。*/
         var r = row || {};
         var hit = index && r.taskId ? index[r.taskId] : null;
         var path = hit ? hit.path : [];
@@ -161,7 +184,7 @@
         }
         var title = r.title || '';
         var taskTitle = hit ? path[path.length - 1] : (r.taskTitle || '');
-        return {
+        return Object.assign({}, r, {
             key: r.key || '',
             kind: r.kind || '',
             kindText: r.kindText || '',
@@ -177,7 +200,7 @@
             path: path.join(' › '),
             at: r.at || 0,
             ago: '',
-        };
+        });
     }
 
     function agoText(ts) {
@@ -194,11 +217,16 @@
                 };
             },
             computed: {
-                // tasks.js 的 events → 渲染行（连续 status 合并、工具说人话）
+                // tasks.js 的 events → 渲染行（连续 status 合并、工具说人话）。
+                // 行 key 带任务 id：toolOpen/resultOpen 按 key 存展开态，不带任务
+                // id 时跨任务同 seq 会串状态（A 任务展开的工具切到 B 任务还开着）。
                 eventRows() {
                     var self = this;
+                    var taskId = this.selectedId
+                        || (this.detail && this.detail.id) || '';
+                    var prefix = (taskId || 'x') + ':';
                     return mergeStatus(this.events || []).map(function (e) {
-                        var key = (e.type || 'ev') + '-' + (e.seq || 0);
+                        var key = prefix + (e.type || 'ev') + '-' + (e.seq || 0);
                         var row = {key: key, type: e.type || '', seq: e.seq || 0,
                                    at: e.at || 0, raw: e, text: e.text || '',
                                    truncated: !!e.truncated};
@@ -213,12 +241,13 @@
                             row.kind = view.kind;
                             row.headline = view.headline;
                             row.preview = view.preview;
+                            row.fullText = view.fullText;
                             row.totalLines = view.totalLines;
                             row.purpose = view.purpose;
                             row.diff = view.diff;
                             row.loading = view.loading;
-                            row.expandable = view.totalLines > BASH_MAX_LINES
-                                || !!view.diff;
+                            row.expandable = view.expandable;
+                            row.expandLabel = view.expandLabel;
                             row.open = !!self.toolOpen[key];
                             return row;
                         }
@@ -261,12 +290,6 @@
                     open[row.key] = !open[row.key];
                     this.resultOpen = open;
                 },
-                // 多行命令展开后的完整文本（前 3 行之外的也看得到）
-                toolFullText(row) {
-                    var args = row.raw && row.raw.args;
-                    var obj = parseArgs(args);
-                    return (obj && obj.command) ? String(obj.command) : '';
-                },
                 loadResultFull(row) {
                     this.loadFull(row.raw);
                 },
@@ -289,7 +312,7 @@
         module.exports = {
             isPartial: isPartial, parseArgs: parseArgs, toolView: toolView,
             resultTitle: resultTitle, mergeStatus: mergeStatus,
-            pendingView: pendingView,
+            pendingView: pendingView, mixin: mixin,
         };
     }
 })();

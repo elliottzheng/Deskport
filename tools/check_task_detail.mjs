@@ -179,6 +179,20 @@ for (const w of WIDTHS) {
     await cdp('Page.navigate', {url: BASE + '/tasks'});
     await waitFor(`(function () { return document.querySelectorAll('.cmd-node').length >= 2; })()`,
                   '树渲染 @ ' + w);
+    // 首屏可能整棵树是折叠的（本地没存过展开状态、没有在跑/待办后代）：
+    // 先把所有箭头点开，让全部任务节点进 DOM，后面的收集与几何断言才覆盖得到
+    for (let round = 0; round < 4; round += 1) {
+        const opened = await evaluate(`(function () {
+            var carets = Array.prototype.slice.call(document.querySelectorAll('.cmd-node'))
+                .filter(function (n) { return String(n.className).indexOf('open') < 0; })
+                .map(function (n) { return n.querySelector('button.cmd-caret'); })
+                .filter(function (c) { return c && c.offsetParent !== null; });
+            if (!carets.length) { return false; }
+            carets.forEach(function (c) { c.click(); });
+            return true; })()`);
+        if (!opened) { break; }
+        await sleep(300);
+    }
     // 已关闭任务默认只露最近 5 条：点「更多」把裁剪掉的也挂上，8 个任务都覆盖到
     for (let i = 0; i < 3; i += 1) {
         const clicked = await evaluate(`(function () {

@@ -31,7 +31,11 @@ def taskNode(brief):
 def leadNode(row):
     """旧 leads 行 → 树的 lead 节点：托管任务是节点本身，不在子项里重复。"""
     own = row.get('taskId') or ''
-    node = {k: v for k, v in row.items() if k != 'tasks'}   # 全量 briefs 留给旧字段
+    # 全量 briefs 留给旧字段；counts 必须拷副本——_attach 的逐级汇总是就地
+    # 累加，浅拷贝会让树的汇总写进与旧字段 leads[].counts 共享的同一个 dict
+    # （旧字段供回滚与对账，语义不能被静默改掉）
+    node = {k: v for k, v in row.items() if k != 'tasks'}
+    node['counts'] = dict(row.get('counts') or {})
     return dict(node, type='lead', key='lead:' + (row.get('id') or ''),
                 children=[taskNode(b) for b in row.get('tasks') or []
                           if b.get('id') != own])

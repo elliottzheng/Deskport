@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import overview from '../../frontend/assets/js/tasks-overview.js';
 import tree from '../../frontend/assets/js/tasks-tree.js';
+import { makeVm, fakeTimers, fakeDocument } from './mixin_vm.mjs';
 
 // nodeView 复用 WPTasksOverview 的文案函数（浏览器里它是 window 全局）；这里挂上
 globalThis.WPTasksOverview = overview;
@@ -11,11 +12,20 @@ globalThis.WPTasksOverview = overview;
 globalThis.WPCommon = {
     fmtAgo: (ts) => (ts ? '1 分钟前' : ''),
     fmtTime: (ts) => (ts ? '11-15 10:00' : '-'),
+    // loadMoreTasks 的就地错误条：测试里不起定时器，写进 bag 就完
+    flashError: (vm, field, key, msg) => {
+        vm[field] = Object.assign({}, vm[field], {[key]: String(msg)});
+    },
+    clearError: (vm, field, key) => {
+        const next = Object.assign({}, vm[field]);
+        delete next[key];
+        vm[field] = next;
+    },
 };
 
 const {
     readOpen, writeOpen, autoOpenKeys, resolveOpen, flattenTree, treeIndex,
-    taskNode, withMoreTasks, nodeView,
+    taskNode, withMoreTasks, nodeView, mixin,
 } = tree;
 
 function node(type, extra) {
@@ -233,4 +243,112 @@ test('nodeView: 没有 lastAt 时只报次数不报时间', () => {
     const v = nodeView(node('owner', {id: 'x', name: 'x', activity: slot}), 0, '', {});
     assert.equal(v.activityText, '直接操作：执行 3 次、写文件 1 次');
     assert.deepEqual(v.activityRecent, []);
+});
+
+// ---------------------------------------------------------------- mixin 级（返工补盲区）
+// 纯函数单测覆盖不到「模板点的那个方法」：locatePending 早退、openNode 打开
+// 详情、loadMoreTasks 拉全量——这些路径改坏了纯函数测试全绿，这里补机械防线。
+
+function treeVm(extra) {
+    return makeVm(mixin(), Object.assign({
+        overview: {tree: SAMPLE, pending: [], retiredLeads: {}},
+        treeOpen: {}, moreTasks: {}, moreCapped: {}, treeErrors: {},
+        activityKey: '', highlightKey: '', highlightTimer: null,
+    }, extra));
+}
+
+test('mixin locatePending: 点待办 → 展开祖先、滚到可见、高亮几秒后撤', () => {
+    const vm = treeVm();
+    const timers = fakeTimers();
+    const doc = fakeDocument(['lead:ld_a', 'task:a1', 'task:a2', 'direct']);
+    try {
+        vm.locatePending({taskId: 'a2', leadId: 'ld_a', key: 'k'});
+        // 祖先与目标都展开（本地展开表写上，例 3）
+        assert.equal(vm.treeOpen['lead:ld_a'], true);
+        assert.equal(vm.treeOpen['task:a2'], true);
+        // 高亮落在目标节点上，并滚到可见
+        assert.equal(vm.highlightKey, 'task:a2');
+        assert.deepEqual(doc.scrolled.map(s => s.key), ['task:a2']);
+        // 高亮定时器到点撤掉（不永久留着）
+        assert.equal(timers.timers.length, 1);
+        timers.fire();
+        assert.equal(vm.highlightKey, '');
+    } finally {
+        timers.restore();
+        doc.restore();
+    }
+});
+
+test('mixin locatePending: 树上没有该任务时退回定位主管；两者皆无什么都不做', () => {
+    const vm = treeVm();
+    const timers = fakeTimers();
+    const doc = fakeDocument(['lead:ld_a', 'task:a1']);
+    try {
+        vm.locatePending({taskId: '不在树上', leadId: 'ld_a'});
+        assert.equal(vm.treeOpen['lead:ld_a'], true);
+        assert.equal(vm.highlightKey, 'lead:ld_a');
+        assert.deepEqual(doc.scrolled.map(s => s.key), ['lead:ld_a']);
+        // 既定位不到任务也没 leadId：早退，不动展开表与高亮（改坏即红）
+        const before = Object.assign({}, vm.treeOpen);
+        vm.locatePending({taskId: 'x', leadId: ''});
+        assert.deepEqual(vm.treeOpen, before);
+        assert.equal(vm.highlightKey, 'lead:ld_a');   // 没被冲掉
+        assert.equal(doc.scrolled.length, 1);          // 没有多滚一次
+    } finally {
+        timers.restore();
+        doc.restore();
+    }
+});
+
+test('mixin openNode: 任务节点打开详情；托管主管打开它的会话；分组节点只切换展开', () => {
+    const opened = [];
+    const vm = treeVm({openTask: (id, row) => opened.push([id, row && row.key])});
+    vm.openNode({type: 'task', id: 'a2', key: 'task:a2', expandable: false});
+    vm.openNode({type: 'lead', id: 'ld_a', taskId: 'h0', key: 'lead:ld_a',
+                 expandable: true, expanded: false});
+    assert.deepEqual(opened, [['a2', 'task:a2'], ['h0', undefined]]);
+    // 分组节点：不开详情，只切换展开并写本地存储
+    vm.openNode({type: 'direct', id: '', key: 'direct', expandable: true,
+                 expanded: false});
+    assert.equal(vm.treeOpen['direct'], true);
+    assert.equal(opened.length, 2);
+    // 折叠态的分组节点再点：收起
+    vm.openNode({type: 'direct', id: '', key: 'direct', expandable: true,
+                 expanded: true});
+    assert.equal(vm.treeOpen['direct'], false);
+    // 叶子分组节点（没有子节点）：什么都不做
+    vm.openNode({type: 'owner', id: 'kimi-code', key: 'owner:kimi-code',
+                 expandable: false, expanded: false});
+    assert.equal(vm.treeOpen['owner:kimi-code'], undefined);
+});
+
+test('mixin loadMoreTasks: 拉回全量、记 capped、失败进行内错误条；非主管行不发请求', async () => {
+    const calls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        calls.push(url);
+        return {ok: true, json: async () => ({tasks: [{id: 'z1'}], truncated: true})};
+    };
+    try {
+        const vm = treeVm();
+        await vm.loadMoreTasks({type: 'lead', key: 'lead:ld_a', id: 'ld_a'});
+        assert.deepEqual(calls, ['/api/tasks?full=1&lead=ld_a']);
+        assert.deepEqual(vm.moreTasks['lead:ld_a'], [{id: 'z1'}]);
+        assert.equal(vm.moreCapped['lead:ld_a'], true);   // 拉满 50 条被截断
+        assert.equal(vm.treeErrors['lead:ld_a'], undefined);
+        // 拉过的不再发（按钮已换成提示）
+        await vm.loadMoreTasks({type: 'lead', key: 'lead:ld_a', id: 'ld_a'});
+        assert.equal(calls.length, 1);
+        // 失败：就地错误条，不炸
+        globalThis.fetch = async () => { throw new Error('网络错'); };
+        const vm2 = treeVm();
+        await vm2.loadMoreTasks({type: 'lead', key: 'lead:ld_a', id: 'ld_a'});
+        assert.ok(vm2.treeErrors['lead:ld_a'].indexOf('网络错') >= 0);
+        // 非主管节点（直接派的分组）没有按 lead 拉全量的口子：不发请求
+        const vm3 = treeVm();
+        await vm3.loadMoreTasks({type: 'direct', key: 'direct', id: ''});
+        assert.equal(Object.keys(vm3.moreTasks).length, 0);
+    } finally {
+        globalThis.fetch = realFetch;
+    }
 });

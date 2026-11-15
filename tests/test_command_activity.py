@@ -114,6 +114,35 @@ def test_name_attribution_two_shapes(env):
     assert act._nameOf({'action': 'agent.exec', 'detail': '[] x'}) == ''
 
 
+def test_name_attribution_task_target_beats_detail_prefix(env):
+    """返工：agent.task.* 的 detail 是提示词/文件名，可能以 '[xx] ' 开头；先认
+    detail 会归出幽灵节点（提示词 '[[场景:长命令]] …' → owner:[场景:长命令]）。
+    agent.task.* 只认 target 令牌名，面板不是指挥者；target 缺失的旧条目才退回
+    detail 前缀。"""
+    assert act._nameOf(entry('agent.task.create', ago(10), target='kimi-code',
+                             detail='[[场景:长命令]] 跑一遍回归')) == 'kimi-code'
+    assert act._nameOf(entry('agent.task.rename', ago(10), target='面板',
+                             detail='[[场景:长命令]] 改名')) == ''
+    assert act._nameOf(entry('agent.task.create', ago(10), target='',
+                             name='拔尖', detail='x')) == '拔尖'
+    # exec/sftp 仍按 detail 前缀（两种形状都没坏）
+    assert act._nameOf(entry('agent.exec', ago(10),
+                             detail='[[场景:长命令]] ls', name='拔尖')) == '拔尖'
+
+
+def test_task_prompt_with_brackets_makes_no_ghost_node(env):
+    """扫一遍带方括号提示词的 agent.task.create：汇总里只有 target 令牌名，
+    没有 owner:[场景:…] 这种幽灵节点。"""
+    writeAudit(env, [
+        entry('agent.task.create', ago(30), target='kimi-code',
+              detail='[[场景:长命令]] 把周报整理成一页纸'),
+        entry('agent.exec', ago(20), name='kimi-code', detail='ls -la'),
+    ])
+    index = act.activityIndex(NOW)
+    assert sorted(index.keys()) == ['kimi-code']
+    assert index['kimi-code']['task'] == 1 and index['kimi-code']['exec'] == 1
+
+
 # ---------------------------------------------------------------- 计数与明细
 
 def test_counts_window_last_and_recent(env):

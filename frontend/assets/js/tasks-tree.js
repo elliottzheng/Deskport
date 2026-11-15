@@ -358,7 +358,7 @@
             readOpen: readOpen, writeOpen: writeOpen, autoOpenKeys: autoOpenKeys,
             resolveOpen: resolveOpen, flattenTree: flattenTree,
             treeIndex: treeIndex, taskNode: taskNode, withMoreTasks: withMoreTasks,
-            nodeView: nodeView,
+            nodeView: nodeView, mixin: mixin,
         };
     }
 })();

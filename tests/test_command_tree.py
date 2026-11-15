@@ -185,6 +185,26 @@ def test_example2_sub_lead_and_rollup(env):
                                      'failed': 1}
 
 
+def test_old_leads_counts_not_polluted_by_rollup(env):
+    """返工：逐级汇总只加进树节点的 counts 副本。旧字段 leads[].counts 是"这个
+    主管自己"的口径（供回滚与对账），不能被子主管的计数静默改掉——leadNode 浅
+    拷贝 row 时 counts 与旧字段共享同一个 dict，_attach 就地累加就污染了它。"""
+    login(env.client)
+    a = newLead(env, '甲')
+    a1 = newLead(env, '甲一')
+    patchLead(env, a1, parent=a)
+    putTask(env, 'a-own', lead=a)
+    putTask(env, 'a1-t0', lead=a1, status='running')
+    data = call(env, 'get', '/api/command/overview').get_json()
+    old = {row['id']: row['counts'] for row in data['leads']}
+    assert old[a] == {'running': 0, 'waiting': 1, 'waiting_you': 1, 'failed': 0}
+    assert old[a1] == {'running': 1, 'waiting': 0, 'waiting_you': 0, 'failed': 0}
+    # 树上的汇总照旧含子孙（回归防线：汇总逻辑没被顺手改掉）
+    byId = {n['id']: (n, d) for n, d in flat(data['tree'])}
+    assert byId[a][0]['counts'] == {'running': 1, 'waiting': 1, 'waiting_you': 1,
+                                    'failed': 0}
+
+
 def test_depth_over_three_folds_into_more(env):
     """最多 3 层：第四层起折成「更多层级 N」，只给汇总计数，不再展开。"""
     login(env.client)
