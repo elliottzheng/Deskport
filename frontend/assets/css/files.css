@@ -336,7 +336,7 @@
 @media (max-width: 640px) {
     .fm-addressbar { flex-wrap: wrap; row-gap: var(--sp-2); }
     .fm-addressbar .crumb-wrap { order: 10; flex-basis: 100%; max-width: none; overflow-x: auto; }
-    .fm-addressbar .search-input { order: 11; flex-basis: 100%; max-width: none; width: auto; }
+    .fm-addressbar .search-input { order: 5; flex: 1 1 0; min-width: 0; width: auto; max-width: none; }
     .fm-toolbar-hint { display: none; }
 }
 
