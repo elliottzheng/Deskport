@@ -158,15 +158,18 @@ class FederationTaskClient:
 
     def __init__(self, cwd, on_update=None, on_permission=None,
                  mode='auto', prompt_timeout=1800, member='', first_prompt='',
-                 model='', policy=None, kimi_session_id='', fork=True):
+                 model='', policy=None, kimi_session_id='', fork=True,
+                 expects='', on_result=None):
         self.cwd = cwd                      # 不跨机；对端 workspace 自管
         self.on_update = on_update or (lambda update: None)
         self.on_permission = on_permission or (lambda params, rid: '')
+        self.on_result = on_result          # 批次 G1：对端 result 事件照搬（见 _mirror）
         self.mode = mode
         self.model = str(model or '').strip()
         self.policy = policy if isinstance(policy, dict) else {}
         self.kimi_session_id = str(kimi_session_id or '').strip()
         self.fork = bool(fork)
+        self.expects = str(expects or '')   # 批次 G1：结构化结果要求透传对端
         self.prompt_timeout = prompt_timeout
         self.member = member
         self.first_prompt = first_prompt
@@ -210,7 +213,7 @@ class FederationTaskClient:
                 {'prompt': self.first_prompt, 'mode': self.mode,
                  'model': self.model, 'policy': self.policy,
                  'kimiSessionId': self.kimi_session_id,
-                 'fork': self.fork}, timeout=120)
+                 'fork': self.fork, 'expects': self.expects}, timeout=120)
             if status != 202:
                 raise RuntimeError('联邦任务创建失败(%s): %s'
                                    % (status, data.get('error') or data))
@@ -269,6 +272,15 @@ class FederationTaskClient:
 
     def _mirror(self, event):
         kind = event.get('type')
+        if kind == 'result':
+            # 批次 G1：对端（同版本成员中枢）的结构化结果照搬成本任务结果
+            # ——对端已用同一份 schema 校验过，本地只取键落库（adoptMirrored）
+            if self.on_result:
+                try:
+                    self.on_result(event)
+                except Exception as e:
+                    log.warning('on_result 异常: %s', e)
+            return
         update = None
         if kind == 'assistant':
             update = {'sessionUpdate': 'agent_message_chunk',

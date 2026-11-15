@@ -24,7 +24,7 @@ MIN_LEN = 12   # 短于这个长度不纳入：误伤正常文本的代价大于
 TOKEN_FILE = os.path.join(os.path.expanduser('~'), '.deskport-agent-node',
                           'token')
 REDACT_TYPES = frozenset(('tool', 'tool_result', 'assistant',
-                          'permission_request'))
+                          'permission_request', 'result'))
 
 # 批 PS2 追件：stat 缓存粒度。append_event 每事件都过
 # redactText→pairs()→refresh()；无缓存时每次都要 stat 来源文件 + 列 leads

@@ -1,0 +1,423 @@
+# -*- coding: utf-8 -*-
+"""批次 G1：submit_result 的注入（本机与远端节点两条路径 + 节点侧透传）、
+审批自动放行、自动追问与 result_missing。
+
+桩化：KimiAcp/RemoteAcpClient/node 的 kimi 子进程都不真起；env 夹具同
+test_leads_inbox_store（config/仓储指 tmp）。hubMcpUrl 的地址推导在本文件
+的 config 里显式给 agentMcpUrl（远端执行点没它就不注入）。
+"""
+import json
+import sys
+import threading
+import time
+
+import pytest
+from types import SimpleNamespace
+
+import config as configMod
+from modules import agent_nodes as nodesMod
+from modules import events as eventsMod
+from modules import leads_inbox, task_permission, task_result, task_result_mcp
+from modules import tasks_api
+from modules import tasks_runner as runner
+from modules import tasks_store as store
+from modules.tasks_store import TaskRepository
+
+PASSWORD = 'pw-123456'
+SUBMIT_TITLE = 'mcp__deskport__submit_result'
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    audit = []
+    cfgfile = tmp_path / 'config.json'
+    # agentMcpUrl 显式给：远端执行点注入要走它（本机执行点走回环，见 core）
+    cfgfile.write_text(json.dumps({'password': PASSWORD,
+                                   'agentMcpUrl': 'http://127.0.0.1:6788'}),
+                       encoding='utf-8')
+
+    def statePathInTmp(filename):
+        target = tmp_path / 'state' / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return str(target)
+
+    def fakeLog(action, target='', result='ok', detail='', ip=''):
+        audit.append({'action': action, 'target': target})
+
+    monkeypatch.setattr(configMod, 'CONFIG_PATH', str(cfgfile))
+    monkeypatch.setattr(configMod, 'statePath', statePathInTmp)
+    monkeypatch.setattr(eventsMod, 'log', fakeLog)
+    configMod._cache.update(mtime=None, data=None)
+    repo = TaskRepository(str(tmp_path / 'tasks.json'), str(tmp_path / 'logs'))
+    monkeypatch.setattr(store, 'repo', repo)
+    monkeypatch.setattr(store, 'taskRoot', lambda: str(tmp_path / 'taskroot'))
+    monkeypatch.setattr(tasks_api.runner, '_startTask', lambda t, m: None)
+    from app import create_app
+    app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
+    return SimpleNamespace(client=app.test_client(), repo=repo, tmp=tmp_path,
+                           app=app, monkeypatch=monkeypatch)
+
+
+def login(client):
+    assert client.post('/login', data={'password': PASSWORD}).status_code == 302
+
+
+def newTask(env, expects='impl', node=None, cwd=None):
+    body = {'prompt': '干活', 'expects': expects}
+    if node:
+        body['node'] = node
+    if cwd:
+        body['cwd'] = cwd
+    resp = env.client.post('/api/tasks', data=json.dumps(body),
+                           content_type='application/json')
+    assert resp.status_code == 202, resp.get_json()
+    return resp.get_json()['task']['id']
+
+
+def userEvents(env, tid):
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        return [e for e in task.get('events') or [] if e.get('type') == 'user']
+
+
+def stopThread(env, tid, thread, timeout=10):
+    """收尾：给会话循环发 close，等线程退出（失败也不挂死测试）。"""
+    agent = env.repo.agentOf(tid)
+    if agent:
+        agent['queue'].put({'type': 'close'})
+    thread.join(timeout)
+
+
+# ---------------------------------------------------------------- 桩客户端
+
+class StubKimi:
+    """本机 stdio 路径的桩：记下 runner 注入的 mcp_servers。"""
+    instances = []
+
+    def __init__(self, cwd, on_update=None, on_permission=None,
+                 mode='auto', prompt_timeout=0):
+        self.cwd, self.mcp_servers, self.started = cwd, None, None
+        self.stderr_lines = []
+        StubKimi.instances.append(self)
+
+    def start(self, session_id=None):
+        self.started = session_id
+        return 'sess-stub'
+
+    def prompt(self, text, timeout=None):
+        return {'stopReason': 'end_turn'}
+
+    def close(self):
+        pass
+
+
+# ---------------------------------------------------------------- 本机路径
+
+def test_local_path_injects_mcp_servers(env):
+    """本机（web 内 stdio）：建卡 expects=impl → session 前注入 http MCP。"""
+    login(env.client)
+    StubKimi.instances = []
+    tid = newTask(env, 'impl')
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    th = threading.Thread(target=runner._sessionThread,
+                          args=(task, []), kwargs={'clientFactory': StubKimi})
+    th.start()
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if StubKimi.instances and StubKimi.instances[0].mcp_servers is not None:
+            break
+        time.sleep(0.05)
+    client = StubKimi.instances[0]
+    injected = client.mcp_servers          # 停线程前抓快照（退出即吊销令牌）
+    assert injected is not None, 'runner 没来得及注入（10s 超时）'
+    assert len(injected) == 1
+    tokenAtInject = injected[0]['headers'][0]['value']
+    assert task_result_mcp.tokenTask(tokenAtInject) == tid   # 线程还活着：令牌绑本任务
+    stopThread(env, tid, th)
+    assert task_result_mcp.tokenTask(tokenAtInject) == ''    # 退出后吊销
+    assert injected[0]['type'] == 'http' and injected[0]['name'] == 'deskport'
+    assert injected[0]['url'] == 'http://127.0.0.1:6788/api/mcp'
+    assert injected[0]['headers'][0]['name'] == task_result_mcp.TOKEN_HEADER
+    # 注入发生在 start 之前（start 已被桩记录调用过）
+    assert client.started is None
+    # 追问文案作为 user 事件落卡（by=平台追发）
+    nudges = [e for e in userEvents(env, tid) if e.get('by') == task_result.NUDGE_BY]
+    assert len(nudges) == 1 and 'submit_result' in nudges[0]['text']
+
+
+def test_no_expects_no_injection(env):
+    """没有 expects 的任务：不注入、不发令牌。"""
+    login(env.client)
+    StubKimi.instances = []
+    tid = newTask(env, expects=None)
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    th = threading.Thread(target=runner._sessionThread,
+                          args=(task, []), kwargs={'clientFactory': StubKimi})
+    th.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not StubKimi.instances:
+        time.sleep(0.05)
+    stopThread(env, tid, th)
+    assert StubKimi.instances[0].mcp_servers == []
+    assert task_result_mcp.tokenTask('whatever') == ''
+
+
+def test_missing_hub_url_skips_injection(env):
+    """远端执行点且没配中枢地址：不注入 + 状态事件说明退路。"""
+    login(env.client)
+    StubKimi.instances = []
+    env.monkeypatch.setattr(task_result_mcp, 'hubMcpUrl', lambda node: '')
+    tid = newTask(env, 'impl')
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    th = threading.Thread(target=runner._sessionThread,
+                          args=(task, []), kwargs={'clientFactory': StubKimi})
+    th.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not StubKimi.instances:
+        time.sleep(0.05)
+    stopThread(env, tid, th)
+    assert StubKimi.instances[0].mcp_servers == []
+    with env.repo.lock:
+        texts = [e.get('text') or '' for e in env.repo.get(tid).get('events') or []]
+    assert any('未注入 submit_result' in t for t in texts)
+
+
+# ---------------------------------------------------------------- 远端节点路径
+
+def test_remote_node_path_injects_via_payload(env, monkeypatch):
+    """远端节点：runner 置 client.mcp_servers → POST /api/sessions 带
+    mcpServers（节点侧原样转交 kimi）。"""
+    login(env.client)
+    monkeypatch.setattr(nodesMod, 'findNode',
+                        lambda name: {'name': name, 'url': 'http://127.0.0.1:8622'})
+    monkeypatch.setattr(nodesMod.RemoteAcpClient, 'prompt',
+                        lambda self, text, timeout=None: {'stopReason': 'end_turn'})
+    tid = newTask(env, 'impl', node='ai-xmyz', cwd='/work')
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    factory = nodesMod.clientFactoryFor(task)
+    seen = {}
+
+    def wrap(cwd, on_update=None, on_permission=None,
+             mode='auto', prompt_timeout=0):
+        client = factory(cwd, on_update, on_permission, mode, prompt_timeout)
+        seen['client'] = client
+        return client
+
+    sent = {}
+
+    def fakeNodeRequest(node, method, path, payload=None, timeout=30):
+        if method == 'POST' and path == '/api/sessions':
+            sent['payload'] = payload
+            return 200, {'sid': 'n1', 'kimiSessionId': 'k1',
+                         'attachSeq': 0, 'replayCount': 0}
+        return 200, {}
+
+    monkeypatch.setattr(nodesMod, 'nodeRequest', fakeNodeRequest)
+    th = threading.Thread(target=runner._sessionThread,
+                          args=(task, []), kwargs={'clientFactory': wrap})
+    th.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and 'payload' not in sent:
+        time.sleep(0.05)
+    payload = sent.get('payload')
+    tokenAtInject = payload['mcpServers'][0]['headers'][0]['value'] if payload else ''
+    assert task_result_mcp.tokenTask(tokenAtInject) == tid
+    stopThread(env, tid, th)
+    assert payload['mcpServers'][0]['type'] == 'http'
+    assert payload['mcpServers'][0]['url'] == 'http://127.0.0.1:6788/api/mcp'
+    # 同一只客户端上属性也置了（_ensureLive 复用时还在）
+    assert seen['client'].mcp_servers == payload['mcpServers']
+    assert task_result_mcp.tokenTask(tokenAtInject) == ''   # 退出后吊销
+
+
+def test_node_side_passes_mcp_to_kimi(tmp_path, monkeypatch):
+    """节点侧：/api/sessions 的 mcpServers → AcpSession.start → kimi 的
+    session/new（桩子进程，不起真 kimi）。"""
+    seen = {}
+    monkeypatch.setattr(task_result_mcp, 'hubMcpUrl', lambda node: 'http://h/api/mcp')
+
+    class FakeProc:
+        stdin = stdout = stderr = []
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+    import sys
+    sys.path.insert(0, 'agent_node')
+    try:
+        import acp_session as acpMod
+        import node_api as nodeApiMod
+        monkeypatch.setattr(acpMod.subprocess, 'Popen',
+                            lambda cmd, **kw: FakeProc())
+        session = acpMod.AcpSession('s1', '/tmp', 'auto', 'kimi')
+
+        def fakeRequest(method, params, timeout=None):
+            seen[method] = params
+            if method == 'initialize':
+                return {'agentInfo': {}, 'agentCapabilities': {}}
+            return {'sessionId': 'session_x', 'modes': {}}
+        monkeypatch.setattr(session, '_request', fakeRequest)
+        servers = [{'type': 'http', 'name': 'deskport',
+                    'url': 'http://h/api/mcp',
+                    'headers': [{'name': 'X-Deskport-Session-Token',
+                                 'value': 'tok'}]}]
+        session.start(None, servers)
+        assert seen['session/new']['mcpServers'] == servers
+        session.start('session_x', servers)      # session/load 同带
+        assert seen['session/load']['mcpServers'] == servers
+        session.stop()
+
+        # HTTP 层：create 把 mcp_servers 转交 start
+        started = {}
+
+        class StubSession:
+            def __init__(self, sid, cwd, mode, kimi_bin, title='', model=''):
+                from acp_session import Ring
+                self.ring = Ring()
+
+            def start(self, resume_session_id=None, mcp_servers=None):
+                started['mcp'] = mcp_servers
+
+            def stop(self):
+                pass
+
+            def meta(self):
+                return {}
+        monkeypatch.setattr(nodeApiMod, 'AcpSession', StubSession)
+        mgr = nodeApiMod.SessionManager('kimi', str(tmp_path / 'data'))
+        mgr.create('/tmp', 'auto', '', None, '', mcp_servers=servers)
+        assert started['mcp'] == servers
+    finally:
+        sys.path.pop(0)
+
+
+# ---------------------------------------------------------------- 自动放行
+
+def _agentDict():
+    return {'queue': __import__('queue').Queue(), 'perm': None,
+            'permDecision': None, 'permEvent': threading.Event()}
+
+
+def permParams(callId, title):
+    return {'sessionId': 'sess_x',
+            'toolCall': {'title': title, 'toolCallId': callId},
+            'options': [{'optionId': 'opt-allow', 'name': 'Allow once',
+                         'kind': 'allow_once'},
+                        {'optionId': 'opt-reject', 'name': 'Reject',
+                         'kind': 'reject_once'}]}
+
+
+def test_submit_result_auto_approved(env):
+    """submit_result 的权限请求自动放行：不挂起、不留 pendingPermission。"""
+    login(env.client)
+    tid = newTask(env, 'impl')
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['status'] = 'running'
+        env.repo.save()
+    agent = _agentDict()
+    value = task_permission.handleAcpPermission(
+        task, agent, permParams('c-sub', SUBMIT_TITLE), 'req-sub')
+    assert value == 'opt-allow'
+    with env.repo.lock:
+        assert task.get('pendingPermission') == ''
+        autos = [e for e in task.get('events') or []
+                 if e.get('type') == 'auto_approved']
+    assert autos and autos[0]['rule'] == 'submit-result'
+    assert autos[0]['name'] == SUBMIT_TITLE
+    # 兼容别名同行为（存量测试引用 runner._handleAcpPermission）
+    agent2 = _agentDict()
+    assert runner._handleAcpPermission(
+        task, agent2, permParams('c-sub2', SUBMIT_TITLE), 'req-sub2') == 'opt-allow'
+
+
+# ---------------------------------------------------------------- 自动追问
+
+class ResultClient:
+    """一轮内就提交结果：不该被追问。"""
+
+    def __init__(self, task):
+        self.task = task
+
+    def prompt(self, text, timeout=None):
+        task_result.submit(self.task, {'summary': '交了', 'commit': 'abc1234',
+                                       'tests': {'passed': 1, 'failed': 0,
+                                                 'skipped': 0}}, via='mcp')
+        return {'stopReason': 'end_turn'}
+
+
+class SilentClient:
+    def prompt(self, text, timeout=None):
+        return {'stopReason': 'end_turn'}
+
+
+def test_nudge_once_then_result_missing(env):
+    """没交结果：轮末追一次（固定文案）；再一轮仍没有 → 收件箱 result_missing。"""
+    login(env.client)
+    leadTok = env.client.post('/api/settings/agent-tokens',
+                              data=json.dumps({'name': 'LT'}),
+                              content_type='application/json').get_json()
+    leadId = env.client.post('/api/settings/leads',
+                             data=json.dumps({'name': '甲'}),
+                             content_type='application/json').get_json()['lead']['id']
+    env.client.post('/api/settings/leads/%s/tokens' % leadId,
+                    data=json.dumps({'tokenId': leadTok['id']}),
+                    content_type='application/json')
+    fresh = env.app.test_client()      # 无 cookie：走令牌通道才会记 task.lead
+    tid = fresh.post('/api/tasks',
+                     data=json.dumps({'prompt': '干活', 'expects': 'impl'}),
+                     content_type='application/json',
+                     headers={'X-Agent-Token': leadTok['token']}).get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    runner._promptOnce(task, SilentClient(), '第一轮', False)
+    nudges = [e for e in userEvents(env, tid) if e.get('by') == task_result.NUDGE_BY]
+    assert len(nudges) == 1
+    assert 'submit_result' in nudges[0]['text'] and 'expects=impl' in nudges[0]['text']
+    assert env.repo.get(tid).get('resultNudged') is True
+    # 第二轮（=追发那一轮）仍没有 → result_missing 投主管
+    runner._promptOnce(task, SilentClient(), '第二轮', False)
+    assert len([e for e in userEvents(env, tid)
+                if e.get('by') == task_result.NUDGE_BY]) == 1   # 只追一次
+    path = '%s/state/lead_inbox/%s.jsonl' % (env.tmp, leadId)
+    entries = [json.loads(l) for l in open(path, encoding='utf-8') if l.strip()]
+    kinds = [e['kind'] for e in entries]
+    assert 'result_missing' in kinds
+    missing = [e for e in entries if e['kind'] == 'result_missing']
+    assert len(missing) == 1 and '未提交结构化结果' in missing[0]['text']
+
+
+def test_no_nudge_when_result_present(env):
+    """一轮内交了结果：不追问、不记 result_missing。"""
+    login(env.client)
+    tid = newTask(env, 'impl')
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    runner._promptOnce(task, ResultClient(task), '干活', False)
+    assert [e for e in userEvents(env, tid)
+            if e.get('by') == task_result.NUDGE_BY] == []
+    assert env.repo.get(tid).get('resultNudged') is None
+    runner._promptOnce(task, SilentClient(), '再干', False)
+    assert [e for e in userEvents(env, tid)
+            if e.get('by') == task_result.NUDGE_BY] == []
+
+
+def test_no_nudge_without_expects(env):
+    """没有 expects 的任务：轮末什么都不追加。"""
+    login(env.client)
+    tid = newTask(env, expects=None)
+    with env.repo.lock:
+        task = env.repo.get(tid)
+    before = len(userEvents(env, tid))
+    runner._promptOnce(task, SilentClient(), '干活', False)
+    assert len(userEvents(env, tid)) == before
+    assert env.repo.get(tid).get('resultNudged') is None
+

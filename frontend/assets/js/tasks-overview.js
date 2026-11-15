@@ -36,25 +36,23 @@
 
     // 首行 + 截断（汇报/原因都只要第一句）；截断时补省略号。
     function firstLine(text, max) {
-        var raw = String(text === null || text === undefined ? '' : text).trim();
-        if (!raw) { return ''; }
-        var line = raw.split('\n')[0].trim();
+        var line = String(text === null || text === undefined ? '' : text).trim().split('\n')[0].trim();
         var limit = Number(max) || 0;
         return limit && line.length > limit ? line.slice(0, limit) + '…' : line;
     }
 
     function countsText(counts) {
         var c = counts || {};
-        return '在跑 ' + (Number(c.running) || 0) + ' · 等待 '
-            + (Number(c.waiting) || 0) + ' · 出错 ' + (Number(c.failed) || 0);
+        return '在跑 ' + (Number(c.running) || 0) + ' · 等待 ' + (Number(c.waiting) || 0) + ' · 出错 ' + (Number(c.failed) || 0);
     }
 
     function unassignedTitle(count, running) {
         return (Number(count) || 0) + ' 个，其中在跑 ' + (Number(running) || 0);
     }
 
-    // overview 的 summaryBrief → 行视图。agoText 由调用方给（WPCommon.fmtAgo
-    // 的产物）——相对时间格式全站只许 common.js 一份，这里不复制实现。
+    // overview 的 summaryBrief → 行视图。agoText 由调用方给（WPCommon.fmtAgo 的产物，
+    // 相对时间格式全站只许 common.js 一份）。resultLabel（批次 G1）：纯函数在
+    // tasks-result.js，node 单测环境没有该全局时按空处理。
     function taskRowView(task, agoText) {
         var t = task || {};
         var bits = [];
@@ -63,6 +61,7 @@
         var model = t.modelEffective || t.model || '';
         if (model) { bits.push(model); }
         if (agoText) { bits.push('最近 ' + agoText); }
+        var label = typeof WPTasksResult === 'undefined' ? '' : WPTasksResult.rowLabel(t.result);
         return {
             id: t.id || '',
             title: t.title || t.prompt || '(无标题)',
@@ -73,6 +72,7 @@
             model: model,
             lastActiveAt: t.lastActiveAt || 0,
             sub: bits.join(' · '),
+            resultLabel: label,
         };
     }
 

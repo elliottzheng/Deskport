@@ -18,6 +18,7 @@ from modules.kimi_acp import KimiAcp
 from modules import kimi_acp
 from modules import task_events
 from modules import task_policy
+from modules import task_result, task_result_mcp
 from modules import tasks_runner as runner
 from modules import task_state, task_title
 from modules import tasks_store as store
@@ -163,6 +164,11 @@ def createTaskResponse(data, start=True):
     if model:
         if len(model) > 100 or any(c < ' ' for c in model):
             return ({'error': 'model 不合法（≤100 字符，无控制字符）'}), 400
+    # 批次 G1：结构化结果要求（可选）——建卡时定，提交时按它校验（详见
+    # modules/task_result.py；技能包 --expects 同一取值）
+    expects, expErr = task_result.normalizeExpects(data.get('expects'))
+    if expErr:
+        return ({'error': expErr}), 400
     taskCwd = remoteCwd = ''
     try:
         policy = task_policy.validatePolicy(data.get('policy'))
@@ -333,6 +339,8 @@ def createTaskResponse(data, start=True):
         'node': node,
         'cwd': (taskCwd or workspace) if local else remoteCwd,
         'sources': manifest,
+        # 批次 G1：结构化结果要求（'' = 不要求；提交面见 task_result_api/mcp）
+        'expects': expects,
     }
     injected = ''
     if workline:
@@ -385,6 +393,8 @@ def startTask(task, manifest):
 def getTask(task, taskId):
     out = store.repo.summary(task)
     out['sources'] = task.get('sources', [])
+    # 批次 G1：最新结构化结果（精简版）与提交次数（完整历史在事件流）
+    out['result'], out['resultCount'] = task_result.latestFor(task)
     # R4-8：执行方状态可观测
     usage = task.get('usage') or {}
     if usage.get('used') is not None:
@@ -465,6 +475,9 @@ def taskEvents(task, taskId):
     return jsonify({'status': task.get('status'), 'events': events,
                     'lastText': task.get('lastText', ''),
                     'resultFiles': task.get('resultFiles', []),
+                    # 批次 G1：最新结构化结果随事件轮询带回（结果卡片实时刷新）
+                    'result': task.get('result') or None,
+                    'resultCount': int(task.get('resultCount') or 0),
                     'error': task.get('error', ''),
                     'queuedMessages': len(task.get('messageQueue') or []),
                     'pendingPermission': task.get('pendingPermission') or '',
@@ -771,6 +784,9 @@ def closeTaskCore(task):
     with store.repo.lock:
         agent = store.repo.agentOf(taskId)
         task['closedByUser'] = True
+        # 批次 G1：submit_result 会话令牌随任务关闭作废（runner 线程退出
+        # 时也会吊销；双路径幂等）
+        task_result_mcp.revokeTask(taskId)
     if agent:
         runner._denyPendingPermission(agent)
         agent['queue'].put({'type': 'close'})
@@ -929,51 +945,6 @@ def uploadTaskFile():
     return jsonify({'ok': True, 'path': os.path.abspath(path),
                     'size': len(raw),
                     'hint': '把该 path 放进 POST /api/tasks 的 paths 数组即可作为任务输入'})
-
-
-@blueprint.route('/api/tasks/kimi-sessions')
-def listKimiSessions():
-    """已存在的 Kimi CLI 会话（第二轮反馈 §2.3）：智能体挑接手候选。
-
-    ?node=<节点>：代理远端 node 的 /api/kimi-sessions（R4-7），
-    未指定或 local 时列本机 kimi 会话。"""
-    cwd = (request.args.get('cwd') or '').strip()
-    try:
-        limit = int(request.args.get('limit') or 30)
-    except ValueError:
-        limit = 30
-    node = (request.args.get('node') or '').strip()
-    if node and node != 'local':
-        target = agent_nodes.findNode(node)
-        if target is None:
-            return jsonify({'error': '节点不存在', 'nodes': agent_nodes.listNodeNames()}), 404
-        from urllib.parse import quote
-        try:
-            status, data = agent_nodes.nodeRequest(
-                target, 'GET',
-                '/api/kimi-sessions?cwd=%s&limit=%d' % (quote(cwd), limit),
-                timeout=120)
-        except Exception as e:
-            # 隧道瞬断等传输错误：502 JSON 让调用方可重试，不再 500
-            return jsonify({'error': '节点请求失败: %s' % str(e)[:200],
-                            'node': node}), 502
-        if status != 200:
-            return jsonify({'error': (data or {}).get('error') or 'HTTP %s' % status,
-                            'node': node}), 502
-        items = data.get('sessions') or []
-    else:
-        try:
-            items = kimi_acp.listSessions(limit=limit, cwd=cwd or None)
-        except RuntimeError as e:
-            return jsonify({'error': str(e)}), 502
-    tokenName = getattr(g, 'agentTokenName', '')
-    if tokenName:
-        events.log('agent.task.kimilist', tokenName, 'ok',
-                   'node=%s cwd=%s' % (node or '-', cwd or '-'), request.remote_addr)
-    return jsonify({'sessions': items, 'node': node,
-                    'hint': 'POST /api/tasks {"kimiSessionId": "<id>", '
-                            '"node": "<执行点>", "cwd": "<目录>"} '
-                            '接手（默认 fork 副本，不干扰原会话）'})
 
 
 @blueprint.route('/api/tasks/<taskId>/policy', methods=['POST'])

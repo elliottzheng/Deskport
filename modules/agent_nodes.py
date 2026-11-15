@@ -21,7 +21,7 @@ import paramiko
 from flask import Blueprint, jsonify
 
 import config
-from modules import agent_busy, node_path, task_engines, task_node
+from modules import agent_busy, node_path, task_engines, task_node, task_result
 from modules.agent_tunnel import tunnelPort, dropTunnelsFor
 
 blueprint = Blueprint('agent_nodes', __name__)
@@ -278,8 +278,9 @@ class RemoteAcpClient(agent_busy.BusyPromptMixin):
     # ---- lifecycle ----
     def start(self, session_id=None):
         node = self._node()
-        payload = {'cwd': self.cwd, 'mode': self.mode,
-                   'sessionId': session_id or '', 'model': self.model}
+        # 批次 G1：runner 置的 mcp_servers（submit_result 注入）随会话创建透传到 node
+        payload = {'cwd': self.cwd, 'mode': self.mode, 'sessionId': session_id or '',
+                   'model': self.model, 'mcpServers': getattr(self, 'mcp_servers', None) or []}
         if self.kimi_session_id:
             # R4-7 远端接手：fork/加载由节点侧执行（回放走 node 门禁）
             payload['kimiSessionId'] = self.kimi_session_id
@@ -427,7 +428,8 @@ class RemoteAcpClient(agent_busy.BusyPromptMixin):
         status, data = nodeRequest(
             self._node(), 'POST', '/api/sessions',
             {'cwd': self.cwd, 'mode': self.mode, 'sessionId': self.session_id,
-             'model': self.model}, timeout=90)
+             'model': self.model, 'mcpServers': getattr(self, 'mcp_servers', None) or []},
+            timeout=90)
         if status != 200:
             raise RuntimeError('自动接续失败(%s): %s'
                                % (status, data.get('error') or data))
@@ -490,12 +492,9 @@ def remoteClientFactory(task):
 
     def factory(cwd, on_update=None, on_permission=None,
                 mode='auto', prompt_timeout=0):
-        return RemoteAcpClient(cwd=remoteCwd or cwd,
-                               on_update=on_update,
-                               on_permission=on_permission,
-                               mode=mode, prompt_timeout=prompt_timeout,
-                               node=node, model=taskModel,
-                               kimi_session_id=kimiSessionId,
+        return RemoteAcpClient(cwd=remoteCwd or cwd, on_update=on_update,
+                               on_permission=on_permission, mode=mode, prompt_timeout=prompt_timeout,
+                               node=node, model=taskModel, kimi_session_id=kimiSessionId,
                                fork=kimiSessionFork,
                                on_status=agent_busy.taskStatusEmitter(task))
     return factory
@@ -540,7 +539,9 @@ def clientFactoryFor(task):
                     member=nodeName, first_prompt=firstPrompt,
                     model=taskModel, policy=task.get('policy') or {},
                     kimi_session_id=task.get('kimiSessionId') or '',
-                    fork=bool(task.get('kimiSessionFork', True)))
+                    fork=bool(task.get('kimiSessionFork', True)),
+                    expects=task.get('expects') or '',
+                    on_result=lambda event: task_result.adoptMirrored(task, event))
             return fedFactory
         return remoteClientFactory(task)
     local = config.getLocalAgentNode()
@@ -559,10 +560,8 @@ def clientFactoryFor(task):
 
     def stdioFactory(cwd, on_update=None, on_permission=None,
                      mode='auto', prompt_timeout=0):
-        return KimiAcp(cwd=cwd, on_update=on_update,
-                       on_permission=on_permission,
-                       mode=mode, prompt_timeout=prompt_timeout,
-                       model=taskModel)
+        return KimiAcp(cwd=cwd, on_update=on_update, on_permission=on_permission,
+                       mode=mode, prompt_timeout=prompt_timeout, model=taskModel)
     return stdioFactory
 
 

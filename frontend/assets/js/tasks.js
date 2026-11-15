@@ -170,6 +170,8 @@
                         status: data.status,
                         lastText: data.lastText || '',
                         resultFiles: data.resultFiles || [],
+                        result: data.result || null,
+                        resultCount: data.resultCount || 0,
                         error: data.error || '',
                         canContinue: data.canContinue,
                         canResume: data.canResume,
@@ -482,18 +484,17 @@
             shortArgs(a) {
                 try {
                     const obj = JSON.parse(a || '{}');
-                    const vals = Object.keys(obj).map(function (k) { return obj[k]; });
-                    return String(vals.join(' · ')).slice(0, 120);
+                    return String(Object.keys(obj).map(function (k) { return obj[k]; }).join(' · ')).slice(0, 120);
                 } catch (err) {
                     return String(a || '').slice(0, 120);
                 }
             },
             downloadUrl(p) {
-                return '/api/tasks/' + encodeURIComponent(this.selectedId)
-                    + '/download?path=' + encodeURIComponent(p);
+                return '/api/tasks/' + encodeURIComponent(this.selectedId) + '/download?path=' + encodeURIComponent(p);
             },
         },
     });
 app.mixin(WPTasksOverview.mixin());
+app.mixin(WPTasksResult.mixin());
 app.mount('#app');
 })();

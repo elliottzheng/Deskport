@@ -370,3 +370,56 @@ task-back { display: none; }
     .task-detail-head { flex-direction: column; align-items: stretch; }
     .task-head-actions { justify-content: flex-start; }
 }
+
+/* ---- 批次 G1：结构化结果卡片（详情顶部）与指挥台行内小标签 ---- */
+.task-result-card {
+    margin: 0 0 12px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: var(--radius-s, 8px);
+    background: var(--bg-2);
+}
+.task-result-head {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+}
+.result-verdict {
+    flex-shrink: 0; padding: 1px 8px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; color: #fff; background: var(--text-3);
+}
+.result-verdict.is-pass { background: var(--ok); }
+.result-verdict.is-rework { background: var(--warn); }
+.result-verdict.is-judge { background: #7C3AED; }
+.task-result-commit {
+    font-size: 12px; color: var(--text-2); word-break: break-all;
+}
+.task-result-tests { font-size: 12px; color: var(--text-2); }
+.task-result-count { font-size: 11px; color: var(--text-3); }
+.task-result-summary {
+    margin: 8px 0 0; font-size: 13px; color: var(--text-1);
+    white-space: pre-wrap; word-break: break-word;
+}
+.task-result-gates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.result-gate {
+    padding: 1px 8px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--border); color: var(--text-2);
+}
+.result-gate.is-pass { color: var(--ok); border-color: var(--ok); }
+.result-gate.is-fail { color: var(--warn); border-color: var(--warn); }
+.task-result-lists {
+    display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+}
+.task-result-list { min-width: 0; flex: 1 1 220px; }
+.task-result-list-title { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.task-result-list ol, .task-result-list ul {
+    margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-1);
+}
+.task-result-list li { word-break: break-word; margin-bottom: 2px; }
+/* 事件流里的 result 行（提交即一条） */
+.ev-result-submit {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+    padding: 6px 10px; font-size: 12px; color: var(--text-2);
+    background: var(--bg-2); border-radius: var(--radius-s, 8px);
+}
+/* 指挥台任务行小标签：不抢状态列的位置，390 宽可读（flex-wrap 兜底） */
+.cmd-task-result {
+    flex-shrink: 0; font-size: 11px; color: var(--ok);
+    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

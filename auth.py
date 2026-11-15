@@ -228,6 +228,17 @@ def register(app):
             if path.startswith('/api/agent/'):
                 return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401
             # /api/tasks 未命中令牌 → 落到下方统一 401
+        # 批次 G1：任务会话令牌（X-Deskport-Session-Token）只放行结果提交两处
+        # ——/api/mcp 与 /api/tasks/<id>/result；令牌与任务的绑定在端点再校验
+        if path.startswith('/api/mcp') or (path.startswith('/api/tasks/')
+                                           and path.endswith('/result')):
+            from modules import task_result_mcp
+            token = request.headers.get(task_result_mcp.TOKEN_HEADER) or ''
+            taskId = task_result_mcp.tokenTask(token)
+            if taskId and (path.startswith('/api/mcp')
+                           or path == '/api/tasks/%s/result' % taskId):
+                g.taskResultToken = token
+                return None
         if path.startswith('/api/'):
             return jsonify({'error': 'unauthorized'}), 401
         from modules import plugins as pluginModule

@@ -10,9 +10,9 @@
 
 配置（后者覆盖前者）：脚本同目录 .deskport.json → 环境变量 DESKPORT_URL / DESKPORT_NODE /
 DESKPORT_INSECURE=1 → 函数参数。令牌：参数 token → 环境变量 DESKPORT_TOKEN → 同目录 .agent-token。
-证书校验失败 / 握手失败抛 TlsError（文案带三种处理），绝不自动放宽校验。
-服务端已知行为：exec 输出超过 2 MiB 会被截断、超时上限 600s（truncated=True，sh() 会告警）；
-命令里含 NUL 字符服务端会 500，这里在客户端提前拒绝。
+证书校验失败 / 握手失败抛 TlsError（文案带三种处理），绝不自动放宽校验。服务端已知行为：exec
+输出超过 2 MiB 会被截断、超时上限 600s（truncated=True，sh() 会告警）；命令含 NUL 字符
+服务端会 500，这里在客户端提前拒绝。
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ import hashlib
 import http.client
 import json
 import os
-import shlex
 import ssl
 import urllib.error
 import urllib.parse
@@ -132,8 +131,7 @@ class Deskport:
         """技能包过期：hub 在响应头里打了 X-Deskport-Skill-Stale 标记；None=最新。"""
         if self.lastHeaders.get('x-deskport-skill-stale') != '1':
             return None
-        return {'local': self.skillVersion,
-                'current': self.lastHeaders.get('x-deskport-skill-version', '')}
+        return {'local': self.skillVersion, 'current': self.lastHeaders.get('x-deskport-skill-version', '')}
 
     @staticmethod
     def _read_token(token_file) -> str:
@@ -154,8 +152,8 @@ class Deskport:
             return
         self._staleWarned = True
         import sys
-        print("deskport: 技能包过期（本地 %s → 线上 %s）——重拉：curl -s -k %s/api/agent/"
-              "skill.zip -o deskport-skill.zip && unzip -oq deskport-skill.zip -d ./deskport-skill/"
+        print("deskport: 技能包过期（本地 %s → 线上 %s）——重拉：curl -s -k %s/api/agent/skill.zip "
+              "-o deskport-skill.zip && unzip -oq deskport-skill.zip -d ./deskport-skill/"
               % (stale['local'], stale['current'], self.base_url), file=sys.stderr)
 
     def _request(self, method: str, path: str, body: dict | None = None,
@@ -233,20 +231,19 @@ class Deskport:
                     cwd: str | None = None, paths: list[str] | None = None,
                     model: str | None = None, attachments: dict[str, bytes | str] | None = None,
                     kimi_session: str | None = None, fork: bool = True,
-                    policy: dict | None = None, title: str | None = None) -> "Task":
+                    policy: dict | None = None, title: str | None = None,
+                    expects: str | None = None) -> "Task":
         """派活给 Deskport 托管的智能体。mode=default 逐项审批，全自动显式传 "auto"。
-        node=执行点（缺省 "local"）；cwd=执行目录（本机可给绝对目录，任务目录仍是 workspace；
-        非本机给该机器上已存在的目录，缺省 = 任务目录）。kimi_session 接手（R4-7）：默认 fork
+        node=执行点（缺省 "local"）；cwd=执行目录。kimi_session 接手（R4-7）：默认 fork
         副本，fork=False 直接接管原会话（被占用时 409）。model 可选（见 nodes() 的 models）；
         attachments={文件名: 内容} 随任务上传，prompt 上限 4000 字符。policy=审批边界（R4-2）：
         {"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则], "default":"ask|allow|deny",
         "timeoutSec":n}；边界内自动放行，越界才挂起。title=任务标题（批次 T，≤40 字；
-        留空按提示词自动生成，主管派活必须显式给）。"""
+        留空按提示词自动生成，主管派活必须显式给）。expects（批次 G1）=impl/verify 时执行方
+        必须调 submit_result 交结构化结果（会话内 MCP 工具，或 result 子命令退路）。"""
         if len(prompt) > 4000:
             raise ValueError(f"prompt {len(prompt)} 字符超过服务端上限 4000；长内容请用 attachments")
         body: dict = {"prompt": prompt, "node": node, "mode": mode}
-        if title:
-            body["title"] = title
         if model:
             body["model"] = model
         if kimi_session:
@@ -254,10 +251,8 @@ class Deskport:
             if not fork:
                 body["fork"] = False
         if attachments:
-            body["attachments"] = [
-                {"name": n, "contentB64": base64.b64encode(
-                    d.encode("utf-8") if isinstance(d, str) else d).decode()}
-                for n, d in attachments.items()]
+            body["attachments"] = [{"name": n, "contentB64": base64.b64encode(
+                d.encode() if isinstance(d, str) else d).decode()} for n, d in attachments.items()]
         if node and node != "local" and not cwd:
             raise ValueError("非本机执行点需要 cwd（该机器上已存在的目录）")
         if cwd:
@@ -268,6 +263,8 @@ class Deskport:
             body["policy"] = policy
         if title:
             body["title"] = title
+        if expects:
+            body["expects"] = expects
         return Task(self, self._request("POST", "/api/tasks", body)["task"]["id"])
 
     # ---- 主管通信（指挥链）：令牌绑了主管才有 ----
@@ -293,8 +290,7 @@ class Deskport:
                                  {"text": text}).get("seq") or 0)
 
     def inboxAck(self, seq: int) -> dict:
-        """确认收件箱读到哪（POST /api/agent/leads/inbox/ack）：readSeq 只增
-        不减，条目不删。"""
+        """确认收件箱读到哪（POST /api/agent/leads/inbox/ack）：readSeq 只增不减。"""
         return self._request("POST", "/api/agent/leads/inbox/ack",
                              {"seq": int(seq)})
 
@@ -303,10 +299,15 @@ class Deskport:
         node 侧进程立即回收；悬着的任务占名额，干完了就关（协作原则 §6）。"""
         return self._request("POST", f"/api/tasks/{task_id}/close", {})
 
+    def submit_result(self, task_id: str, data: dict) -> dict:
+        """提交结构化结果（批次 G1，POST /api/tasks/<id>/result）：会话内 MCP 工具
+        submit_result 之外的退路；校验失败 400 带逐字段 errors，可改后重交。"""
+        return self._request("POST", f"/api/tasks/{task_id}/result", data)
+
     def approve(self, task_id: str, request_id: str, deny: bool = False,
                 option_id: str = "") -> dict:
         """审批挂起的请求（主管处理下属 escalation 的一行式）：deny=True 拒绝；
-        否则自取 allow_once 选项，取不到就报错（不静默授予会话级授权）走 report。"""
+        否则自取 allow_once 选项，取不到就报错（不静默授予会话级授权）。"""
         if not deny and not option_id:
             ev = self._request("GET", f"/api/tasks/{task_id}/events"
                               "?types=permission_request").get("events") or []
@@ -332,12 +333,8 @@ class Deskport:
 
     # ---- 主管（批次 SR：全权令牌自助成为外部主管，无需用户操作）----
     def register_lead(self, name: str, project: str = "") -> dict:
-        """用本令牌自助成为外部主管（仅全权令牌可用）。
-
-        服务端建 kind=external 主管并把调用令牌绑上去。已绑同名 → 200 返回
-        现有记录；已绑别的名字 / 名字被非 retired 主管占用 → 409
-        （DeskportError，detail 里带回已绑主管）；受限/联邦/设备令牌 403。
-        """
+        """用本令牌自助成为外部主管（仅全权令牌可用）。服务端建 kind=external
+        主管并把调用令牌绑上去；已绑同名 → 200，冲突 → 409；受限/联邦/设备令牌 403。"""
         body = {"name": name}
         if project:
             body["project"] = project
@@ -465,7 +462,7 @@ class Task:
 
     def until(self, timeout: int = 600) -> dict | None:
         """服务端阻塞等待（R4-3）：等到本轮结束 / 需人工审批 / 超时，返回精简结果
-        {status, finalText, pending, stats, lastSeq, error} 并推进 self.seq；旧版 404 返回 None。"""
+        {status, finalText, pending, stats, lastSeq, error} 并推进 self.seq；旧版 404 返 None。"""
         try:
             j = self.dp._request("GET", f"/api/tasks/{self.id}/wait?after={self.seq}&timeout={int(timeout)}",
                                  timeout=int(timeout) + 30)
@@ -575,8 +572,7 @@ class Host:
         return Host(self.dp, self.name, self.cwd, shell)
 
     def path(self, p: str) -> str:
-        if p:
-            p = p.replace("\\", "/")       # Windows 路径统一成正斜杠
+        p = p.replace("\\", "/") if p else p   # Windows 路径统一成正斜杠
         if (p and re.match(r"^[A-Za-z]:/", p)) or posixpath.isabs(p) or not self.cwd:
             return posixpath.normpath(p) if p else p
         return posixpath.normpath(posixpath.join(self.cwd, p))
@@ -629,8 +625,7 @@ def connect(host: str | None = None, url: str | None = None, insecure: bool | No
     cfg = _load_config()
     url = url or cfg.get("url")
     host = host or cfg.get("node") or cfg.get("host")
-    if insecure is None:
-        insecure = bool(cfg.get("insecure", False))
+    insecure = bool(cfg.get("insecure", False)) if insecure is None else insecure
     if not url:
         raise ValueError('url 为空：.deskport.json 的 "url" 键（缺这个键或留空都算），也可用环境变量 DESKPORT_URL 或 --url')
     if not host:
@@ -642,11 +637,8 @@ def connect(host: str | None = None, url: str | None = None, insecure: bool | No
 
 
 def _waitTask(task, seconds, allow, deny):
-    """等到本轮结束并打印最终回复。返回进程退出码。
-
-    卡审批时不傻等到超时：打印 PENDING + 怎么放行，并以 4 结束（无人值守时
-    这是唯一能让调用方看见"它在等人"的方式）。
-    """
+    """等到本轮结束并打印最终回复。返回进程退出码。卡审批时不傻等：打印
+    PENDING + 怎么放行，以 4 结束（无人值守时唯一能看见"它在等人"的方式）。"""
     import sys, time
     end = time.time() + (seconds or 900)
     while time.time() < end:
@@ -680,10 +672,7 @@ if __name__ == "__main__":
     import argparse, sys
 
     for s in (sys.stdout, sys.stderr):   # Windows 控制台默认 GBK
-        try:
-            s.reconfigure(encoding="utf-8")
-        except AttributeError:
-            pass
+        getattr(s, "reconfigure", lambda **k: None)(encoding="utf-8")
 
     ap = argparse.ArgumentParser(description="Deskport Agent API CLI（默认读 .deskport.json）")
     ap.add_argument("--url")
@@ -705,6 +694,9 @@ if __name__ == "__main__":
     p.add_argument("--model", help="执行点支持的模型名（缺省用执行点默认）")
     p.add_argument("--title", help="任务标题（≤40 字，建议 ≤24；派活必须给，留空则按提示词自动生成）")
     p.add_argument("--session", metavar="会话编号", help="接回原 Kimi 会话继续干活（返工/复验复用执行方）：直接接管原会话不用副本，被占用时 409")
+    p.add_argument("--expects", choices=["impl", "verify"], default=None,
+                   help="要求结构化交付（批次 G1）：impl=实施 / verify=验收；执行方须调 submit_result 提交")
+    p.add_argument("--result", action="store_true", help="不建任务：把 positional 当任务 id，打印它的最新结构化结果 JSON")
     p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
                    metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
@@ -712,8 +704,7 @@ if __name__ == "__main__":
     p = sub.add_parser("tasks", help="列出任务（id / 状态 / 执行点 / 提示词首行）")
     p = sub.add_parser("inbox", help="收件箱条目（GET /api/agent/leads/inbox），一行一条")
     p.add_argument("--after", type=int, default=0, help="只取 seq 大于它的条目（上次的 lastSeq）")
-    p.add_argument("--wait", type=int, default=None, metavar="秒",
-                   help="长轮询等待新条目（1–600，语义同任务 wait）")
+    p.add_argument("--wait", type=int, default=None, metavar="秒", help="长轮询等新条目（1–600）")
     p = sub.add_parser("report", help="向用户汇报（POST /api/agent/leads/report）")
     p.add_argument("text", help="一句话结论（+ 需要用户决定的事）")
     p = sub.add_parser("close", help="关闭一个任务（明确结束，回收进程）")
@@ -727,6 +718,9 @@ if __name__ == "__main__":
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--allow", action="store_true")
     p.add_argument("--deny", action="store_true")
+    p = sub.add_parser("result", help="提交结构化结果（POST /api/tasks/<id>/result）：无 MCP 工具时的退路")
+    p.add_argument("--task", required=True, help="任务 id")
+    p.add_argument("--json", required=True, metavar="文件", help="结果 JSON 文件（- 读 stdin）")
     a = ap.parse_args()
 
     def _unmangle(p):
@@ -778,10 +772,7 @@ if __name__ == "__main__":
                 if not lead:
                     print("（未绑定主管）")
                 else:
-                    print("%s\t%s\t%s\t%s" % (lead.get("id") or "",
-                                              lead.get("name") or "",
-                                              lead.get("kind") or "",
-                                              lead.get("status") or ""))
+                    print("\t".join(lead.get(k) or "" for k in ("id", "name", "kind", "status")))
                 sys.exit(0)
             if a.cmd == "inbox":
                 entries, lastSeq = dp.inbox(a.after, a.wait)
@@ -799,11 +790,16 @@ if __name__ == "__main__":
                 sys.exit(0)
             print("seq=%d" % dp.report(a.text))
             sys.exit(0)
-        if a.cmd in ("task", "tasks", "wait"):
+        if a.cmd in ("task", "tasks", "wait", "result"):
             cfg = _load_config()
             dp = Deskport(a.url or cfg.get("url"),
                           insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
                           cafile=cfg.get("cafile"))
+            if a.cmd == "result":
+                raw = sys.stdin.read() if a.json == "-" else Path(a.json).read_text(encoding="utf-8")
+                data = json.loads(raw)   # 非法 JSON：ValueError，外层统一报错退出 2
+                print(json.dumps(dp.submit_result(a.task, data), ensure_ascii=False))
+                sys.exit(0)
             if a.cmd == "tasks":
                 for t in dp.tasks()[:30]:
                     line = (t.get("title") or t.get("prompt") or "").splitlines() or [""]
@@ -811,12 +807,16 @@ if __name__ == "__main__":
                                                  t.get("node") or "local", line[0][:60]))
                 sys.exit(0)
             if a.cmd == "task":
+                if a.result:   # 不建任务：打印该 id 的最新结构化结果
+                    info = dp.task(a.prompt).info()
+                    print(json.dumps(info.get("result") or {}, ensure_ascii=False, indent=1))
+                    sys.exit(0)
                 # --session：返工/复验接回原会话继续干活（复用执行方）——直接
                 # 接管不用副本（kimiSessionId + fork=false），被占用时 409
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
                                       cwd=_unmangle(a.cwd), model=a.model,
                                       title=a.title, kimi_session=a.session,
-                                      fork=not a.session)
+                                      fork=not a.session, expects=a.expects)
                 print(task.id)
             else:
                 task = dp.task(a.tid)

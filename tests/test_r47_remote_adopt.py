@@ -138,8 +138,9 @@ def test_node_session_create_forks_then_loads(tmp_path, monkeypatch):
                 from acp_session import Ring
                 self.ring = Ring()
 
-            def start(self, resume_session_id=None):
+            def start(self, resume_session_id=None, mcp_servers=None):
                 started['resume'] = resume_session_id
+                started['mcpServers'] = mcp_servers
                 self.kimi_session_id = resume_session_id
 
             def stop(self):
@@ -201,7 +202,7 @@ def test_node_create_adopt_uses_session_workdir(tmp_path, monkeypatch):
                 from acp_session import Ring
                 self.ring = Ring()
 
-            def start(self, resume_session_id=None):
+            def start(self, resume_session_id=None, mcp_servers=None):
                 self.kimi_session_id = resume_session_id
 
             def stop(self):
@@ -248,7 +249,7 @@ def test_node_create_adopt_fork_false_takes_over_external(tmp_path, monkeypatch)
                 from acp_session import Ring
                 self.ring = Ring()
 
-            def start(self, resume_session_id=None):
+            def start(self, resume_session_id=None, mcp_servers=None):
                 self.kimi_session_id = resume_session_id
 
             def stop(self):
@@ -352,10 +353,11 @@ def test_node_api_sessions_body_reaches_create(tmp_path, monkeypatch):
             ring = Ring()
 
         def fakeCreate(cwd, mode, title, resume_session_id=None, model='',
-                       kimi_session_id='', fork=True):
+                       kimi_session_id='', fork=True, mcp_servers=None):
             seen.update(cwd=cwd, mode=mode, title=title,
                         resume=resume_session_id, model=model,
-                        kimi=kimi_session_id, fork=fork)
+                        kimi=kimi_session_id, fork=fork,
+                        mcp_servers=mcp_servers)
             return StubSession()
 
         mgr.create = fakeCreate
@@ -379,7 +381,7 @@ def test_node_api_sessions_body_reaches_create(tmp_path, monkeypatch):
             assert seen == {'cwd': '/home/yinglin/proj', 'mode': 'auto',
                             'title': '接手', 'resume': None, 'model': '',
                             'kimi': 'session_12345678-1111-2222-3333-444444444444',
-                            'fork': False}
+                            'fork': False, 'mcp_servers': []}
         finally:
             srv.shutdown()
     finally:

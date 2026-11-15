@@ -105,6 +105,7 @@
                                 <span class="cmd-task-sub" v-if="t.sub">{{ t.sub }}</span>
                             </span>
                             <span class="cmd-task-status">{{ t.statusText }}</span>
+                            <span class="cmd-task-result" v-if="t.resultLabel">{{ t.resultLabel }}</span>
                         </button>
                         <p class="empty-tip" v-if="!l.tasks.length">它名下还没有任务。</p>
                         <button type="button" class="btn btn-ghost cmd-more"
@@ -133,6 +134,7 @@
                             <span class="cmd-task-sub" v-if="t.sub">{{ t.sub }}</span>
                         </span>
                         <span class="cmd-task-status">{{ t.statusText }}</span>
+                        <span class="cmd-task-result" v-if="t.resultLabel">{{ t.resultLabel }}</span>
                     </button>
                     <p class="cmd-more-hint" v-if="unassignedView.closedHidden > 0">
                         已关闭的仅显示最近 5 条（还有 {{ unassignedView.closedHidden }} 条）
@@ -179,6 +181,41 @@
                     <button type="button" class="btn btn-ghost" v-if="canEnd" @click="closeSession">结束会话</button>
                 </div>
             </div>
+            <div class="task-result-card" v-if="detail.result">
+                <div class="task-result-head">
+                    <span class="result-verdict" :class="resultVerdictClass(detail.result)">{{ resultVerdictText(detail.result) }}</span>
+                    <code class="task-result-commit" v-if="resultCommit(detail.result)" :title="resultCommit(detail.result)">{{ resultCommit(detail.result).slice(0, 12) }}</code>
+                    <span class="task-result-tests" v-if="resultTestsText(detail.result)">{{ resultTestsText(detail.result) }}</span>
+                    <span class="task-result-count" v-if="detail.resultCount > 1">第 {{ detail.resultCount }} 次提交</span>
+                </div>
+                <p class="task-result-summary" v-if="detail.result.summary">{{ detail.result.summary }}</p>
+                <div class="task-result-gates" v-if="resultGateItems(detail.result).length">
+                    <span class="result-gate" v-for="g in resultGateItems(detail.result)" :key="g.name"
+                          :class="g.value === 'pass' ? 'is-pass' : 'is-fail'">{{ g.name }} {{ g.value === 'pass' ? '✓' : '✗' }}</span>
+                </div>
+                <div class="task-result-lists">
+                    <div class="task-result-list" v-if="(detail.result.mustFix || []).length">
+                        <div class="task-result-list-title">必须修（{{ detail.result.mustFix.length }}）</div>
+                        <ol><li v-for="(m, i) in detail.result.mustFix" :key="i">{{ m }}</li></ol>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.risks || []).length">
+                        <div class="task-result-list-title">风险（{{ detail.result.risks.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.risks" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.questions || []).length">
+                        <div class="task-result-list-title">待主管判断（{{ detail.result.questions.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.questions" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.evidence || []).length">
+                        <div class="task-result-list-title">证据（{{ detail.result.evidence.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.evidence" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.unverified || []).length">
+                        <div class="task-result-list-title">未验到（{{ detail.result.unverified.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.unverified" :key="i">{{ m }}</li></ul>
+                    </div>
+                </div>
+            </div>
             <div class="task-chat" ref="chat">
                 <div class="task-event" v-for="e in events" :key="e.seq" :class="'ev-' + e.type">
                     <div v-if="e.type === 'user'" class="ev-user">{{ e.text }}</div>
@@ -207,6 +244,10 @@
                         <div class="permission-done" v-else>{{ permissionResultText(e) }}</div>
                     </div>
                     <div v-else-if="e.type === 'status'" class="ev-status">{{ e.text }}</div>
+                    <div v-else-if="e.type === 'result'" class="ev-result-submit">
+                        <span class="result-verdict" :class="resultVerdictClass(e)">{{ resultVerdictText(e) }}</span>
+                        <span>{{ e.text }}</span>
+                    </div>
                     <div v-else-if="e.type === 'plan'" class="ev-plan">{{ e.text }}</div>
                     <div v-else-if="e.type === 'error'" class="ev-error">{{ e.text }}</div>
                     <div v-else class="ev-log">{{ e.text }}</div>
@@ -427,6 +468,7 @@
 <script src="/assets/js/common.js?v=__BUILD__"></script>
 <script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-result.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-overview.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
