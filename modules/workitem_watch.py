@@ -114,6 +114,7 @@ def _endedWithoutResult(wi, task, verifying):
         return
     # 会话进程中途退出（"ACP 进程已退出"）：接回原会话重发未完成指令
     instruction = _lastUserMessage(task)
+    _noteIncident(wi)               # ③也计入连续事故：连续 2 次换备选模型
     if _escalate(wi, task):
         if verifying:
             core._toJudgment(wi, '验收会话连续中途退出，请主管判断')

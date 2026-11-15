@@ -127,14 +127,6 @@ def integrateFailMessage(step, output):
             % (step, step, (output or '')[-4000:]))
 
 
-def integrateConflictMessage(output):
-    """集成时 main 又动了（§2b）：回到"同步"而不是直接返工。"""
-    return ('【集成冲突】主仓 main 在你交付后又前进了，合并有冲突。'
-            '已 abort。请先同步再交付：\n%s\n'
-            '在本 worktree 里 git merge <main>、解决冲突、提交，'
-            '再调用 submit_result。' % (output or '')[-1500:])
-
-
 def handoffPrompt(wi, project, specPathInTree, head, lastResult, mustFix,
                   tmpDir, why):
     """上下文换手（§2）：新会话接棒的平台生成提示。"""

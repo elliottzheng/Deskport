@@ -59,6 +59,16 @@ def processImplResult(wi, task):
                     wi.get('footprintActual') or wi.get('footprint') or [],
                     out), '同步冲突')
         return
+    # §2b：验收对象是"已含最新 main 的提交"——同步成功后的 worktree 新 HEAD
+    # （合并提交），不是交付时的旧 commit；基线同步重算（= main 头）
+    synced = workitem_git.head(worktree)
+    if synced:
+        target = synced
+        freshBase = workitem_git.mergeBase(
+            project.get('repoPath') or '',
+            project.get('mainBranch') or 'main', target)
+        if freshBase:
+            base = freshBase
     workitem_setup._ensureVerify(wi, project, target, base)
 
 
@@ -70,6 +80,7 @@ def processVerdict(wi, task):
     wi['earlyStreak'] = 0            # 验收真交了结论：连续计数清零
     verdict = res.get('verdict') or ''
     if verdict == 'pass':
+        wi['integration']['log'] = workitem_store.logPath(wi['id'])
         err = workitem_state.transition(wi, workitem_state.INTEGRATING,
                                         '验收通过，开始集成',
                                         task=task['id'],

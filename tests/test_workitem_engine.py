@@ -71,6 +71,7 @@ class Stub:
         self.env = env
         self.created = []        # 建卡入参（按序）
         self.messages = []       # (taskId, text, by)
+        self.failKimi = set()    # 这些 kimiSessionId 的接回一律 400（在忙/丢了）
 
     def install(self, monkeypatch):
         monkeypatch.setattr(tasks_api, 'createTaskResponse', self.create)
@@ -78,6 +79,8 @@ class Stub:
 
     def create(self, data, start=True):
         import uuid
+        if data.get('kimiSessionId') in self.failKimi:
+            return {'error': '该会话正被未关闭任务占用，不能直接接管'}, 409
         self.created.append(dict(data))
         taskId = uuid.uuid4().hex[:12]
         task = {
@@ -143,20 +146,19 @@ def implDelivers(env, wi, stub, filename='impl.py', content='x = 1\n'):
         f.write(content)
     workitem_git.run(worktree, ['add', '-A'])
     workitem_git.run(worktree, ['commit', '-m', 'impl %s' % filename])
-    commit = workitem_git.head(worktree)
     task = env.repo.get(wi['implTask'])
     payload, code = task_result.submit(task, {
-        'summary': '交付了 %s' % filename, 'commit': commit,
+        'summary': '交付了 %s' % filename, 'commit': workitem_git.head(worktree),
         'branch': wi['branch'],
         'tests': {'passed': 3, 'failed': 0, 'skipped': 0}}, via='test')
     assert code == 200, payload
-    return commit
+    return (task.get('result') or {}).get('commit') or ''
 
 
 def verdictOf(env, wi, verdict, mustFix=None):
     task = env.repo.get(wi['verifyTasks'][-1])
-    target = ((wi.get('verifyMeta') or {}).get(task['id']) or {}).get('target') \
-        or wi.get('lastImplCommit')
+    target = ((wi.get('verifyMeta') or {}).get(task['id'])
+              or {}).get('target') or wi.get('lastImplCommit')
     payload, code = task_result.submit(task, {
         'verdict': verdict, 'target': target,
         'summary': '%s by stub' % verdict,
@@ -203,7 +205,6 @@ def test_full_pipeline_pass(env, monkeypatch):
     assert implData[0]['workItemId'] == wid
     assert 'submit_result' in implData[0]['prompt']
     implTaskId = wi['implTask']
-
     commit = implDelivers(env, wi, stub)
     workitem_pipeline.tick()
     wi = workitem_store.repo.get(wid)
@@ -215,7 +216,6 @@ def test_full_pipeline_pass(env, monkeypatch):
     assert verifyData[0]['cwd'] == wi['verifyWorktree']
     assert workitem_git.head(wi['verifyWorktree']) == commit
     assert wi['lastImplCommit'] == commit
-
     # rework：回同一实施任务（没有新建任务），attempt+1
     verdictOf(env, wi, 'rework', ['把变量名改对'])
     workitem_pipeline.tick()

@@ -292,3 +292,46 @@ def test_ended_task_rework_readopts(env, monkeypatch):
     adopted = [d for d in stub.created
                if d.get('kimiSessionId') == oldSession]
     assert adopted and adopted[0]['fork'] is False
+
+
+def test_acp_process_exit_readopts_and_resends(env, monkeypatch):
+    """提前收工③（确定性）：会话进程中途退出（有 sessionId 的 failed）→
+    用 kimiSessionId 接回原会话，未完成的指令重发（规格 §2）。"""
+    wid, stub = newWorkitem(env, monkeypatch)
+    wi = workitem_store.repo.get(wid)
+    task = env.repo.get(wi['implTask'])
+    oldSession = task['sessionId']
+    store.repo.append_event(task, 'user', text='【目标】改 README\n【规格】加一行')
+    task['error'] = 'ACP 进程已退出'
+    task_state.transition(task, task_state.TaskState.FAILED, 'ACP 进程已退出')
+    workitem_watch.sweep()
+    adopted = [d for d in stub.created
+               if d.get('kimiSessionId') == oldSession]
+    assert adopted, 'ACP 退出后没有接回原会话'
+    assert adopted[0]['fork'] is False
+    assert '【规格】加一行' in adopted[0]['prompt']   # 未完成的指令重发
+    wi = workitem_store.repo.get(wid)
+    assert wi['state'] == workitem_state.IMPLEMENTING
+    assert wi['earlyStreak'] == 1                    # 计入连续事故
+    assert wi['implTask'] != task['id']
+
+
+def test_acp_exit_twice_switches_model(env, monkeypatch):
+    """连续两次进程退出 → 换项目备选模型新开会话接棒。"""
+    wid, stub = newWorkitem(env, monkeypatch)
+    project = workitem_projects.repo.get('p1')
+    project['fallbackModels'] = ['kimi-alt']
+    workitem_projects.repo.put(project)
+    for round_no in (1, 2):
+        wi = workitem_store.repo.get(wid)
+        task = env.repo.get(wi['implTask'])
+        store.repo.append_event(task, 'user', text='第 %d 轮指令' % round_no)
+        task['error'] = 'ACP 进程已退出'
+        task_state.transition(task, task_state.TaskState.FAILED, '退出')
+        workitem_watch.sweep()
+    wi = workitem_store.repo.get(wid)
+    assert wi['state'] == workitem_state.IMPLEMENTING
+    assert wi['implModel'] == 'kimi-alt'
+    alt = [d for d in stub.created
+           if d.get('expects') == 'impl' and d.get('model') == 'kimi-alt']
+    assert alt, '连续退出后没有换备选模型'

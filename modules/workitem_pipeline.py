@@ -82,6 +82,7 @@ def integrationDone(wid, outcome, detail):
         if wi is None or (wi.get('state') or '') != workitem_state.INTEGRATING:
             return                  # 已被取消/主管改判
         project = core._project(wi)
+        wi['integration']['log'] = workitem_store.logPath(wid)
         if outcome == 'ok':
             wi['integration']['commit'] = detail or ''
             wi['integration']['gates'] = 'pass'
