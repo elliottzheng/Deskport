@@ -150,6 +150,14 @@ Content-Type: multipart/form-data
 那台机器的收件箱；远端仍要求签发该票据的令牌带 `upload_remote`。
 
 ```text
+POST /api/agent/share/stage  (scope=share, multipart/form-data)
+  file     可重复 0..10 个（prompt 为空时至少 1 个）
+  prompt   可选，≤4000 字
+→ {"ticket": "<32位>", "files": [{name, size}], "expiresAt": <ts>}
+  交文件换暂存票据（内存、TTL 300s、一次性）；票据不是凭证，泄漏最坏结果是
+  别人多建一个任务（还要先有 Cookie 会话）。给网页分享表单后续提交用，
+  本身不能直接建任务——要直接用令牌建任务/追消息，用下面的 POST /api/agent/share。
+
 GET  /api/agent/share/nodes     (scope=share)
 → {"nodes": [{"name": "local", "label": "本机", "status": "online",
               "models": ["k2"], "defaultModel": "k2"},
@@ -314,7 +322,8 @@ POST /api/agent/ssh/exec
 - 远端默认注入 `LANG=C.UTF-8`：UTF-8 输出是契约。
 
 本机专用别名：`POST /api/agent/local/exec` 等价于 `/api/agent/ssh/exec` + `node: "local"`；
-`/api/agent/local/sftp/{list,get,put}` 同理等价于 `/api/agent/sftp/*` + 本机（免填 `node`）。
+`POST /api/agent/local/sftp/list`、`POST /api/agent/local/sftp/get`、`POST /api/agent/local/sftp/put`
+同理等价于 `/api/agent/sftp/*` + 本机（免填 `node`）。
 
 ## SFTP（读写文件，整读 8MB，可分块）
 
@@ -323,6 +332,12 @@ POST /api/agent/sftp/list  {"node": "...", "path": "/srv"}      → {path, entri
 POST /api/agent/sftp/get   {"node": "...", "path": "...", "offset": 0, "length": 4096}
 POST /api/agent/sftp/put   {"node": "...", "path": "...", "contentB64": "...", "sha256": "<可选>",
                             "mkdirs": true（可选，父目录不存在时自动创建，本机/SSH 主机均支持）}
+POST /api/agent/sftp/delete  {"node": "...", "path": "...", "recursive": false}
+                            文件/软链 remove；目录须为空，recursive=true 才整棵删
+POST /api/agent/sftp/mkdir   {"node": "...", "path": "...", "parents": false}
+                            已存在 → 409；parents=true 逐级创建（已存在的父级跳过）
+POST /api/agent/sftp/rename  {"node": "...", "from": "...", "to": "...", "overwrite": false}
+                            目标已存在且 overwrite=false → 409；overwrite=true 才覆盖
 ```
 
 - 指代机器用 `node`（缺省 `local`）；`host` 是旧名，仍接受（同 exec）。
@@ -858,9 +873,9 @@ policy 判定为「需要询问」时：
 ```text
 GET /api/agent/skills                     → {skills: [{name, size, mtime, files, pack}]}
 GET /api/agent/skills/<name>              → {name, content}                  SKILL.md 原文
-GET /api/agent/skills/<name>/<file>       → {name, file, content, sha256}
-GET /api/agent/skills/<name>/<file>?raw=1 → text/plain（给 curl -o 直接落盘）
-GET /api/agent/skills/<name>/pack.zip     → application/zip：整包（手册 + 附件 + 现成配置）
+GET /api/agent/skills/<skill>/<name>       → {name, file, content, sha256}
+GET /api/agent/skills/<skill>/<name>?raw=1 → text/plain（给 curl -o 直接落盘）
+GET /api/agent/skills/<skill>/pack.zip     → application/zip：整包（手册 + 附件 + 现成配置）
 ```
 
 - **整包是主推**：zip 里是 `<name>/SKILL.md`、各附件，外加一份按本次请求地址生成的

@@ -166,6 +166,12 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 
 **主管通信（令牌绑了主管才有）**：
 
+怎么当主管（事件驱动）：派活 → 结束这一轮 → 被「【收件箱】…」叫醒 → `inbox` 看全文 →
+验收 / 再派 / `report` 给用户 → 结束这一轮；外部主管没有中枢唤醒，用
+`driver.py inbox [--wait 秒]` 长轮询代替。完整做法见 `COLLABORATION.md` 第 3、5、6 节
+（派活规格、审批沿链上行、只用 report 汇报），托管主管的角色说明见 `docs/lead-role.md`。
+接口：
+
 - 收下属事件：`GET /api/agent/leads/inbox?after=<seq>&wait=<秒>`（长轮询，
   语义同任务 wait；没绑主管 → 400，提示先用 `/api/settings/leads` 建主管并绑令牌）。
 - 主动向用户汇报：`POST /api/agent/leads/report {"text": "..."}`——怎么送到

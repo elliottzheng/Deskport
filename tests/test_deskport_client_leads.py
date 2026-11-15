@@ -43,10 +43,11 @@ class _Handler(BaseHTTPRequestHandler):
          'kind': 'allow_once'},
         {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'}]
     permPosts = []          # 收到的 /permission 请求体（断言选中了哪个选项）
+    taskPosts = []          # 收到的 POST /api/tasks 请求体（断言 title 字段）
 
-    def _json(self, obj):
+    def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
-        self.send_response(200)
+        self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
@@ -64,6 +65,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({'events': [{'seq': 9, 'type': 'permission_request',
                                     'requestId': 'req-1', 'name': 'Bash',
                                     'options': _Handler.permOptions}]})
+        elif self.path.startswith('/api/tasks/') and self.path.endswith('/events'):
+            self._json({'events': []})
+        elif self.path.startswith('/api/tasks/'):
+            self._json({'task': {'id': 't-cli-1', 'status': 'waiting',
+                                 'finalText': '好'}})
         elif self.path == '/api/agent/lead':
             self._json({'lead': LEAD})
         else:
@@ -75,6 +81,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path.startswith('/api/tasks/') and self.path.endswith('/permission'):
             _Handler.permPosts.append(json.loads(raw.decode('utf-8')))
             self._json({'ok': True, 'requestId': 'req-1'})
+        elif self.path == '/api/tasks':
+            _Handler.taskPosts.append(json.loads(raw.decode('utf-8')))
+            self._json({'task': {'id': 't-cli-1', 'status': 'queued'}}, 202)
         elif self.path == '/api/agent/leads/report':
             self._json({'ok': True, 'seq': 7})
         elif self.path.startswith('/api/tasks/') and self.path.endswith('/close'):
@@ -90,6 +99,7 @@ class _Handler(BaseHTTPRequestHandler):
 def server():
     _Handler.seenTokens.clear()
     _Handler.permPosts.clear()
+    _Handler.taskPosts.clear()
     _Handler.permOptions = [
         {'optionId': 'approve_once', 'name': 'Approve once',
          'kind': 'allow_once'},
@@ -153,6 +163,21 @@ def test_lead_inbox_report_cli(server, tmp_path):
     assert code == 0, err
     # 令牌只进请求头（所有命令都带上了）
     assert _Handler.seenTokens and set(_Handler.seenTokens) == {TOKEN}
+
+
+def test_task_cli_title_flag(server, tmp_path):
+    """批次 D：task 子命令 --title 进请求体 title 字段；不给则不带该键
+    （服务端不支持时忽略它、按描述首行推导，客户端不拼首行）。"""
+    code, out, err = _runCli(tmp_path, server, 'task', '修掉 tests/ 里的 3 个失败用例',
+                             '--title', '批次 D：文档跟上指挥链')
+    assert code == 0, err
+    assert out.splitlines()[0] == 't-cli-1'
+    code, out, err = _runCli(tmp_path, server, 'task', '再派一个')
+    assert code == 0, err
+    assert out.splitlines()[0] == 't-cli-1'
+    assert _Handler.taskPosts[0]['title'] == '批次 D：文档跟上指挥链'
+    assert _Handler.taskPosts[0]['prompt'] == '修掉 tests/ 里的 3 个失败用例'
+    assert 'title' not in _Handler.taskPosts[1]
 
 
 def test_lead_cli_unbound(server, tmp_path):

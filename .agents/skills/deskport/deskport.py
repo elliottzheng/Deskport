@@ -233,14 +233,15 @@ class Deskport:
                     cwd: str | None = None, paths: list[str] | None = None,
                     model: str | None = None, attachments: dict[str, bytes | str] | None = None,
                     kimi_session: str | None = None, fork: bool = True,
-                    policy: dict | None = None) -> "Task":
+                    policy: dict | None = None, title: str | None = None) -> "Task":
         """派活给 Deskport 托管的智能体。mode=default 逐项审批，全自动显式传 "auto"。
         node=执行点（缺省 "local"）；cwd=执行目录（本机可给绝对目录，任务目录仍是 workspace；
         非本机给该机器上已存在的目录，缺省 = 任务目录）。kimi_session 接手（R4-7）：默认 fork
         副本，fork=False 直接接管原会话（被占用时 409）。model 可选（见 nodes() 的 models）；
         attachments={文件名: 内容} 随任务上传，prompt 上限 4000 字符。policy=审批边界（R4-2）：
         {"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则], "default":"ask|allow|deny",
-        "timeoutSec":n}；边界内自动放行，越界才挂起。"""
+        "timeoutSec":n}；边界内自动放行，越界才挂起。title=任务卡标题（≤24 字，一句话说清做
+        什么）；服务端不支持时忽略该字段、按描述首行推导——给了不报错，不给也能跑。"""
         if len(prompt) > 4000:
             raise ValueError(f"prompt {len(prompt)} 字符超过服务端上限 4000；长内容请用 attachments")
         body: dict = {"prompt": prompt, "node": node, "mode": mode}
@@ -263,6 +264,8 @@ class Deskport:
             body["paths"] = paths
         if policy:
             body["policy"] = policy
+        if title:
+            body["title"] = title
         return Task(self, self._request("POST", "/api/tasks", body)["task"]["id"])
 
     # ---- 主管通信（指挥链）：令牌绑了主管才有 ----
@@ -286,6 +289,12 @@ class Deskport:
         """向用户汇报（POST /api/agent/leads/report）：一句结论；返回 seq。"""
         return int(self._request("POST", "/api/agent/leads/report",
                                  {"text": text}).get("seq") or 0)
+
+    def inboxAck(self, seq: int) -> dict:
+        """确认收件箱读到哪（POST /api/agent/leads/inbox/ack）：readSeq 只增
+        不减，条目不删。"""
+        return self._request("POST", "/api/agent/leads/inbox/ack",
+                             {"seq": int(seq)})
 
     def closeTask(self, task_id: str) -> dict:
         """按 id 关闭一个任务（POST /api/tasks/<id>/close）：明确结束会话，
@@ -676,6 +685,7 @@ if __name__ == "__main__":
     p.add_argument("-n", "--node", help="执行点（缺省 local）")
     p.add_argument("-m", "--mode", default="default", help="default=危险操作等审批 / auto=全自动")
     p.add_argument("--model", help="执行点支持的模型名（缺省用执行点默认）")
+    p.add_argument("--title", help="任务标题（≤24 字；不给由服务端从描述首行推导）")
     p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
                    metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
@@ -773,7 +783,8 @@ if __name__ == "__main__":
                 sys.exit(0)
             if a.cmd == "task":
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
-                                      cwd=_unmangle(a.cwd), model=a.model)
+                                      cwd=_unmangle(a.cwd), model=a.model,
+                                      title=a.title)
                 print(task.id)
             else:
                 task = dp.task(a.tid)
