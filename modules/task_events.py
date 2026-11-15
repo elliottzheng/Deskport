@@ -11,6 +11,11 @@ _backfillToolArgs 追加的回填记录）：它不占事件序号、本身不�
 /event/<seq> 按 targetSeq 把它应用到对应 tool 事件上（最后一次为准）——
 否则重启后任务卡上的工具调用看不到命令（主控 2026-11-15 决定不接受丢失）。
 
+批 PS2 起追加流水走 JsonlWriter（每任务长开句柄 + 锁内写 + flush）：每条
+open+write+close 约 3ms，8 任务 ×154/s 的叠加峰值下会排队（方案 §6 风险
+6），长开句柄把单条降到 ~0.1ms；句柄在任务终态/记录删除时由仓库关掉，
+进程退出时全部关掉（Windows 上句柄不关，日志文件不能改名/删除）。
+
 本模块是共享内核：不 import flask / 不 import 特性层，只做纯字典与文件。
 """
 import datetime
@@ -133,7 +138,11 @@ def readLogTailWithPatches(path, want):
                         events.append(obj)
                         if len(events) >= want:
                             break
-                    else:
+                    elif b'tool_args_patch' in raw:
+                        # 廉价预筛（批 PS2 建议）：事件行已被 _parseLine 收走，
+                        # 走到这里的只有 chunk/坏行/补丁行——不含该子串的连
+                        # json.loads 都不必做（事件正文里提到这个词也安全：
+                        # 它先过了 _parseLine 那一关，到不了这里）
                         patch = _parsePatch(raw)
                         if patch is not None:
                             patches.append(patch)
@@ -141,7 +150,7 @@ def readLogTailWithPatches(path, want):
                 obj = _parseLine(partial)
                 if obj is not None:
                     events.append(obj)
-                else:
+                elif b'tool_args_patch' in partial:
                     patch = _parsePatch(partial)
                     if patch is not None:
                         patches.append(patch)
@@ -162,6 +171,20 @@ def readLogTail(path, want):
     return events
 
 
+def _applyPatch(event, patch):
+    """把一条 tool_args_patch 补丁应用到事件上（批 PS2 建议：只留一份）。
+
+    回填（applyArgPatches）与 /event/<seq>（eventBySeq）过去各写一遍
+    「args/truncated 有就覆盖」，合并到这一处；同一 targetSeq 多次补丁以
+    最后一次为准由调用方保证（先筛出 last 再应用）。
+    """
+    if 'args' in patch:
+        event['args'] = patch['args']
+    if 'truncated' in patch:
+        event['truncated'] = patch['truncated']
+    return event
+
+
 def applyArgPatches(events, patches):
     """把 jsonl 补丁行应用到回填事件上（同一 targetSeq 多次补丁以最后一次为准）。
 
@@ -178,12 +201,8 @@ def applyArgPatches(events, patches):
             last[target] = patch
     for event in events:
         patch = last.get(event.get('seq'))
-        if patch is None:
-            continue
-        if 'args' in patch:
-            event['args'] = patch['args']
-        if 'truncated' in patch:
-            event['truncated'] = patch['truncated']
+        if patch is not None:
+            _applyPatch(event, patch)
     return events
 
 
@@ -224,11 +243,7 @@ def eventBySeq(path, seq):
     if target is None:
         return None
     if patch is not None:
-        target = dict(target)
-        if 'args' in patch:
-            target['args'] = patch['args']
-        if 'truncated' in patch:
-            target['truncated'] = patch['truncated']
+        target = _applyPatch(dict(target), patch)
     return target
 
 
@@ -298,26 +313,68 @@ def backupLegacyStore(storePath):
     return True
 
 
-def appendJsonl(logDir, path, line):
-    """追加一行到 jsonl；失败重试 3 次（间隔 50/100/200ms）。
+class JsonlWriter:
+    """每任务长开句柄 + 锁内写 + flush（批 PS2，方案 §6 风险 6）。
 
-    仍失败：log.error + 进程内计数（logWriteFailures），返回 False——事件仍
-    留在内存窗口（本进程可见），调用方不抛异常。批 PS1 起 jsonl 是事件唯一
-    真相，写失败不能再静默（旧行为只 warning，因为快照里还有一份）。
+    每条事件 open+write+close 约 3ms，8 任务 ×154/s 的叠加峰值（1232/s）
+    下会积 ~3.7s/s；长开句柄把单条降到 ~0.1ms。句柄按任务 id 缓存：
+    写在锁内完成（取句柄→缺则开→write→flush），失败作废句柄重试，
+    重试后仍败沿用第 1 批语义：log.error + 进程内计数，事件留在内存窗口。
+    句柄关闭：任务终态/记录被删时由仓库在 save/flush 里扫到就关，进程退出
+    closeAll 全关——Windows 上句柄不关，日志文件不能改名/删除。
     """
-    for attempt in range(4):
+
+    def __init__(self, logDir):
+        self._logDir = logDir
+        self._handles = {}
+        self._lock = threading.Lock()
+
+    def append(self, taskId, line):
+        """追加一行（调用方负责带上换行）；落盘返回 True，重试后仍败 False。"""
+        for attempt in range(4):
+            try:
+                with self._lock:
+                    f = self._handles.get(taskId)
+                    if f is None:
+                        os.makedirs(self._logDir, exist_ok=True)
+                        f = open(os.path.join(self._logDir, taskId + '.jsonl'),
+                                 'a', encoding='utf-8')
+                        self._handles[taskId] = f
+                    f.write(line)
+                    f.flush()
+                return True
+            except OSError as e:
+                with self._lock:
+                    self._drop(taskId)
+                if attempt == 3:
+                    log.error('append task log failed: %s', e)
+                    countLogWriteFailure()
+                    return False
+                time.sleep(0.05 * 2 ** attempt)
+        return False
+
+    def openTaskIds(self):
+        """当前开着句柄的任务 id（仓库据此扫终态/已删任务）。"""
+        with self._lock:
+            return list(self._handles)
+
+    def close(self, taskId):
+        with self._lock:
+            self._drop(taskId)
+
+    def closeAll(self):
+        with self._lock:
+            for taskId in list(self._handles):
+                self._drop(taskId)
+
+    def _drop(self, taskId):
+        f = self._handles.pop(taskId, None)
+        if f is None:
+            return
         try:
-            os.makedirs(logDir, exist_ok=True)
-            with open(path, 'a', encoding='utf-8') as f:
-                f.write(line)
-            return True
-        except OSError as e:
-            if attempt == 3:
-                log.error('append task log failed: %s', e)
-                countLogWriteFailure()
-                return False
-            time.sleep(0.05 * 2 ** attempt)
-    return False
+            f.close()
+        except OSError:
+            pass
 
 
 def countLogWriteFailure():

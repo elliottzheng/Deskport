@@ -8,13 +8,15 @@
   共享的那份，只读不创建）
 - 批次 A：所有 kind=hosted 主管的任务工作区里的 deskport/.agent-token
   （一键建托管主管时写的令牌明文，与本机 node 令牌文件同一种"读文件收集"）
-config.json 热改（mtime 变化）即自动重建，托管令牌文件的新建/替换同样按
-mtime 纳入 key，无需重启。
+config.json 热改（mtime+size 变化）即自动重建，托管令牌文件的新建/替换同样
+纳入 key，无需重启；重建判定带 1 秒粒度的 stat 缓存（STAT_TTL_SEC），窗口内
+的调用不碰文件系统——append_event 每事件都过这里，缓存是 p50 的主来源。
 
 exec / sftp/get 等 API 响应不经此处——那是主控显式取数据，脱敏反而破坏语义。
 """
 import os
 import threading
+import time
 
 import config
 
@@ -24,8 +26,18 @@ TOKEN_FILE = os.path.join(os.path.expanduser('~'), '.deskport-agent-node',
 REDACT_TYPES = frozenset(('tool', 'tool_result', 'assistant',
                           'permission_request'))
 
+# 批 PS2 追件：stat 缓存粒度。append_event 每事件都过
+# redactText→pairs()→refresh()；无缓存时每次都要 stat 来源文件 + 列 leads
+# 存储（读 leads.json、makedirs、任务回填），实测 ~3.7ms/次，是 append_event
+# p50 的主要来源。缓存后窗口内的调用只做一次单调钟比较、不碰文件系统
+# （~0.05ms）；来源变化最长 1 秒后被感知（TTL 到期即重新 stat，mtime+size
+# 变了才重建）。托管令牌刚落盘走 invalidate()，会连 TTL 一起冲掉。
+STAT_TTL_SEC = 1.0
+
 _lock = threading.Lock()
 _cache = {'key': None, 'pairs': ()}   # pairs: ((value, label), ...) 长值优先
+_statLock = threading.Lock()
+_statCache = {'at': 0.0}              # 上次 stat 时刻（单调钟）
 
 
 def _readTokenFile(path):
@@ -94,20 +106,33 @@ def _statKey():
     key = []
     for path in (config.CONFIG_PATH, TOKEN_FILE):
         try:
-            key.append(os.stat(path).st_mtime_ns)
+            st = os.stat(path)
+            key.append((st.st_mtime_ns, st.st_size))
         except OSError:
-            key.append(0)
+            key.append((0, 0))
     # 批次 A：托管令牌文件不在 config 里，新建/替换要能触发重建
     for path, _label in _hostedTokenFiles():
         try:
-            key.append(os.stat(path).st_mtime_ns)
+            st = os.stat(path)
+            key.append((st.st_mtime_ns, st.st_size))
         except OSError:
-            key.append(0)
+            key.append((0, 0))
     return tuple(key)
 
 
 def refresh():
-    """config.json / 令牌文件 mtime 变化时重建敏感值集合（热读跟随）。"""
+    """config.json / 令牌文件 mtime+size 变化时重建敏感值集合（热读跟随）。
+
+    批 PS2 追件：1 秒粒度的 stat 缓存——窗口内的调用直接复用上次结论
+    （一次单调钟比较，不碰文件系统，也就没有每次调用的 makedirs/读盘）；
+    TTL 到期才重新 stat，key 变了才重建。invalidate() 冲掉 _cache['key']
+    的同时也冲掉 TTL，托管令牌刚落盘后下一次调用必然重新收集。
+    """
+    now = time.monotonic()
+    with _statLock:
+        if now - _statCache['at'] < STAT_TTL_SEC:
+            return
+        _statCache['at'] = now
     key = _statKey()
     with _lock:
         if key == _cache['key']:
@@ -120,7 +145,9 @@ def refresh():
 
 def invalidate():
     """强制下次 pairs() 重建（批次 A：托管令牌刚落盘，mtime 可能同秒）。"""
-    with _lock:
+    with _statLock:
+        _statCache['at'] = 0.0        # 连 TTL 一起冲掉，否则窗口内的
+    with _lock:                        # refresh() 会直接返回、看不到新令牌
         _cache['key'] = None
 
 

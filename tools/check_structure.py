@@ -37,11 +37,11 @@ LEGACY = {
     'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
     'modules/agent_sessions.py': 443, 'modules/leads_api.py': 409,  # sessions：持久会话（bash 常驻通道）管理｜leads_api：主管管理面 + 令牌通道自查/自助注册，2026-11-15 合并批次 A（+16=托管主管停用/删除即吊销专属令牌）与批次 SR（+114=POST /api/agent/lead 自助成为主管 + 认领历史任务）后 409，下次改先拆
     'modules/tasks_api.py': 1011,                 # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）；+14=批次 DR：排空期间消息只排队不开轮（deliverMessage）+ 远端 fork:false 接管未关闭占用 409 + close 终态后统一释放节点会话（原仅强杀分支）
-    'modules/tasks_runner.py': 818,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）；+16=批次 DR：_promptOnce 排空闸门（关闭则跳过本轮）与四个调用点守卫、_drainQueuedMessages 排空即留队、startSession 接回重试包装、resume 看门狗排空不计时
-    'modules/tasks_store.py': 442,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）
+    'modules/tasks_runner.py': 823,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）；+10=批 PS2 削峰：chunk 路径去 save（lastText 轮末随关键变迁落盘）+ 五处非关键 save 改 touch（commands/contextHigh×2/lastTurn/liveFrom/resuming）；+11=批次 DR（合并 PS2 后净增，按合并后实际行数核对）：_promptOnce 排空闸门（关闭则跳过本轮）与四个调用点守卫、_drainQueuedMessages 排空即留队、startSession 接回重试包装、resume 看门狗排空不计时
+    'modules/tasks_store.py': 585, 'modules/task_events.py': 420,  # tasks_store：任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +143=批 PS2 削峰：touch/flush/_writeNow/shutdown/_closeIdleJsonl + 共享 flush 线程（弱引用登记，每进程一条）与 atexit 退出 flush + JsonlWriter 句柄管理（append_event 不再每事件 save，log_write 长开句柄）｜task_events：批 PS1 新建（357 行，原在 400 预算内）；2026-11-15 +63=批 PS2：JsonlWriter 每任务长开句柄（方案 §6 风险 6，替代 appendJsonl 每条 open/close）+ _applyPatch 补丁应用单一来源（回填与 eventBySeq 共用）+ readLogTailWithPatches 的 'tool_args_patch' 廉价预筛
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
-    'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）
+    'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620, 'tests/test_task_persist_restart.py': 450,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）｜persist_restart：批 PS1 新建（378 行）；2026-11-15 +72=批 PS2：开句柄失败两例先关句柄再注入（长开句柄后 open 只在首写/句柄作废后发生）+ 新增 6c 写中途失败作废句柄、重试与恢复
 }
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码
@@ -50,7 +50,7 @@ FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp'
             'feedback', 'feedback_store', 'files', 'files_archive', 'files_base', 'files_browse',
             'files_federation', 'files_pins', 'files_transfer', 'leads_api', 'leads_escalation', 'leads_hosted', 'leads_inbox', 'leads_store',
             'screen', 'ssh', 'task_cwd', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
-            'terminal', 'worklines_api', 'worklines_store'}
+            'terminal', 'worklines_api', 'worklines_store', 'feedback_envelope', 'feedback_status', 'feedback_rate', 'feedback_views', 'feedback_ops'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
                            ('tasks_api', 'tasks_runner'), ('tasks_api', 'tasks_store'),
@@ -89,8 +89,8 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('files_browse', 'files_base'),   # 家族底座
     ('files_pins', 'files_base'),     # 家族底座
     ('files_transfer', 'files_base'), # 家族底座
-    # —— feedback（路由 → 存储, 同 tasks_api → tasks_store 的形状）——
-    ('feedback', 'feedback_store'),
+    # 批次 F1 拆 feedback 家族：store=表原语/提交/pendingSummary；envelope=信封校验；status=状态机规则（纯）；rate=频控持久化；views=读路径；ops=写操作；feedback.py 聚合路由
+    ('feedback', 'feedback_store'), ('feedback', 'feedback_envelope'), ('feedback', 'feedback_views'), ('feedback', 'feedback_ops'), ('feedback', 'feedback_rate'), ('feedback_store', 'feedback_status'), ('feedback_views', 'feedback_store'), ('feedback_ops', 'feedback_store'), ('feedback_ops', 'feedback_status'),
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
     ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
@@ -129,7 +129,7 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
                   'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads', 'WPTasksOverview',  # 批次 S 主管卡片/任务页筛选 + 批次 U 指挥台一屏（纯函数有 node 单测）
                   # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
-                  'WPSettingsCapability'}
+                  'WPSettingsCapability', 'WPFeedbackMine', 'WPSettingsFeedback'}   # 批次 F1 后两个：反馈「我的反馈」页签 + 设置页「反馈」处理卡片（纯函数有 node 单测）
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。
 # 规则: 跨模块 import 不得出现单下划线前缀（引私有名 / 公有名起私有别名都算）。
 # 本表登记的是「同包内部接缝」——提供方是使用方所在家族的共享底座, 私有助手

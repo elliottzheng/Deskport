@@ -178,8 +178,13 @@ def _flakyOpen(failTimes):
 
 
 def test_log_write_retries_then_succeeds_without_counting(env, monkeypatch):
-    """例 6a：前两次写 jsonl 抛 OSError → 重试后落盘、计数为 0。"""
+    """例 6a：前两次写 jsonl 抛 OSError → 重试后落盘、计数为 0。
+
+    批 PS2：长开句柄只在首写/句柄作废后才 open——先把句柄关掉再注入，
+    让重试走「开句柄失败」这条路；写中途失败（句柄已开）见下一例。
+    """
     tid = _create(env)
+    env.repo._jsonl.close(tid)
     before = task_events.logWriteFailures()
     fails = [2]
     real = builtins.open
@@ -195,8 +200,13 @@ def test_log_write_retries_then_succeeds_without_counting(env, monkeypatch):
 
 
 def test_log_write_failure_counts_and_event_stays_in_memory(env, monkeypatch):
-    """例 6b：一直写失败 → 计数 +1、事件留在内存窗口、/api/diagnostics 可见。"""
+    """例 6b：一直写失败 → 计数 +1、事件留在内存窗口、/api/diagnostics 可见。
+
+    批 PS2：同样先关句柄再注入「开句败」；写中途失败（句柄已开、write/flush
+    抛错）的单开重试与句柄作废见下一例。
+    """
     tid = _create(env)
+    env.repo._jsonl.close(tid)
     before = task_events.logWriteFailures()
     fails = [999]
     real = builtins.open
@@ -211,6 +221,50 @@ def test_log_write_failure_counts_and_event_stays_in_memory(env, monkeypatch):
         encoding='utf-8')
     body = env.client.get('/api/diagnostics').get_json()
     assert body['taskLogWriteFailures'] == before + 1
+
+
+class _FailingFile:
+    """open 的替身返回的假文件：write/flush 一律抛 OSError（盘满形状）。"""
+
+    def write(self, _line):
+        raise OSError('fake disk full')
+
+    def flush(self):
+        raise OSError('fake disk full')
+
+    def close(self):
+        pass
+
+
+def test_log_write_midstream_failure_drops_handle(env, monkeypatch):
+    """例 6c（批 PS2 长开句柄新增路径）：句柄开着但 write/flush 抛错（盘满）
+    → 句柄作废、重开重试，仍败计数 +1；作废的句柄不残留，恢复后下一条形
+    如常落盘。"""
+    tid = _create(env)
+    env.repo._jsonl.close(tid)          # 让注入的假文件进到写路径上
+    before = task_events.logWriteFailures()
+    real = builtins.open
+
+    def failingOpen(file, mode='r', *args, **kwargs):
+        if 'a' in mode and str(file).endswith('.jsonl'):
+            return _FailingFile()
+        return real(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, 'open', failingOpen)
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        store.repo.append_event(task, 'status', text='写中途败')
+    monkeypatch.setattr(builtins, 'open', real)
+    assert task_events.logWriteFailures() == before + 1
+    assert tid not in env.repo._jsonl.openTaskIds()   # 作废的句柄不残留
+    assert any(e.get('text') == '写中途败' for e in task['events'])
+    assert '写中途败' not in (env.tmp / 'logs' / (tid + '.jsonl')).read_text(
+        encoding='utf-8')
+    with env.repo.lock:                # 恢复后：重新开句柄，照常落盘
+        store.repo.append_event(task, 'status', text='恢复后照常')
+    assert '恢复后照常' in (env.tmp / 'logs' / (tid + '.jsonl')).read_text(
+        encoding='utf-8')
+    assert task_events.logWriteFailures() == before + 1
 
 
 # ---------------------------------------------------------------- 例 7：seq 校正
