@@ -87,7 +87,13 @@
     border-radius: 16px; padding: var(--sp-4);
 }
 .task-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.task-detail-title { font-size: 16px; font-weight: 600; line-height: 1.4; }
+/* 标题列占满剩余宽度：flex 子项默认 shrink-to-fit，不给基准的话行内输入框
+   在手机宽度下会被压成几十像素（批次 T 实测 44px，没法改名） */
+.task-detail-head-main { min-width: 0; flex: 1; }
+.task-detail-title { font-size: 16px; font-weight: 600; line-height: 1.4; cursor: pointer; }
+/* 点标题改名（批次 T）：行内输入框，16px 字号防手机自动放大 */
+.task-detail-title-input { width: 100%; font-size: 16px; font-weight: 600; padding: 4px 8px; }
+.task-detail-title-error { margin: 4px 0 0; }
 .task-detail-meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 .task-head-actions { display: flex; gap: 4px; flex-shrink: 0; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .task-head-actions .btn { padding: 4px 8px; font-size: 12px; }
@@ -219,7 +225,10 @@ task-back { display: none; }
 .cmd-kind-report { color: var(--brand); }
 .cmd-kind-problem { color: var(--err); }
 .cmd-pending-main { min-width: 0; flex: 1; }
-.cmd-pending-title { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.cmd-pending-title {
+    font-size: 13px; font-weight: 500; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .cmd-pending-lead { color: var(--text-3); font-weight: 400; }
 .cmd-pending-sub {
     font-size: 12px; color: var(--text-3); margin-top: 2px;
@@ -356,4 +365,8 @@ task-back { display: none; }
     .cmd-sheet .task-path-item { min-height: 44px; }
     /* 手机：待办行动作整组换到下一行，不把行撑出横向滚动（U 返工） */
     .cmd-pending-actions { flex-basis: 100%; }
+    /* 手机：详情头部标题独占一行，操作按钮组整组换到下一行——否则按钮列
+       flex-shrink:0 会把行内改名输入框压到几十像素（批次 T 实测 20px，没法改名） */
+    .task-detail-head { flex-direction: column; align-items: stretch; }
+    .task-head-actions { justify-content: flex-start; }
 }

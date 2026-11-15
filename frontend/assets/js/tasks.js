@@ -7,6 +7,7 @@
         data() {
             return {
                 prompt: '',
+                newTitle: '',
                 mode: 'auto',
                 runWhere: 'local',
                 nodes: [],
@@ -36,6 +37,7 @@
                 inboxItems: [],
                 picked: {},
                 detailTimer: null,
+                titleEdit: false, titleDraft: '', titleBusy: false, titleError: '',
             };
         },
         computed: {
@@ -133,6 +135,7 @@
                 this.after = 0;
                 this.message = '';
                 this.notice = '';
+                this.titleEdit = false; this.titleError = '';
                 this.fullEvents = {};
                 this.loadDetail();   // R4-0 精简列表缺 resultFiles/createdLabel 等，详情端点补全
                 await this.loadEvents();
@@ -194,7 +197,8 @@
                 this.busy = true;
                 this.error = '';
                 try {
-                    const body = { prompt: prompt, mode: this.mode, node: this.runWhere };
+                    const body = { prompt: prompt, mode: this.mode, node: this.runWhere,
+                                   title: (this.newTitle || '').trim() };
                     const isLocal = this.isLocalRun;   // await 前捕获，避免请求途中切执行点
                     const cwd = (this.localCwd || '').trim();
                     if (isLocal) {
@@ -212,6 +216,7 @@
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
                     this.prompt = '';
+                    this.newTitle = '';
                     this.paths = [];
                     this.pathMenuOpen = false;
                     if (isLocal) { this.rememberCwd(cwd); }
@@ -226,6 +231,40 @@
             },
             rememberCwd(p) {
                 try { localStorage.setItem('wp.taskCwd', p); } catch (err) { /* ignore */ }
+            },
+            // 批次 T：详情头部点标题 → 行内输入框改名（回车保存，Esc/失焦取消）
+            startTitleEdit() {
+                if (!this.detail) { return; }
+                this.titleDraft = this.detail.title || '';
+                this.titleError = '';
+                this.titleEdit = true;
+                this.$nextTick(() => { const el = this.$refs.titleInput; if (el) { el.focus(); el.select(); } });
+            },
+            cancelTitleEdit() {
+                this.titleEdit = false;
+                this.titleError = '';
+            },
+            async saveTitle() {
+                const title = (this.titleDraft || '').trim();
+                if (!title || this.titleBusy) { return; }
+                this.titleBusy = true;
+                this.titleError = '';
+                try {
+                    const r = await fetch('/api/tasks/' + encodeURIComponent(this.selectedId), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: title }),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                    this.detail = Object.assign({}, this.detail, { title: data.title });
+                    this.titleEdit = false;
+                    await this.loadOverview();   // 列表与主管卡片同步新名
+                } catch (err) {
+                    this.titleError = err.message;   // 就地提示，输入框保持打开
+                } finally {
+                    this.titleBusy = false;
+                }
             },
             async loadCwdRoots() {
                 try {

@@ -13,7 +13,7 @@ import threading
 import time
 
 import config
-from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node, task_events
+from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node, task_events, task_title
 from modules import sensitive_values
 from modules.staging import safeAttachmentName
 from modules.task_events import MAX_EVENTS, MAX_TEXT, MAX_TOOL_RESULT  # noqa: F401（store.MAX_* 兼容旧引用）
@@ -243,7 +243,7 @@ class TaskRepository:
         默认只给索引/判态所需字段，完整摘要用 summary()。"""
         lastText = task.get('lastText') or ''
         return {
-            'id': task['id'], 'title': task.get('title', ''),
+            'id': task['id'], 'title': task_title.titleFor(task),
             'status': task.get('status', ''),
             'owner': task.get('owner') or '',
             'lead': task.get('lead') or '',   # 批次 Q：派活的主管（老任务没有这个键时为 ''）
@@ -268,7 +268,7 @@ class TaskRepository:
         remote = not task_node.isLocal(node)
         cwd = task_node.cwdOf(task)
         return {
-            'id': task['id'], 'title': task.get('title', ''), 'prompt': task.get('prompt', ''),
+            'id': task['id'], 'title': task_title.titleFor(task), 'prompt': task.get('prompt', ''),
             'status': status, 'createdAt': task.get('createdAt', 0),
             'owner': task.get('owner') or '',
             'lead': task.get('lead') or '',   # 批次 Q：派活的主管（老任务没有这个键时为 ''）
