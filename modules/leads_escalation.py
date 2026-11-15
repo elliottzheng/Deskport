@@ -24,16 +24,27 @@ P3 里同一位置的 notice（不要两条都写）。
 在写 permission_result 的同一处调 resolvePermission 标记对应 escalation
 已处理——收件箱只追加不改写，落定状态记主管记录；未读计数、L1 提醒、
 指挥台徽标都只统计未落定的 escalation，inbox 接口逐条带 resolved 字段。
+
+N1（要求 3/4）：backfillResolved 在启动时给批次 L 之前的历史 escalation
+补标（任务终态或 pendingPermission 已变 → resolvedRequests，by='backfill'，
+幂等）——线上 174 条"未落定"实际一条都不挂；noticeOwnPermission 写的 down
+提示与 L1 提醒同样「同类只留最新、条件解除即收回」（ownPermissionLive 是
+它的存续条件，族去重在 lead_notices / leads_inbox 读侧）。
 """
 import json
 import logging
 
 from modules import leads_inbox, leads_store
+from modules import lead_inbox_store   # 收件箱存储核心（同 leads_store 一类）
+from modules import tasks_store as store
 
 log = logging.getLogger('leads_escalation')
 
 MAX_ARGS_SUMMARY = 200     # 审批参数摘要上限（规格 A4-1：≤200 字，引用形态）
 OWN_ARGS_SUMMARY = 80      # 主管自己命令的摘要上限（给用户看一眼，比 200 短）
+BACKFILL_BY = 'backfill'   # 历史补标的落定来源（N1 要求 3）
+# 任务终态：审批跟着死（关闭/取消/失败/中断——中断的审批同样不会再落定）
+TERMINAL_STATUSES = ('closed', 'cancelled', 'failed', 'interrupted')
 
 
 def _argsSummary(args, cap=MAX_ARGS_SUMMARY):
@@ -144,6 +155,10 @@ def noticeOwnPermission(task, title, args):
     停摆点）。down 条目在指挥台/设置页可见（leads_inbox.append 的 notice
     例外）；这里不唤醒、不上交——等用户直接批。内部兜异常，不影响任务
     主链路。返回写进的 seq（0 = 没写：不是主管自己的托管任务）。
+
+    N1（要求 4）：这条 notice 与 L1 提醒同样「同类只留最新、条件解除即
+    收回」——同族去重在 lead_notices.noticeFamily（ref 带 task），存续条件
+    在 ownPermissionLive。
     """
     try:
         lead = leads_inbox.ownLead(task)
@@ -159,3 +174,90 @@ def noticeOwnPermission(task, title, args):
     except Exception as e:
         log.warning('lead own-permission notice failed: %s', e)
         return 0
+
+
+# ---------------------------------------------------------------- N1：历史补标 / 提示存续
+
+def ownPermissionLive(entry):
+    """主管自己待批提示的存续条件（N1 要求 4「条件解除即收回」）。
+
+    引用的任务还挂着一个没决定的审批（pendingPermission 非空、任务没终态）
+    才成立；批了/拒了/超时/任务结束 → 条件解除，sweeper 收回这条 notice。
+    runner 先落 pendingPermission 再调 noticeOwnPermission（476 行先赋值后
+    上交），不存在「提示写了、标记还没落」的窗口。
+    """
+    ref = (entry or {}).get('ref')
+    taskId = str((ref or {}).get('task') or '') if isinstance(ref, dict) else ''
+    if not taskId:
+        return False
+    store.repo.load()
+    task = store.repo.get(taskId)
+    if task is None or (task.get('status') or '') in TERMINAL_STATUSES:
+        return False
+    return bool(str(task.get('pendingPermission') or ''))
+
+
+def _escalationSettled(task, requestId):
+    """这条 escalation 对应的事实是否已经了结（N1 历史补标的判据）。
+
+    任务没了/终态（关了的任务上的审批跟着死），或任务当前挂起的审批已经是
+    别的 requestId（这条早批掉了）。仍挂着的（pendingPermission 就是它、
+    任务没终态）返回 False——不补标。
+    """
+    if not isinstance(task, dict):
+        return True
+    if (task.get('status') or '') in TERMINAL_STATUSES:
+        return True
+    return str(task.get('pendingPermission') or '') != str(requestId or '')
+
+
+def backfillResolved():
+    """历史补标（N1 要求 3）：对每个主管收件箱里未落定的 escalation 复核。
+
+    批次 L 之前产生的 escalation 从未写进 resolvedRequests（当时还没有该
+    机制）——线上实测主管收件箱 174 条未落定，实际一条都不挂着（审批早已
+    批掉、任务早已关闭）。这里在启动时补标：所引用任务已关闭/失败，或该
+    任务当前 pendingPermission 不等于该 requestId → 写入 resolvedRequests
+    （by='backfill'）。仍挂着的不补。幂等（已在 resolvedRequests 里的跳过，
+    不刷新时间）；超 RESOLVED_CAP 时 setResolved 按 at 丢最旧——补标用
+    escalation 条目自己的 at，保留的才是最近的那些。返回补标了几条。
+
+    返工（验方建议：CAP 逐出与截头错位的一次性幽灵提醒）：逐出按 at、收件箱
+    截头按 seq，直接播种出 >MAX_ENTRIES 条的文件会让两者错位——被逐出的
+    标记其条目还在盘上，sweeper 报一条幽灵"未处理"，直到下一条 append 截头
+    才自愈。补标前先把超限文件截回保留窗口（append 本就会做的事），窗口外
+    的 requestId 不在收件箱里，自然跳过不标。
+    """
+    marked = 0
+    try:
+        store.repo.load()
+        tasks = {str(t.get('id') or ''): t for t in store.repo.list()}
+    except Exception as e:
+        log.warning('lead escalation backfill: load tasks failed: %s', e)
+        return 0
+    for lead in leads_store.list():
+        leadId = str(lead.get('id') or '')
+        if not leadId:
+            continue
+        lead_inbox_store.trimToMax(leadId, leads_inbox.MAX_ENTRIES)
+        resolved = lead.get('resolvedRequests')
+        resolved = resolved if isinstance(resolved, dict) else {}
+        entries, _last = leads_inbox.entriesAfter(leadId, 0, 'up')
+        for entry in entries:
+            if (entry.get('kind') or '') != 'escalation':
+                continue
+            ref = entry.get('ref')
+            if not isinstance(ref, dict):
+                continue
+            requestId = str(ref.get('requestId') or '')
+            if not requestId or requestId in resolved:
+                continue
+            if not _escalationSettled(tasks.get(str(ref.get('task') or '')),
+                                      requestId):
+                continue
+            _rec, err = leads_store.setResolved(leadId, requestId, BACKFILL_BY,
+                                                at=entry.get('at'))
+            if not err:
+                resolved[requestId] = {'by': BACKFILL_BY}   # 本轮内去重
+                marked += 1
+    return marked

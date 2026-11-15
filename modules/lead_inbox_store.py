@@ -53,3 +53,18 @@ def writeAll(path, entries):
                 os.unlink(tmp)   # replace 成功时 tmp 已不在；清失败不掩蔽原异常
             except OSError:
                 pass
+
+
+def trimToMax(leadId, maxEntries):
+    """把超限文件截回保留窗口（原子重写）：返回截掉几条。
+
+    只修违背「≤maxEntries」不变式的状态（直接播种/损坏）——正常 append
+    路径本就不会超限。N1：历史补标前调用，避免 CAP 逐出（按 at）与截头
+    （按 seq）错位，留下"条目在盘上却没有落定标记"的一次性幽灵提醒。
+    """
+    path = inboxPath(leadId)
+    entries = readAll(leadId)
+    if len(entries) <= maxEntries:
+        return 0
+    writeAll(path, entries[-maxEntries:])
+    return len(entries) - maxEntries
