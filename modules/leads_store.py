@@ -22,7 +22,8 @@
 批次 P3 追加的键都是懒键（记录建成时不带，首次写入才出现——Q 批的测试钉死
 了建记录的键集，不能为占位键破坏它）：
     inboxSeq/readSeq/reportSeq：收件箱游标（setCursor 推进，只增不减）；
-    idleNoticedAt：无动静提示的单次标记（P3-5）。
+    idleNoticedAt：无动静提示的单次标记（P3-5）；
+    responseNoticedAt：主管反应超时提醒的单次标记（L1，节流同款）。
 绑定托管任务（补 1）改 kind/taskId 两个键，走 bindTask/unbindTask——
 不进 update() 的 PATCH_KEYS（避免出现 hosted 却没有 taskId 的状态）。
 """
@@ -32,7 +33,7 @@ import threading
 import time
 
 import config
-from modules import state
+from modules import state, state_owner
 
 MAX_NAME = 24                      # 与 agent_tokens.MAX_NAME 同一套（令牌名限制）
 BAD_NAME_CHARS = '<>"\'\r\n\t'     # 同上，字面量复制（理由见模块 docstring）
@@ -66,6 +67,8 @@ def _load():
 
 
 def _save(data):
+    # L6：只读进程（状态目录属于 web）的任何写入一律明确异常
+    state_owner.ensureWritable('leads.json')
     state.atomicWriteJson(storePath(), data)
 
 
@@ -256,6 +259,20 @@ def markIdleNoticed(leadId, at=None):
         if not isinstance(lead, dict):
             return None, NOT_FOUND
         lead['idleNoticedAt'] = float(at) if at is not None else _now()
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
+def markResponseNoticed(leadId, at=None):
+    """记一次主管反应超时提醒（批次 L L1）：同一主管每 leadResponseSec 最多一条。"""
+    leadId = str(leadId or '')
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        lead['responseNoticedAt'] = float(at) if at is not None else _now()
         lead['updatedAt'] = _now()
         _save(data)
         return lead, ''

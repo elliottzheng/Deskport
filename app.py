@@ -21,6 +21,8 @@ import config
 
 from modules import meta as metaModule  # noqa: E402
 from modules import system as systemModule  # noqa: E402
+from modules import state_owner as stateOwnerModule  # noqa: E402  L6：状态目录所有者锁
+from modules import task_health as taskHealthModule  # noqa: E402  批次 L：重启续接 + 卡住巡检
 from modules import files as filesModule  # noqa: E402
 from modules import command as commandModule  # noqa: E402
 from modules import screen as screenModule  # noqa: E402
@@ -285,6 +287,9 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
     # 主管收件箱: sweeper 据此唤醒托管主管（合并窗口内的未投递条目）并发无动静提示
     leadsInboxModule.bindApp(app)
 
+    # 批次 L 任务巡检: 重启 60s 后自动续接（L3）+ 工具卡住报警（L4）
+    taskHealthModule.bindApp(app)
+
 
 def _installApiJsonErrors(app):
     """/api/* 的 404/405/500 一律 JSON（外部智能体反馈 §3.8）。
@@ -329,6 +334,9 @@ def create_app(pluginRoots=None, pluginNavDir=None):
     """装配一个独立 Flask 实例；测试可多次调用，互不共享路由状态。"""
     app = Flask(__name__)
     sock = Sock(app)
+    # L6：web 启动即取状态目录所有者锁——其它进程（探针脚本/locald/sshd）
+    # 再碰 TaskRepository/feedback/leads 等存储时只读；旧进程退出即释放
+    stateOwnerModule.acquire()
 
     auth.register(app)
     _installApiJsonErrors(app)

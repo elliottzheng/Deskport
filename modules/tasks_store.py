@@ -13,7 +13,7 @@ import threading
 import time
 
 import config
-from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node, task_events
+from modules import contracts, fsutil, store_io, state_owner, task_state, task_cwd, task_node, task_events
 from modules import sensitive_values
 from modules.staging import safeAttachmentName
 from modules.task_events import MAX_EVENTS, MAX_TEXT, MAX_TOOL_RESULT  # noqa: F401（store.MAX_* 兼容旧引用）
@@ -161,6 +161,9 @@ class TaskRepository:
             if self.loaded:
                 return
             self.loaded = True
+            # L6：状态目录所有者锁——web 之外的进程探测身份（持锁者存活 →
+            # 只读；锁空闲照常）。判定在读之前，后面 save/append 才有闸门
+            state_owner.adopt()
             # 瞬时共享冲突（并发 save 正在 replace）由 store_io 重试；文件
             # 真缺失/损坏才按空处理——不能把锁冲突当"无状态"丢全部任务
             raw = store_io.loadSnapshot(self.store_path)
@@ -187,11 +190,18 @@ class TaskRepository:
                     if not canResume:
                         task['error'] = '服务重启，任务中断'
                         task['endedAt'] = _now()
+                    else:
+                        # L3：只有启动恢复路径设这个标记——重启 60s 后的自动
+                        # 续接认它，用户主动暂停/线程猝停都不设（不续）
+                        task['pausedBy'] = 'restart'
                     dirty = True
-            if dirty:
+            if dirty and state_owner.writable():
+                # 只读进程（L6）：状态迁移只活在内存，不落盘也不抛——读要能用
                 self.save()
 
     def save(self):
+        # L6：只读进程的任何快照写入一律明确异常（规格原文口径）
+        state_owner.ensureWritable('agent_tasks.json')
         # 序列化必须在锁内完成：json.dump 遍历活字典，任何无锁写入都会触发
         # "dictionary changed size during iteration"。锁内只生成字符串并发
         # 序号；读 savedSeq→比较→写盘→更新 savedSeq 整段收在 store_io 的
@@ -213,6 +223,8 @@ class TaskRepository:
         return os.path.join(self.log_dir, task['id'] + '.jsonl')
 
     def log_write(self, task, entry):   # 重试与失败计数见 task_events.appendJsonl
+        # L6：只读进程的事件追加（append）同样明确异常
+        state_owner.ensureWritable('agent_logs/%s.jsonl' % task['id'])
         task_events.appendJsonl(self.log_dir, self.log_path(task),
                                 json.dumps(entry, ensure_ascii=False) + '\n')
 

@@ -20,7 +20,7 @@ import time
 import uuid
 
 import config
-from modules import state
+from modules import state, state_owner
 
 PLATFORMS = ('web', 'desktop', 'mobile')
 STATUSES = ('submitted', 'acknowledged', 'processing', 'resolved', 'rejected',
@@ -89,6 +89,8 @@ def _load():
 
 
 def _save(data):
+    # L6：只读进程（状态目录属于 web）一律明确异常，读不受影响
+    state_owner.ensureWritable('feedback.json')
     state.atomicWriteJson(_itemsPath(), data)
 
 
@@ -103,6 +105,8 @@ def _findByKey(items, key):
 
 def saveAttachment(blob, mime):
     """落一张截图；返回 file_id。mime 白名单由调用方按魔数判定。"""
+    # L6：附件也写在状态目录里，只读进程同样拒绝
+    state_owner.ensureWritable('feedback/attachments')
     ext = ATTACHMENT_EXTS.get(mime)
     if not ext:
         raise ValueError('不支持的图片类型')

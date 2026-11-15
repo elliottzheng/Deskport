@@ -172,6 +172,11 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
   用户眼前由 Deskport 决定（v1 设置页可见），主管只见这一个工具。
 - 用户对主管说的话走 `POST /api/settings/leads/<id>/inbox`（网页会话），
   托管主管会被立即唤醒。
+- 下属用 AskUserQuestion 提问（批次 L L2）：收件箱里是一条 `kind='question'`
+  的条目（问题文本 + 选项 label + requestId），托管主管被立即唤醒。答复用
+  `POST /api/tasks/<id>/answer {"requestId": "...", "text": "..."}`（主管令牌
+  只许答复 `task.lead` 是自己的任务；网页会话也可）——审批按"允许"放行，
+  答复立即投递给该任务。CLI：`deskport.py answer <task> <requestId> "<答复>"`。
 
 **关键操作**：
 
@@ -179,6 +184,8 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 GET  /api/tasks/<id>                              → 状态（含 model/workspace/error）
 GET  /api/tasks/<id>/log                          → 完整 jsonl 流水
 POST /api/tasks/<id>/message    {"text": "..."}   → 续聊/追问（回合间）
+POST /api/tasks/<id>/answer     {"requestId": "...", "text": "..."}
+                                                 → 答复下属提问：放行 + 立即投递
 POST /api/tasks/<id>/permission {"requestId": "...", "optionId": "...", "deny": false}
 POST /api/tasks/<id>/cancel | /close              → 都返回 status；close 幂等
 ```

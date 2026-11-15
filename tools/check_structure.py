@@ -14,17 +14,15 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUDGET = {'.py': 400, '.js': 500, '.css': 500}
 
-# 存量例外: 只减不增（行数上限）
-# 2026-11-05: read_lines 曾恒返回 0 导致预算检查空转, 暴露的 7 个超预算文件
-# 已全部拆完并从本表移除 (过程见 docs/design-review.md 与各 refactor 提交)。
-# 2026-11-12: R4/R5 两轮把 tasks_* 又写回超预算, 且未登记 —— 门禁红了数日而
-# 发布绕过了它。按"先认清现状"重新登记现有超预算文件 (上限 = 当前行数),
-# 之后这些文件只能变短; 未列在本表的新文件仍必须直接符合预算。
+# 存量例外: 只减不增（行数上限）。2026-11-05 read_lines 空转暴露的 7 个文件已
+# 拆完移除; 2026-11-12 起按"先认清现状"重新登记现有超预算文件（上限 = 当前
+# 行数），之后只能变短; 未列本表的新文件仍必须直接符合预算。
 LEGACY = {
-    'config.py': 548,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义；2026-11-14 +32=主管收件箱两个阈值 leadWakeMergeSec/leadIdleSec（批次 P3）
+    'modules/task_policy.py': 426,                # 审批边界判定（纯函数）；2026-11-15 新登记：+35=L5 按名字批量杀进程内建询问（KILL_BY_NAME_RES/killByNameHit + evaluate 接线，policy 压不掉）
+    'config.py': 586,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义；2026-11-14 +32=主管收件箱两个阈值 leadWakeMergeSec/leadIdleSec（批次 P3）；2026-11-15 +38=批次 L 三个阈值 leadResponseSec/autoResumeAfterRestart/toolStallSec
     # .agents/skills/deskport/{deskport,driver}.py 是发给外部智能体的「拷一个文件就能跑」
     # 客户端/驱动（零依赖、也能当 CLI），拆分会破坏这个约定——按单文件登记，只许变短。
-    '.agents/skills/deskport/deskport.py': 709,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）
+    '.agents/skills/deskport/deskport.py': 717,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）；2026-11-15 +8=answer 命令（L2 答复下属提问）
     '.agents/skills/deskport/driver.py': 487,     # 单文件驱动模板（见上注）；2026-11-14 +19=审批 409 分类处理（P0-3）
     'agent_node/acp_session.py': 454,             # ACP 会话单文件实现（见上注）
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
@@ -34,11 +32,11 @@ LEGACY = {
                                                   # （批次 C 把各模块的私有名收进来，批次 H 加
                                                   # onBehalfOfKwargs，批次 J 加 nodeArg）——只减不增，
                                                   # 下一步把主机解析与入参归一拆成独立小模块
-    'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
+    'modules/agent_nodes.py': 592,                # 节点注册+隧道+引擎注册一体；2026-11-15 +12=RemoteAcpClient.cancel 发完再读一次节点实况、如实回报回合是否还在跑（L4）
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
-    'modules/tasks_api.py': 981,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）
-    'modules/tasks_runner.py': 782,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）；+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）
-    'modules/tasks_store.py': 442,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）
+    'modules/tasks_api.py': 1002,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +21=answer 端点（L2）+ cancel 响应 nodeStillRunning（L4）
+    'modules/tasks_runner.py': 892,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）；+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）；+80=批次 L：L2 提问路径（_isAskUserQuestion/perm.question/队首当答复/answerPermission）+ L4 清 _toolStall
+    'modules/tasks_store.py': 454,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +12=L3 pausedBy='restart' + L6 只读闸门
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
     'tests/test_tasks_api.py': 1620,              # 任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）
@@ -48,8 +46,8 @@ SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-
 FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp', 'agent_sftp_write',
             'agent_sessions', 'agent_share', 'agent_skill_files', 'agent_tunnel', 'command', 'command_view', 'control',
             'feedback', 'feedback_store', 'files', 'files_archive', 'files_base', 'files_browse',
-            'files_federation', 'files_pins', 'files_transfer', 'leads_api', 'leads_inbox', 'leads_store',
-            'screen', 'ssh', 'task_cwd', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
+            'files_federation', 'files_pins', 'files_transfer', 'lead_notices', 'leads_api', 'leads_inbox', 'leads_store',
+            'screen', 'ssh', 'task_cwd', 'task_health', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
             'terminal', 'worklines_api', 'worklines_store'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
@@ -94,6 +92,7 @@ ALLOWED_FEATURE_IMPORTS.update({
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
     ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
+    ('lead_notices', 'leads_inbox'), ('lead_notices', 'leads_store'), ('lead_notices', 'tasks_store'), ('leads_inbox', 'lead_notices'), ('tasks_runner', 'lead_notices'), ('task_health', 'tasks_store'), ('task_health', 'leads_inbox'), ('task_health', 'tasks_runner'), ('tasks_runner', 'tasks_api'),  # 批次 L：lead_notices=L1 超时提醒+L2 提问条目，task_health=L3 续接+L4 巡检（state_owner 归 INFRA）；tasks_runner→tasks_api 仅函数内延迟导入（answerPermission 复用 deliverMessage）
     # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
     ('tasks_api', 'agent_nodes'),     # 执行点存在性校验/寻址/模型声明
     ('tasks_api', 'task_cwd'),        # cwd 前置校验（远端 cwdRoots, 批次 B3）

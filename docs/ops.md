@@ -50,6 +50,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 - `modules/state.py`：`atomicWriteJson`（临时文件 + `os.replace`）与 `appendJsonl`（`.lock` 文件跨进程排它）。
 - `modules/events.py`：统一事件流 `%APPDATA%\<stateDir>\control_audit.jsonl`，登录、危险操作、应用启动共用。
 - 设置页「导出备份」：`GET /api/backup` 打包 `config.json` 与状态目录（跳过缩略图/锁文件/超大文件）。**压缩包内含密码与令牌，勿外传。**
+- 状态目录所有者锁（批次 L L6，`modules/state_owner.py`）：web 启动即在状态目录取独占锁（`owner.lock`：锁文件 + 进程 id，OS 级字节区排它）。其它进程（探针脚本 / locald / sshd / 第二个 web）再碰 TaskRepository / feedback / leads / worklines 等存储时进入**只读模式**：读放行，任何 save/append 抛「状态目录 \<path\> 属于进程 \<pid\>，本进程只读」并记日志。进程退出（含被 kill）即释放锁——watchdog 重启时旧 web 一走锁就没，新 web 最多等 15s 接过；线上启动顺序不变。
 
 ## 六、任务记录的存储形态（批次 PS1 起）
 

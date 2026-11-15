@@ -446,6 +446,11 @@ class Task:
         return self.dp._request("POST", f"/api/tasks/{self.id}/permission",
                                 {"requestId": request_id, "optionId": option_id, "deny": deny})
 
+    def answer(self, request_id: str, text: str) -> dict:
+        """答复下属的提问（批次 L L2）：审批按"允许"放行，答复立即投递。"""
+        return self.dp._request("POST", f"/api/tasks/{self.id}/answer",
+                                {"requestId": request_id, "text": text})
+
     def cancel(self) -> dict:
         return self.dp._request("POST", f"/api/tasks/{self.id}/cancel", {})
 
@@ -639,6 +644,10 @@ if __name__ == "__main__":
     p.add_argument("--timeout", type=int, default=900)
     p.add_argument("--allow", action="store_true")
     p.add_argument("--deny", action="store_true")
+    p = sub.add_parser("answer", help="答复下属任务的提问（requestId + 答复文本）")
+    p.add_argument("tid")
+    p.add_argument("requestId")
+    p.add_argument("text")
     a = ap.parse_args()
 
     def _unmangle(p):
@@ -669,7 +678,7 @@ if __name__ == "__main__":
             for h in dp.hosts():
                 print(f"{h['name']}\t{h['host']}:{h['port']}\t{h['id']}")
             sys.exit(0)
-        if a.cmd in ("task", "tasks", "wait"):
+        if a.cmd in ("task", "tasks", "wait", "answer"):
             cfg = _load_config()
             dp = Deskport(a.url or cfg.get("url"),
                           insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
@@ -679,6 +688,10 @@ if __name__ == "__main__":
                     line = (t.get("title") or t.get("prompt") or "").splitlines() or [""]
                     print("%s  %-9s %-12s %s" % (t.get("id"), t.get("status") or "",
                                                  t.get("node") or "local", line[0][:60]))
+                sys.exit(0)
+            if a.cmd == "answer":
+                r = dp.task(a.tid).answer(a.requestId, a.text)
+                print("ANSWERED %s -> %s" % (a.tid, r.get("status") or "已投递"))
                 sys.exit(0)
             if a.cmd == "task":
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,

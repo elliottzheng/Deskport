@@ -382,6 +382,7 @@ DELETE /api/agent/ssh/sessions/<sid>
 | GET | /api/tasks/<id>/messages | 排队中的消息 `{items, count}`（只列未投递的） |
 | DELETE | /api/tasks/<id>/messages/<mid> | 撤回一条排队消息 → `{ok, count}`（已投递 404） |
 | POST | /api/tasks/<id>/permission | 权限决策 `{requestId, optionId, deny}` |
+| POST | /api/tasks/<id>/answer | 主管答复下属提问 `{requestId, text}`（批次 L L2）：审批按「允许」放行 + 答复以 steer 立即投递。主管令牌只许答复 `task.lead` 是自己的任务；网页会话均可；requestId 对不上当前挂起的审批 → 409 |
 | POST | /api/tasks/<id>/mode | 切换批准模式 |
 | POST | /api/tasks/<id>/cancel · /close | 停止当前轮 / 结束会话（均返回 `status`） |
 | GET | /api/tasks/nodes | 执行点列表，含 `models`/`defaultModel`/`modelSelectable`/`os`/`shells`/`defaultCwd`/`cwdRoots`/`modelStatus`/`usableModels` |
@@ -477,6 +478,12 @@ DELETE /api/agent/ssh/sessions/<sid>
   审批若 callId 在本任务 tool 事件里查不到（后台幽灵审批），自动拒绝
   （`auto_denied rule=orphan`），不挂起、不挡 message。没有 policy 的
   任务两条都不生效，行为不变；
+- **按名字批量杀进程一律问（批次 L L5）**：内建询问规则，**所有任务**生效
+  （不只托管主管，也不需要 policy）——`taskkill` 带 `/IM`、`taskkill /F /T`、
+  `Stop-Process -Name`、`pkill`、`killall` 命中即 `ask`
+  （`permission_request` 事件带 `rule=danger:kill-by-name`），`allowCommands`
+  与 `default=allow` 都压不掉。按 PID 结束进程（`taskkill /PID 1234`、
+  `Stop-Process -Id 1234`）不受影响。启发式：宁多问，引号内文本同样参与匹配；
 - **接手已有 Kimi 会话**：`{"kimiSessionId": "session_<uuid>"}`（本机与非本机
   都支持；非本机由对端 fork+load）。默认先 `kimi fork` 复制副本再加载——不干扰
   用户开着的终端；会话被占用时 400 透传 kimi 原始原因。`"fork": false` 直接接管，
@@ -746,12 +753,25 @@ POST /api/agent/leads/inbox/ack   {"seq": n}
 会话线程退出且 failed/interrupted/closed → `failure`；用户关闭 → `failure`。
 托管自己的任务（`task.id == 主管.taskId`）**不产条目**——否则它每轮自报、
 被唤醒再自报，死循环。web 重启把在飞任务打 paused **不**报（避免每次部署给
-所有在飞下属刷一条）。
+所有在飞下属刷一条；重启自动续接的那一条见下）。
+
+下属提问（批次 L L2）：审批请求若是 AskUserQuestion（工具名或参数形如
+`{questions:[…]}`）→ `question` 条目（问题文本 + 选项 label 列表 + `requestId`
+引用），托管主管**立即唤醒**（与 `human` 同款不等合并窗口）。答复：
+
+```text
+POST /api/tasks/<id>/answer   {"requestId": "...", "text": "..."}
+```
+
+审批按「允许」放行，答复以 steer 立即投递给该任务（不排队）；主管令牌只许
+答复 `task.lead` 是自己的任务，网页会话均可。挂起的是提问时，队列里的消息
+会被当作答复自动走同一条路（不再干等到审批超时）。CLI：
+`deskport.py answer <task> <requestId> "<答复>"`。
 
 托管唤醒：`kind=hosted` 且有未投递条目时，中枢按合并窗口（config
 `leadWakeMergeSec`，默认 20s，0=立即）把窗口内全部条目合并成**一条**摘要投进
 托管任务的消息队列（发信人记 `收件箱`，不是"面板"），投递成功才推进游标；
-`human` 条目（用户说的话）不等窗口、立即唤醒。
+`human`（用户说的话）与 `question`（下属提问）不等窗口、立即唤醒。
 
 用户→主管（网页会话，管理面同鉴权档）：
 
@@ -764,6 +784,12 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
 
 无动静提示：主管有下属在跑、却老于 `leadIdleSec`（默认 900s）没有任何事件 →
 箱内一条 `notice`；同一主管每阈值最多一条。
+
+主管反应超时提醒（批次 L L1）：下属消息（report/failure/escalation/human/
+question）超过 `leadResponseSec`（默认 600s，0=关闭）既没投递（inboxSeq）也没
+被外部主管读（readSeq）→ 该主管 `down` 方向一条 `notice`（指挥台「等你处理」
+因此可见）；托管主管另有第二条分支——条目已投递但唤醒还堵在队列里没人消费、
+超过阈值没有任何新事件，同样提醒。同一主管每阈值最多一条。
 
 ## 重启语义（如实版）
 
@@ -783,6 +809,20 @@ POST /api/settings/leads/<id>/inbox   {"text": "..."}   → {"ok": true, "seq": 
   补进 tool 事件的 args 也不丢：回填时往 jsonl 追加不带 `seq` 的
   `tool_args_patch` 补丁行，重启后按 `targetSeq` 还原（补丁行本身不是
   事件，`/log` 原样透出）。
+- **重启后自动续接（批次 L L3）**：web 启动时被打成 paused 且
+  `pausedBy='restart'`（只有启动恢复路径设这个标记）的任务，启动 60 秒后
+  自动发一条续接消息，每个任务只自动续一次；用户主动暂停/关闭的不续
+  （构造上不带标记）。自动续接的任务若属于某主管，主管收件箱会多一条
+  notice「任务 <id8> 因重启被打断，已自动续接」。开关 config
+  `autoResumeAfterRestart`（默认开）。
+- **卡住的工具调用（批次 L L4）**：任务 running 且当前工具调用超过
+  `toolStallSec`（默认 900s，0=关闭）没有任何事件 → 一条 status 事件；
+  属于主管的下属往主管收件箱写 `failure`，无主管的进指挥台「等你处理」。
+  每次工具调用只报一次（工具收尾标记即清）。
+- **cancel 的如实回报（批次 L L4）**：重启后重新接上的节点会话里，cancel
+  照常对同一 node sid 发 `session/cancel`（节点协议未改）；发完再读一次
+  节点实况（既有 `GET /api/sessions/<sid>` 的 `running` 字段），回合还在跑
+  时 `/api/tasks/<id>/cancel` 的响应带 `nodeStillRunning: true`——不假装停了。
 
 ## 技能分发（URL 自举）
 

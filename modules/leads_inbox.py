@@ -25,7 +25,8 @@ federation._refreshLoop）。有未投递条目且最老条目过了合并窗口
 （leadWakeMergeSec 默认 20s，0=立即；human 立即旁路）→ 合并成一条摘要经
 deliverMessage 投递（by='收件箱'，补 4），成功后 inboxSeq 推进（先投递后落游
 标：崩溃重放最多重复一条摘要；先落游标会在投递失败时丢条目）。另做无动静提示
-（leadIdleSec 默认 900s）。
+（leadIdleSec 默认 900s）与主管反应超时提醒（leadResponseSec 默认 600s，
+实现在 modules/lead_notices.py——L1，本文件只在扫掠时调它）。
 """
 import json
 import logging
@@ -37,7 +38,7 @@ import time
 from flask import Blueprint, g, jsonify, request
 
 import config
-from modules import leads_store, state, task_wait
+from modules import leads_store, state, state_owner, task_wait
 from modules import tasks_store as store
 
 log = logging.getLogger('leads_inbox')
@@ -108,12 +109,16 @@ def append(leadId, direction, kind, text, ref='', maxLen=MAX_TEXT):
 
     append 与「超 500 条截头重写」在同一把锁里（线程锁 + 跨进程文件锁，照
     state.appendJsonl 的做法）——否则并发 append 会在重写窗口里丢条目（补 3）。
+    L6：只读进程（状态目录属于 web）一律抛 StateDirReadOnly。
     """
     leadId = str(leadId or '')
     if not leadId or direction not in ('up', 'down'):
         return 0
+    state_owner.ensureWritable('lead_inbox/%s.jsonl' % leadId)
     if direction == 'down':
-        kind = 'report'      # down 侧固定 report（不细分就是"不搞特殊"）
+        # down 侧固定 report；L1 的主管超时提醒是唯一例外（notice，指挥台
+        # 「等你处理」要把它当待办显示）
+        kind = 'notice' if kind == 'notice' else 'report'
     text = str(text or '')[:maxLen]
     if not isinstance(ref, (str, dict)):
         ref = ''
@@ -154,18 +159,24 @@ def _triggerLead(task):
         return ''
     return leadId
 
-def emit(task, kind, text):
+def emit(task, kind, text, ref=None):
     """触发点唯一入口：runner/api 一行调用，文本由调用点按规格表组装。
 
     内部兜异常——收件箱失败绝不影响任务主链路（写事件的同款纪律），所以调用
-    点不需要自己包 try/except。ref 统一记任务指针。
+    点不需要自己包 try/except。ref 统一记任务指针；ref（dict）里的额外键合并
+    进去（L2 的 question 条目带 requestId）。返回写了哪个主管的箱（'' = 没写）。
     """
     try:
         leadId = _triggerLead(task)
         if leadId:
-            append(leadId, 'up', kind, text, {'task': str(task.get('id') or '')})
+            extra = {'task': str(task.get('id') or '')}
+            if isinstance(ref, dict):
+                extra.update(ref)
+            append(leadId, 'up', kind, text, extra)
+        return leadId
     except Exception as e:
         log.warning('lead inbox emit %s failed: %s', kind, e)
+        return ''
 
 # ---------------------------------------------------------------- sweeper
 
@@ -190,8 +201,9 @@ def _sweepLoop():
             log.warning('lead inbox sweep failed: %s', e)
         time.sleep(SWEEP_SEC)
 
-def sweepOnce():
-    """扫一跳：托管唤醒 + 无动静提示（测试可直接调，不起真 kimi）。
+def sweepOnce(now=None):
+    """扫一跳：托管唤醒 + 无动静提示 + 主管反应超时提醒（测试可直接调，
+    不起真 kimi）。now 可注入（L1 的时钟）；缺省取墙上时钟。
 
     推 app_context：deliverMessage 经 _enqueueMessage 读 flask.g，后台线程里
     直接调会抛 RuntimeError。
@@ -199,16 +211,19 @@ def sweepOnce():
     app = _appRef
     if app is None:
         return
+    now = now if now is not None else time.time()
     with app.app_context():
+        from modules import lead_notices   # 延迟导入：lead_notices 模块级
+        # import 本模块（收件箱存储），反向依赖只能放在函数内
         for lead in leads_store.list():
             leadId = str(lead.get('id') or '')
             if not leadId:
                 continue
             try:
-                now = time.time()
                 if str(lead.get('kind') or '') == 'hosted' and lead.get('taskId'):
                     _wakeHosted(lead, now)
                 _idleNotice(lead, now)
+                lead_notices.responseNotice(lead, now)
             except Exception as e:
                 log.warning('lead inbox sweep lead=%s failed: %s', leadId, e)
 
@@ -231,7 +246,9 @@ def _wakeHosted(lead, now):
         entries, _last = entriesAfter(leadId, cursor, 'up')
         if not entries:
             return
-        human = any(e.get('kind') == 'human' for e in entries)
+        human = any(e.get('kind') in ('human', 'question') for e in entries)
+        # human（用户的话）与 question（下属提问，L2）不等合并窗口——最等不
+        # 得的两类，立即旁路
         mergeSec = config.getLeadWakeMergeSec()
         if not human and mergeSec > 0:
             oldest = min(float(e.get('at') or 0) for e in entries)

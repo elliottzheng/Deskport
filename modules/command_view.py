@@ -178,6 +178,25 @@ def _reportPending(lead, entries):
     return rows
 
 
+def _stallPending(task):
+    """卡住的工具调用（L4）：无主管的任务进指挥台「等你处理」。
+
+    标记由 task_health 巡检写入（task['_toolStall']，只对无主任务），工具
+    收尾即清；行只在该任务还在 running 时出现。有主管的走主管收件箱
+    failure，不进这里（规格 L4 的两路分流）。
+    """
+    stall = task.get('_toolStall')
+    if not isinstance(stall, dict) or (task.get('status') or '') != 'running':
+        return None
+    return {'kind': 'stall', 'at': _int(stall.get('at')),
+            'taskId': task.get('id') or '', 'leadId': task.get('lead') or '',
+            'title': _firstLine(task.get('title') or task.get('prompt'),
+                                TITLE_MAX) or '任务',
+            'detail': '工具 %s 已 %s 分钟无输出'
+                      % (_firstLine(stall.get('name'), TITLE_MAX) or '工具',
+                         _int(stall.get('minutes')) or '?')}
+
+
 def _problemPending(tasks, now):
     """出问题的下属：failed/interrupted 或空转/静默轮，且最近 24h 内结束。"""
     rows = []
@@ -269,6 +288,9 @@ def overview():
 
     for task in tasks:                    # 任意任务的挂起审批都进待办
         row = _pendingPermission(task)
+        if row:
+            pending.append(row)
+        row = _stallPending(task)         # L4：卡住的工具调用（无主任务）
         if row:
             pending.append(row)
     pending += _problemPending(tasks, now)
