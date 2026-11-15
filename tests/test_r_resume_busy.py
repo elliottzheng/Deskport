@@ -333,16 +333,10 @@ def test_concurrent_saves_never_collide(tmp_path):
     finally:
         log.removeHandler(handler)
     fails = [m for m in caught if 'save tasks failed' in m]
-    # 并行负载下偶发外部瞬时拒绝：快盘上连续 os.replace 会撞上并发任务 I/O
-    # （安全软件/索引器对目标的瞬间占用），报 WinError 5/32——产品按设计吞
-    # 掉继续（下次 save 重写同一快照），盘上状态不受影响。本用例守的竞态
-    # （共用 .tmp、无锁并发 replace 同一目标）实测是几十~上百次失败加状态
-    # 丢失，与这种单一瞬时拒绝不是一回事：放行 ≤2 次且仅限共享拒绝类，
-    # 其它 OSError、状态完整性、临时文件残留仍旧零容忍。
-    transient = [m for m in fails
-                 if 'WinError 5' in m or 'WinError 32' in m]
-    assert len(fails) <= 2 and len(transient) == len(fails), \
-        '并发 save 零失败（放行 ≤2 次外部瞬时共享拒绝）: %s' % fails[:2]
+    # 批 PS2 追件：os.replace 的 PermissionError（WinError 5/32，安全软件/
+    # 索引器对目标的瞬间占用）已在 store_io 按 20/40/80/160ms 退避重试 4 次
+    # ——瞬时占用不再变成失败，这里恢复零失败（另一批曾因此放宽到 ≤2 次）
+    assert not fails, '并发 save 零失败: %s' % fails[:2]
     data = json.loads((tmp_path / 'tasks.json').read_text(encoding='utf-8'))
     assert len(data) == 50, '盘上状态完整'
     leftovers = [p.name for p in tmp_path.iterdir()
