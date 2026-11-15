@@ -10,7 +10,7 @@
 |---|---|---|
 | `SKILL.md` | 智能体 | 接口速查：快命令、SFTP、持久会话、任务派活、工作线、主管通信 |
 | `COLLABORATION.md` | 主控 | 协作原则（指挥链：用户 → 主管 → 下属）：分工、派活规格、审批边界、验收、省上下文 |
-| `deskport.py` | 两边 | Python 客户端（832 行、零依赖），也能当 CLI |
+| `deskport.py` | 两边 | Python 客户端（851 行、零依赖），也能当 CLI |
 | `driver.py` | 主控 | 驱动模板：别名目录、边界判定、自动放行、409 排队、收件箱模式、暂停续接 |
 | `driver.example.json` | 主控 | `driver.json` 最小样例（必填 root/danger/safe，带 `_说明`） |
 
@@ -135,6 +135,7 @@ CLI 全部子命令（`python deskport.py <命令> -h` 看各自动态帮助）�
 | `report "<一句话>"` | 向用户汇报（主管唯一的嘴） |
 | `close <任务id>` | 关闭任务（明确结束，回收进程） |
 | `approve <任务id> <requestId> [--deny]` | 审批下属的 escalation（只批 allow_once；拒绝加 `--deny`） |
+| `answer <任务id> <requestId> "<答复>"` | 答复下属任务的提问（审批按"允许"放行，答复立即投递） |
 
 `lead` / `inbox` / `report` / `approve` 是指挥链上的主管命令：令牌绑了主管才有
 （没绑 `inbox`/`report` 报 400；全权令牌跑 `lead --register "<名字>"` 自助成为主管，
