@@ -18,6 +18,14 @@
 `cat "<ws>/x" & rm -rf y` 整条被当作 cat 的参数，越界/执行被自动放行
 （只读门与 allowCommands 两条路径同此盲区）。`&&`、`2>&1`、`>&2` 里的
 `&` 不拆（前后置断言挡住）。
+
+heredoc 正文剥离（四验返工从 task_policy 移来腾 400 行预算，公开名
+stripHeredocs）：`<<TAG` 到独占一行 `TAG` 之间的正文是数据，不参与
+引号剥离/命令替换检测/分段。找不到终止行时返回 None——未闭合 heredoc
+的剩余文本不可判定：`cat <<EOF & rm -rf y` 里 `&` 之后的命令 bash 实测
+两侧都执行（四验探针 H01-H05/H10），而调用方不能猜剩余文本，按整条
+不可判定 ask（task_policy.evaluate 收 None 即返回 danger:heredoc）。
+闭合 heredoc 的既有行为逐字不变。
 """
 import re
 
@@ -36,6 +44,38 @@ SEGMENT_SPLIT = re.compile(
 PIPE_READONLY_RE = re.compile(r'^(head|tail|grep|wc|sort|uniq)\b')
 PIPE_PLAIN_ARG_RE = re.compile(r'^[\w./:=,+*?%@\-]+$')   # \w 含 CJK（grep 中文Pattern）
 STDERR_EXEMPT = ('2>/dev/null', '2>&1')
+# heredoc 标记（<<TAG / <<-TAG / 引号定界）：正文剥离在拆段之前做
+HEREDOC_RE = re.compile(r'<<-?\s*[\'"]?([A-Za-z_][\w.-]*)[\'"]?')
+
+
+def stripHeredocs(cmd):
+    """去掉 heredoc 正文（<<TAG 到独占一行的 TAG），返回剥过的命令文本；
+    找不到终止行时返回 None（四验返工）。
+
+    正文是数据，不参与引号剥离/命令替换检测/分段——否则正文里的引号与
+    $( 会误伤判定。标记行上 `<<TAG` 之后的内容（`cat <<EOF & ls` 的
+    `& ls`）不是正文，剥完仍参与判定；终止行之后的命令同样保留参与判定。
+
+    未闭合（找不到独占一行的 TAG，或标记行即末行）时返回 None：剩余文本
+    不可判定——`cat <<EOF & rm -rf y` 里 `&` 之后的命令 bash 实测会执行
+    （四验探针 H01-H05/H10），调用方不得猜测剩余文本，按整条不可判定 →
+    ask。闭合 heredoc 的既有行为逐字不变。
+    """
+    out = cmd
+    pos = 0
+    while True:
+        m = HEREDOC_RE.search(out, pos)
+        if not m:
+            return out
+        tag = m.group(1)
+        start = out.find('\n', m.end())
+        if start < 0:
+            return None          # 标记行即末行：未闭合
+        tm = re.search(r'^%s\s*$' % re.escape(tag), out[start + 1:], re.M)
+        if not tm:
+            return None          # 找不到独占一行的 TAG：未闭合
+        out = out[:start + 1] + out[start + 1 + tm.end():]
+        pos = start + 1          # 下一条从本条标记行之后找（保留的标记行不重配）
 
 
 def splitSegments(text):

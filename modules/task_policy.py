@@ -11,6 +11,10 @@
     1. 命令段命中 denyCommands → ask（deny 的语义是"强制人工"）；
     1b. 命令段或文件工具的路径参数命中敏感文件（config.json / 令牌文件）
         → ask（R5-2 内建 deny，policy 压不掉，read-only 白名单也压不掉）；
+    1c. 命令含未闭合 heredoc（<<TAG 找不到终止行）→ ask
+        （rule=danger:heredoc）：`cat <<EOF & rm -rf y` 里 & 之后的命令
+        bash 实测会执行，而剩余文本不可判定，整条不猜（四验返工；闭合
+        heredoc 的既有行为不变，见 task_policy_pipe.stripHeredocs）；
     2. 危险模式（ask，即使段首命中 allowCommands）：
        - 原始命令里（单引号内除外）出现 $( 或反引号——双引号不保护命令替换；
        - 剔除引号内容与豁免项（2>&1、>/dev/null、2>/dev/null、1>/dev/null）
@@ -63,25 +67,7 @@ FIND_UNSAFE = re.compile(r'(?:^|[\s;&|])-(?:exec|delete)\b')
 XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
 CD_RE = re.compile(r'\bcd\s+(?:"([^"]+)"|\'([^\']+)"?|([^\s;&|]+))', re.I)
-HEREDOC_RE = re.compile(r'<<-?\s*[\'"]?([A-Za-z_][\w.-]*)[\'"]?')
 
-
-def _stripHeredocs(cmd):
-    """去掉 heredoc 正文（<<TAG 到独占一行的 TAG）：正文是数据，不参与
-    引号剥离/命令替换检测/分段——否则正文里的引号与 $( 会误伤判定。"""
-    out = cmd
-    while True:
-        m = HEREDOC_RE.search(out)
-        if not m:
-            return out
-        tag = m.group(1)
-        start = out.find('\n', m.end())
-        if start < 0:
-            return out[:m.start()]
-        tm = re.search(r'^%s\s*$' % re.escape(tag), out[start + 1:], re.M)
-        if not tm:
-            return out[:start]
-        out = out[:start + 1] + out[start + 1 + tm.end():]
 
 DEFAULT_POLICY = {'allowPaths': [], 'allowCommands': [], 'denyCommands': [],
                   'default': 'ask', 'timeoutSec': None, 'allowBackground': False}
@@ -317,7 +303,12 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
 
     segments = None
     if cmd.strip():
-        cmdNoHeredoc = _stripHeredocs(cmd)
+        cmdNoHeredoc = task_policy_pipe.stripHeredocs(cmd)
+        if cmdNoHeredoc is None:
+            # 四验返工（必须修）：heredoc 找不到终止行——`cat <<EOF &
+            # rm -rf y` 里分隔符之后的命令 bash 实测会执行，而剩余文本
+            # 不可判定，整条 ask，不猜
+            return 'ask', 'danger:heredoc'
         outsideSingle = STRIP_SQ.sub('', cmdNoHeredoc)
         if DANGER_SUBST.search(outsideSingle):
             return 'ask', 'danger:command-substitution'

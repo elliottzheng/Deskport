@@ -22,9 +22,9 @@
     --hidden --no-ignore -t TYPE`；`--pre`/`-f`/`--file`/`--files-from`/`-z` 不放行）；
   - `find`：`-name -iname -type -maxdepth -mindepth -path -ipath -size -mtime
     -newer（取值也须在根内）-print`，`-exec`/`-delete` 等不放行；`stat`/`file`/`type`
-    不带旗标。参数含 `%VAR%`/`$`/`~`/反引号/`!`、裸 `&`、读 `.agent-token`（8.3
-    短名/符号链接任何形态）一律挂起。**其它命令会挂起并提示用户**——「无人干预」
-    靠这个边界：只读查看放行，写与执行先问用户。
+    不带旗标。参数含 `%VAR%`/`$`/`~`/反引号/`!`、裸 `&`、未闭合 heredoc、读
+    `.agent-token`（8.3 短名/链接任何形态）一律挂起。**其它命令会挂起并提示用户**
+    ——「无人干预」靠这个边界：只读查看放行，写与执行先问用户。
 
 ## 二、事件驱动：派完就结束这一轮
 
