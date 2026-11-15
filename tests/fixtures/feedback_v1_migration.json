@@ -1,0 +1,1108 @@
+{
+  "schema_version": "1.0",
+  "items": [
+    {
+      "feedback_id": "3c58d5f4-c278-482f-a4b5-6415dedbb429",
+      "idempotency_key": "5e1ed8a2-796b-4d59-8df4-f7ef95612a05",
+      "received_at": "2026-11-13 17:46:52",
+      "submitted_at": "2026-11-13T09:47:40.157Z",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-13 17:46:52",
+          "note": ""
+        }
+      ],
+      "user_id": "owner",
+      "role": "owner",
+      "anonymous": false,
+      "route": "/terminal?embed=1",
+      "page_id": "TerminalPage",
+      "message": "合成迁移文本 1（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "schema_version": "1.0",
+        "feedback_id": "3c58d5f4-c278-482f-a4b5-6415dedbb429",
+        "idempotency_key": "5e1ed8a2-796b-4d59-8df4-f7ef95612a05",
+        "submitted_at": "2026-11-13T09:47:40.157Z",
+        "user": {
+          "id": "owner",
+          "role": "owner",
+          "anonymous": false
+        },
+        "client": {
+          "platform": "web",
+          "app_version": "20261113-173314",
+          "user_agent": "Mozilla/5.0 (Linux; U; Android 16; zh-cn; 23127PN0CC Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.79 Mobile Safari/537.36 XiaoMi/MiuiBrowser/20.30.1041104"
+        },
+        "context": {
+          "route": "/terminal?embed=1",
+          "page_id": "TerminalPage",
+          "component_ref": "rect",
+          "viewport": {
+            "width": 400,
+            "height": 845
+          },
+          "locale": "zh-CN"
+        },
+        "trace": [
+          {
+            "t": 2,
+            "action": "route",
+            "target": "/app?view=session&kind=ssh"
+          },
+          {
+            "t": 613,
+            "action": "route",
+            "target": "/ssh?embed=1"
+          },
+          {
+            "t": 204709,
+            "action": "http",
+            "target": "GET /api/auth/status",
+            "status": 200,
+            "duration_ms": 18285
+          },
+          {
+            "t": 209574,
+            "action": "click",
+            "target": "i",
+            "ok": true
+          },
+          {
+            "t": 210183,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 229656,
+            "action": "http",
+            "target": "GET /api/auth/status",
+            "status": 200,
+            "duration_ms": 8289
+          },
+          {
+            "t": 229657,
+            "action": "http",
+            "target": "GET /api/ssh/sessions",
+            "status": 200,
+            "duration_ms": 19051
+          },
+          {
+            "t": 230261,
+            "action": "http",
+            "target": "GET /api/ssh/sessions",
+            "status": 200,
+            "duration_ms": 4570
+          },
+          {
+            "t": 253364,
+            "action": "click",
+            "target": "svg",
+            "ok": true
+          },
+          {
+            "t": 254424,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 256539,
+            "action": "click",
+            "target": "span.xterm-dim",
+            "ok": true
+          },
+          {
+            "t": 256805,
+            "action": "click",
+            "target": "span.xterm-dim",
+            "ok": true
+          },
+          {
+            "t": 257064,
+            "action": "click",
+            "target": "span.xterm-dim",
+            "ok": true
+          },
+          {
+            "t": 257298,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 257550,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 257801,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 258044,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 258298,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 258538,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 258799,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 259058,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 259284,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 259511,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 259720,
+            "action": "click",
+            "target": "div",
+            "ok": true
+          },
+          {
+            "t": 259904,
+            "action": "click",
+            "target": "span.xterm-dim",
+            "ok": true
+          },
+          {
+            "t": 260773,
+            "action": "click",
+            "target": "svg",
+            "ok": true
+          },
+          {
+            "t": 271372,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 273315,
+            "action": "click",
+            "target": "button#sidebar-toggle",
+            "ok": true
+          },
+          {
+            "t": 277759,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 281765,
+            "action": "click",
+            "target": "svg",
+            "ok": true
+          },
+          {
+            "t": 288185,
+            "action": "click",
+            "target": "ul#session-list",
+            "ok": true
+          },
+          {
+            "t": 289056,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 305328,
+            "action": "click",
+            "target": "svg",
+            "ok": true
+          },
+          {
+            "t": 316217,
+            "action": "click",
+            "target": "button",
+            "ok": true
+          },
+          {
+            "t": 316994,
+            "action": "route",
+            "target": "/terminal?embed=1"
+          },
+          {
+            "t": 417576,
+            "action": "http",
+            "target": "GET /api/auth/status",
+            "status": 0,
+            "duration_ms": 23280
+          },
+          {
+            "t": 417576,
+            "action": "http",
+            "target": "GET /api/auth/status",
+            "status": 0,
+            "duration_ms": 31596
+          },
+          {
+            "t": 418089,
+            "action": "click",
+            "target": "i",
+            "ok": true
+          },
+          {
+            "t": 418806,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 419268,
+            "action": "click",
+            "target": "span#status",
+            "ok": true
+          },
+          {
+            "t": 420982,
+            "action": "click",
+            "target": "div#terminal",
+            "ok": true
+          },
+          {
+            "t": 421728,
+            "action": "click",
+            "target": "svg",
+            "ok": true
+          },
+          {
+            "t": 422325,
+            "action": "click",
+            "target": "div#sidebar-backdrop",
+            "ok": true
+          },
+          {
+            "t": 423422,
+            "action": "click",
+            "target": "a",
+            "ok": true
+          },
+          {
+            "t": 425211,
+            "action": "route",
+            "target": "/files?embed=1"
+          },
+          {
+            "t": 425405,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          },
+          {
+            "t": 428236,
+            "action": "click",
+            "target": "rect",
+            "ok": true
+          },
+          {
+            "t": 429566,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          }
+        ],
+        "errors": {
+          "console": [],
+          "failed_requests": []
+        },
+        "attachments": [],
+        "message": "合成迁移文本 1（线上原文已替换，仅验结构读入）",
+        "contact": "",
+        "capture": {
+          "note": "这个浏览器不支持截屏，你仍可以只提交文字。"
+        },
+        "status": "submitted"
+      }
+    },
+    {
+      "feedback_id": "767e89b1-2b67-4489-95e2-a8fcab8395dc",
+      "idempotency_key": "288e8646-d2eb-4062-88fe-12223bf7929f",
+      "received_at": "2026-11-13 20:57:31",
+      "submitted_at": "2026-11-13T12:58:20.173Z",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-13 20:57:31",
+          "note": ""
+        }
+      ],
+      "user_id": "owner",
+      "role": "owner",
+      "anonymous": false,
+      "route": "/terminal?embed=1",
+      "page_id": "TerminalPage",
+      "message": "合成迁移文本 2（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "schema_version": "1.0",
+        "feedback_id": "767e89b1-2b67-4489-95e2-a8fcab8395dc",
+        "idempotency_key": "288e8646-d2eb-4062-88fe-12223bf7929f",
+        "submitted_at": "2026-11-13T12:58:20.173Z",
+        "user": {
+          "id": "owner",
+          "role": "owner",
+          "anonymous": false
+        },
+        "client": {
+          "platform": "web",
+          "app_version": "20261113-194828",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0"
+        },
+        "context": {
+          "route": "/terminal?embed=1",
+          "page_id": "TerminalPage",
+          "component_ref": "div.xterm-viewport",
+          "viewport": {
+            "width": 1699,
+            "height": 802
+          },
+          "locale": "en"
+        },
+        "trace": [
+          {
+            "t": 1559682,
+            "action": "click",
+            "target": "span.xterm-dim",
+            "ok": true
+          },
+          {
+            "t": 1559682,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1561856,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1566882,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1628967,
+            "action": "http",
+            "target": "GET /api/terminal/sessions",
+            "status": 200,
+            "duration_ms": 1719
+          },
+          {
+            "t": 1732333,
+            "action": "click",
+            "target": "div.xterm-viewport",
+            "ok": true
+          },
+          {
+            "t": 1732334,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1735242,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1760671,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1765826,
+            "action": "click",
+            "target": "div",
+            "ok": true
+          },
+          {
+            "t": 1765855,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1782965,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1791606,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1791629,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1795460,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1799786,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1809318,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1809319,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1812760,
+            "action": "click",
+            "target": "div",
+            "ok": true
+          },
+          {
+            "t": 1823791,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1849380,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1854800,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1854801,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1857107,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1857965,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1897117,
+            "action": "click",
+            "target": "div",
+            "ok": true
+          },
+          {
+            "t": 1897118,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1918827,
+            "action": "http",
+            "target": "GET /api/terminal/sessions",
+            "status": 200,
+            "duration_ms": 1568
+          },
+          {
+            "t": 1920410,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 1928949,
+            "action": "click",
+            "target": "li.session-item",
+            "ok": true
+          },
+          {
+            "t": 1935982,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1935984,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 1962026,
+            "action": "click",
+            "target": "div",
+            "ok": true
+          },
+          {
+            "t": 1963090,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1964040,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1965841,
+            "action": "click",
+            "target": "span.xterm-italic",
+            "ok": true
+          },
+          {
+            "t": 1970796,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1974137,
+            "action": "click",
+            "target": "span.xterm-decoration-top",
+            "ok": true
+          },
+          {
+            "t": 1974735,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1976053,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 1993575,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 2005638,
+            "action": "click",
+            "target": "div",
+            "ok": true
+          },
+          {
+            "t": 2005639,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 2006029,
+            "action": "click",
+            "target": "span",
+            "ok": true
+          },
+          {
+            "t": 2012456,
+            "action": "click",
+            "target": "span.session-name",
+            "ok": true
+          },
+          {
+            "t": 2034322,
+            "action": "http",
+            "target": "GET /api/terminal/sessions",
+            "status": 200,
+            "duration_ms": 2064
+          },
+          {
+            "t": 2302692,
+            "action": "click",
+            "target": "div.xterm-viewport",
+            "ok": true
+          },
+          {
+            "t": 2302695,
+            "action": "input_focus",
+            "target": "textarea.xterm-helper-textarea"
+          },
+          {
+            "t": 2309090,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          },
+          {
+            "t": 2315800,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          }
+        ],
+        "errors": {
+          "console": [],
+          "failed_requests": []
+        },
+        "attachments": [],
+        "message": "合成迁移文本 2（线上原文已替换，仅验结构读入）",
+        "contact": "",
+        "capture": {
+          "note": "这次没拿到截图（可能拒绝了共享），可以重试，或只提交文字。"
+        },
+        "status": "submitted"
+      }
+    },
+    {
+      "feedback_id": "6fa4c573c92b47ec98c124273abe42be",
+      "idempotency_key": "prod-fb-20261114-001",
+      "received_at": "2026-11-14 07:22:14",
+      "submitted_at": "2026-11-14T07:25:00+08:00",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-14 07:22:14",
+          "note": ""
+        }
+      ],
+      "user_id": "kimi-code",
+      "role": "agent",
+      "anonymous": false,
+      "route": "/tasks",
+      "page_id": "TasksPage",
+      "message": "合成迁移文本 3（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "idempotency_key": "prod-fb-20261114-001",
+        "submitted_at": "2026-11-14T07:25:00+08:00",
+        "client": {
+          "platform": "web",
+          "app_version": "agent-skill-1.0"
+        },
+        "context": {
+          "route": "/tasks",
+          "page_id": "TasksPage"
+        },
+        "message": "合成迁移文本 3（线上原文已替换，仅验结构读入）",
+        "attachments": [],
+        "user": {
+          "id": "kimi-code",
+          "role": "agent",
+          "anonymous": false
+        },
+        "trace": [],
+        "schema_version": "1.0",
+        "status": "submitted",
+        "errors": {}
+      }
+    },
+    {
+      "feedback_id": "df10ea4993f64d1b8ddd8314452da7a8",
+      "idempotency_key": "deskport-bug-permission-args-truncated-20261114",
+      "received_at": "2026-11-14 07:32:24",
+      "submitted_at": "2026-11-14 07:32:24",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-14 07:32:24",
+          "note": ""
+        }
+      ],
+      "user_id": "外部智能体-拔尖人才",
+      "role": "agent",
+      "anonymous": false,
+      "route": "/tasks/6a75f41578c1",
+      "page_id": "",
+      "message": "合成迁移文本 4（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "idempotency_key": "deskport-bug-permission-args-truncated-20261114",
+        "client": {
+          "platform": "web",
+          "app_version": "agent"
+        },
+        "context": {
+          "route": "/tasks/6a75f41578c1"
+        },
+        "message": "合成迁移文本 4（线上原文已替换，仅验结构读入）",
+        "user": {
+          "id": "外部智能体-拔尖人才",
+          "role": "agent",
+          "anonymous": false
+        },
+        "trace": [],
+        "schema_version": "1.0",
+        "status": "submitted",
+        "errors": {}
+      }
+    },
+    {
+      "feedback_id": "752734fa7a464dd890c10f98eb37c0e9",
+      "idempotency_key": "deskport-bug-executor-session-silent-death-20261114",
+      "received_at": "2026-11-14 07:32:29",
+      "submitted_at": "2026-11-14 07:32:29",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-14 07:32:29",
+          "note": ""
+        }
+      ],
+      "user_id": "外部智能体-拔尖人才",
+      "role": "agent",
+      "anonymous": false,
+      "route": "/tasks",
+      "page_id": "",
+      "message": "合成迁移文本 5（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "idempotency_key": "deskport-bug-executor-session-silent-death-20261114",
+        "client": {
+          "platform": "web",
+          "app_version": "agent"
+        },
+        "context": {
+          "route": "/tasks"
+        },
+        "message": "合成迁移文本 5（线上原文已替换，仅验结构读入）",
+        "user": {
+          "id": "外部智能体-拔尖人才",
+          "role": "agent",
+          "anonymous": false
+        },
+        "trace": [],
+        "schema_version": "1.0",
+        "status": "submitted",
+        "errors": {}
+      }
+    },
+    {
+      "feedback_id": "6a31267611c24a8788b7365d5461cdb5",
+      "idempotency_key": "deskport-bug-paused-wakeup-fails-20261114",
+      "received_at": "2026-11-14 07:32:40",
+      "submitted_at": "2026-11-14 07:32:40",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-14 07:32:40",
+          "note": ""
+        }
+      ],
+      "user_id": "外部智能体-拔尖人才",
+      "role": "agent",
+      "anonymous": false,
+      "route": "/tasks/6a75f41578c1",
+      "page_id": "",
+      "message": "合成迁移文本 6（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "idempotency_key": "deskport-bug-paused-wakeup-fails-20261114",
+        "client": {
+          "platform": "web",
+          "app_version": "agent"
+        },
+        "context": {
+          "route": "/tasks/6a75f41578c1"
+        },
+        "message": "合成迁移文本 6（线上原文已替换，仅验结构读入）",
+        "user": {
+          "id": "外部智能体-拔尖人才",
+          "role": "agent",
+          "anonymous": false
+        },
+        "trace": [],
+        "schema_version": "1.0",
+        "status": "submitted",
+        "errors": {}
+      }
+    },
+    {
+      "feedback_id": "85609d7bfd924ad0aea790dc0e49ac5e",
+      "idempotency_key": "deskport-bug-kimi-sessions-local-only-20261114",
+      "received_at": "2026-11-14 07:32:41",
+      "submitted_at": "2026-11-14 07:32:41",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-14 07:32:41",
+          "note": ""
+        }
+      ],
+      "user_id": "外部智能体-拔尖人才",
+      "role": "agent",
+      "anonymous": false,
+      "route": "/tasks/kimi-sessions",
+      "page_id": "",
+      "message": "合成迁移文本 7（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "idempotency_key": "deskport-bug-kimi-sessions-local-only-20261114",
+        "client": {
+          "platform": "web",
+          "app_version": "agent"
+        },
+        "context": {
+          "route": "/tasks/kimi-sessions"
+        },
+        "message": "合成迁移文本 7（线上原文已替换，仅验结构读入）",
+        "user": {
+          "id": "外部智能体-拔尖人才",
+          "role": "agent",
+          "anonymous": false
+        },
+        "trace": [],
+        "schema_version": "1.0",
+        "status": "submitted",
+        "errors": {}
+      }
+    },
+    {
+      "feedback_id": "aa98a26f-d917-4ecd-88b7-5b42c637da85",
+      "idempotency_key": "d2e2409e-4923-4893-8855-d492645122f3",
+      "received_at": "2026-11-14 15:35:18",
+      "submitted_at": "2026-11-14T07:36:08.200Z",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-14 15:35:18",
+          "note": ""
+        }
+      ],
+      "user_id": "owner",
+      "role": "owner",
+      "anonymous": false,
+      "route": "/tasks?embed=1",
+      "page_id": "TasksPage",
+      "message": "合成迁移文本 8（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "schema_version": "1.0",
+        "feedback_id": "aa98a26f-d917-4ecd-88b7-5b42c637da85",
+        "idempotency_key": "d2e2409e-4923-4893-8855-d492645122f3",
+        "submitted_at": "2026-11-14T07:36:08.200Z",
+        "user": {
+          "id": "owner",
+          "role": "owner",
+          "anonymous": false
+        },
+        "client": {
+          "platform": "web",
+          "app_version": "20261114-142120",
+          "user_agent": "Mozilla/5.0 (Linux; U; Android 16; zh-cn; 23127PN0CC Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.79 Mobile Safari/537.36 XiaoMi/MiuiBrowser/20.30.1041104"
+        },
+        "context": {
+          "route": "/tasks?embed=1",
+          "page_id": "TasksPage",
+          "component_ref": "svg",
+          "viewport": {
+            "width": 400,
+            "height": 845
+          },
+          "locale": "zh-CN"
+        },
+        "trace": [
+          {
+            "t": 382,
+            "action": "route",
+            "target": "/app?view=files"
+          },
+          {
+            "t": 6569,
+            "action": "route",
+            "target": "/files?path=E%3A%5C%E4%BA%8B%E9%A1%B9%5C%E8%BF%9C%E7%A8%8B%5Cdeskport-share%5Cout&embed=1"
+          },
+          {
+            "t": 11000,
+            "action": "click",
+            "target": "div.fm-list",
+            "ok": true
+          },
+          {
+            "t": 12083,
+            "action": "click",
+            "target": "a",
+            "ok": true
+          },
+          {
+            "t": 14284,
+            "action": "click",
+            "target": "svg",
+            "ok": true
+          },
+          {
+            "t": 16271,
+            "action": "route",
+            "target": "/tasks?embed=1"
+          },
+          {
+            "t": 19501,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          }
+        ],
+        "errors": {
+          "console": [],
+          "failed_requests": []
+        },
+        "attachments": [],
+        "message": "合成迁移文本 8（线上原文已替换，仅验结构读入）",
+        "contact": "",
+        "capture": {
+          "note": "这个浏览器不支持截屏，你仍可以只提交文字。"
+        },
+        "status": "submitted"
+      }
+    },
+    {
+      "feedback_id": "acdfdaeb-b8d6-4324-97d7-28cfa6af2b8f",
+      "idempotency_key": "6c9fe614-7e1f-46a1-ae92-ba654a369be6",
+      "received_at": "2026-11-15 09:00:41",
+      "submitted_at": "2026-11-15T01:01:34.575Z",
+      "status": "submitted",
+      "status_note": "",
+      "history": [
+        {
+          "status": "submitted",
+          "at": "2026-11-15 09:00:41",
+          "note": ""
+        }
+      ],
+      "user_id": "owner",
+      "role": "owner",
+      "anonymous": false,
+      "route": "/files?embed=1&path=E%3A%5C%E4%BA%8B%E9%A1%B9%5C%E9%BB%98%E8%AE%A4%E5%B7%A5%E4%BD%9C%E7%A9%BA%E9%97%B4%5C%E6%89%8B%E6%9C%BA%E4%B8%8A%E4%BC%A0%5C%E6%8B%94%E5%B0%96%E4%BA%BA%E6%89%8D%E7%B3%BB%E7%BB%9F",
+      "page_id": "FilesPage",
+      "message": "合成迁移文本 9（线上原文已替换，仅验结构读入）",
+      "envelope": {
+        "schema_version": "1.0",
+        "feedback_id": "acdfdaeb-b8d6-4324-97d7-28cfa6af2b8f",
+        "idempotency_key": "6c9fe614-7e1f-46a1-ae92-ba654a369be6",
+        "submitted_at": "2026-11-15T01:01:34.575Z",
+        "user": {
+          "id": "owner",
+          "role": "owner",
+          "anonymous": false
+        },
+        "client": {
+          "platform": "web",
+          "app_version": "20261115-082405",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0"
+        },
+        "context": {
+          "route": "/files?embed=1&path=E%3A%5C%E4%BA%8B%E9%A1%B9%5C%E9%BB%98%E8%AE%A4%E5%B7%A5%E4%BD%9C%E7%A9%BA%E9%97%B4%5C%E6%89%8B%E6%9C%BA%E4%B8%8A%E4%BC%A0%5C%E6%8B%94%E5%B0%96%E4%BA%BA%E6%89%8D%E7%B3%BB%E7%BB%9F",
+          "page_id": "FilesPage",
+          "component_ref": "span.fm-name",
+          "viewport": {
+            "width": 1912,
+            "height": 922
+          },
+          "locale": "en"
+        },
+        "trace": [
+          {
+            "t": 33,
+            "action": "route",
+            "target": "/app?view=files"
+          },
+          {
+            "t": 816,
+            "action": "route",
+            "target": "/files?embed=1"
+          },
+          {
+            "t": 2111,
+            "action": "click",
+            "target": "div.fm-list",
+            "ok": true
+          },
+          {
+            "t": 4604,
+            "action": "click",
+            "target": "span.fm-name",
+            "ok": true
+          },
+          {
+            "t": 4799,
+            "action": "click",
+            "target": "span.fm-name",
+            "ok": true
+          },
+          {
+            "t": 13608,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          },
+          {
+            "t": 14996,
+            "action": "input_focus",
+            "target": "textarea.fb-message"
+          }
+        ],
+        "errors": {
+          "console": [],
+          "failed_requests": []
+        },
+        "attachments": [],
+        "message": "合成迁移文本 9（线上原文已替换，仅验结构读入）",
+        "contact": "",
+        "capture": {
+          "note": "这次没拿到截图（可能拒绝了共享），可以重试，或只提交文字。"
+        },
+        "status": "submitted"
+      }
+    }
+  ]
+}

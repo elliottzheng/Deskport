@@ -60,6 +60,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1
 - 已知行为变化：重启后进行中工具调用的审批可能从自动放行退回询问——policy 的路径判定要回查流式参数（`_toolArgs` / `_toolArgText`），这些运行时缓存不落盘，重启后查不到只能按缺省 `ask` 挂起等人工。方向上更保守（不会更不安全），详见 `docs/agent-api.md`「重启语义」。
 - `GET /api/diagnostics` 的 `taskLogWriteFailures`：jsonl 写失败计数（重试 3 次仍败才计一次，事件仍留在当进程内存窗口里）。非 0 说明有事件只进了内存、重启后丢失，请查磁盘空间与权限。
 
+### 批次 PS2 起：快照写盘削峰（1 秒粒度 flush）
+
+- `append_event` 不再每事件 save：`seq` / `lastActiveAt` / `lastText` 等非关键变更只置脏，由一条后台 flush 线程每秒一拍合并落盘（有变更才写）；进程退出（atexit，含 Ctrl+C）做最后一次 flush。实测 154 事件/秒 × 20 秒爆发：写盘 20 次（此前每事件一次、3080 次），`append_event` p50 从 ~9ms 降到 <5ms。
+- 关键变迁仍然**立即落盘**（不等 flush）：`status` / `pendingPermission` / `messageQueue` / `closedByUser` / `lead` / `title`。审批挂起与落定、消息入队/撤回、关任务、改名、派主管这些"用户可见的状态承诺"不受削峰影响。
+- jsonl 追加改为**每任务长开句柄 + 锁内写 + flush**（此前每条 open/close 约 3ms，8 任务叠加峰值会排队）；句柄在任务终态（closed/cancelled/failed/interrupted）或记录被删时关闭，进程退出时全部关闭——Windows 上句柄不关，日志文件不能改名/删除。
+- 已知行为变化（硬终止的丢失窗口）：kill -9 / 强制结束不进 atexit，最后 **≤1 秒**的非关键元数据（lastActiveAt/lastText/seq 计数）可能没落盘；事件本身不丢（jsonl 是真相），重启后 `seq` 按 jsonl 最大 seq 校正、不重号。流式回合中途崩溃时 lastText 停在轮初（jsonl 里有逐 chunk 全文可追溯）。
+
 ## 七、任务记录回滚：把 .bak 改回 agent_tasks.json 再回滚代码
 
 首次用新代码加载旧格式 `agent_tasks.json`（任务卡带 `events` 键）时，进程会在第一次写盘之前把原文件复制为同目录的 `agent_tasks.json.pre-migration-<YYYYMMDD-HHMMSS>.bak`（已存在同名则不覆盖；复制失败则本进程不剥离、按旧格式继续写——宁可不瘦身也不丢原件）。回滚步骤：

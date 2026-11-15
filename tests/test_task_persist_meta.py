@@ -339,6 +339,7 @@ def test_hydration_marker_stays_out_of_snapshot(tmp_path):
     task = {'id': 't1', 'seq': 0, 'events': [], 'status': 'waiting'}
     repo.put(task)
     repo.append_event(task, 'status', text='hello')
+    repo.save()          # 批 PS2：append_event 不再 save——显式落盘再模拟重启
     repo2 = TaskRepository(str(storePath), str(logDir))
     repo2.load()
     task2 = repo2.get('t1')
@@ -357,6 +358,7 @@ def test_direct_tasks_subscript_hydrates(tmp_path):
     task = {'id': 't1', 'seq': 0, 'events': [], 'status': 'waiting'}
     repo.put(task)
     repo.append_event(task, 'status', text='hello')
+    repo.save()          # 批 PS2：append_event 不再 save——显式落盘再模拟重启
     repo2 = TaskRepository(str(storePath), str(logDir))
     repo2.load()
     assert repo2.tasks['t1']['events'][0]['text'] == 'hello'

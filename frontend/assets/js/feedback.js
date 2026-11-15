@@ -191,6 +191,17 @@ window.WPFeedback = (function () {
         });
     }
 
+    // 「我的反馈」模块：9 个页面随脚本标签加载；tasks.html 本批不改（另一批在改），
+    // 在那里按需兜底加载，红点与页签不缺功能
+    function ensureMine(done) {
+        if (window.WPFeedbackMine) { done(); return; }
+        var s = document.createElement('script');
+        s.src = '/assets/js/feedback-mine.js?v=' + encodeURIComponent(appVersion());
+        s.onload = done;
+        s.onerror = done;
+        document.head.appendChild(s);
+    }
+
     function init() {
         if (location.pathname === '/login') { return; }
         if (!window.WPFeedbackCapture || !window.WPFeedbackPanel) { return; }
@@ -200,6 +211,9 @@ window.WPFeedback = (function () {
         }
         window.WPFeedbackCapture.setAppVersion(appVersion());
         window.WPFeedbackPanel.init(submit);
+        ensureMine(function () {
+            if (window.WPFeedbackMine) { window.WPFeedbackMine.init(); }
+        });
         document.addEventListener('keydown', function (ev) {
             if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === 'F' || ev.key === 'f')) {
                 ev.preventDefault();

@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/settings.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/feedback.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/settings-feedback.css?v=__BUILD__">
 </head>
 <body>
 <div id="app-shell"></div>
@@ -195,6 +196,150 @@
                 建成后怎么用：① 在上面「智能体令牌」卡片签发一个令牌；② 回到本卡片，在这个主管行里选它、点「绑定」；③ 把接入手册地址和该令牌交给对方——它建的任务就会记在这个主管名下。类型暂为「外部接入」，一键建托管主管在后续批次。
             </p>
             <p v-if="leadsOk" class="settings-ok">{{ leadsOk }}</p>
+        </template>
+    </div>
+
+    <div class="card settings-card" id="feedback-card">
+        <div class="card-title">反馈</div>
+        <p class="settings-note">用户与智能体提的反馈都在这里处理：待受理优先，超过 24 小时没人受理会标红。详情里是提交时的整封信封（只读）、截图、操作轨迹与评论——处理者在这里受理、追问、流转，提交者在反馈面板的「我的反馈」里看进度。</p>
+
+        <p class="settings-hint" id="fb-loading" v-if="fbState === 'loading'">正在加载反馈…</p>
+        <p class="settings-hint settings-warn" id="fb-error" v-else-if="fbState === 'error'">
+            反馈数据没加载出来，暂时看不到列表——不要据此认为没有反馈。请刷新页面重试。
+        </p>
+        <template v-else-if="fbState === 'ok'">
+            <p class="settings-hint" id="fb-counts">
+                待受理 <strong :class="{ 'settings-warn': fbOverdue > 0 }">{{ fbPending }}</strong> ·
+                超时未受理（>24h）<strong class="settings-warn" v-if="fbOverdue">{{ fbOverdue }}</strong><strong v-else>0</strong>
+            </p>
+
+            <div class="fb-filter">
+                <select class="select" v-model="fbFilter.status" id="fb-filter-status">
+                    <option value="">全部状态</option>
+                    <option value="submitted">待受理</option>
+                    <option value="acknowledged">已收到</option>
+                    <option value="processing">处理中</option>
+                    <option value="resolved">已解决</option>
+                    <option value="rejected">未采纳</option>
+                    <option value="user_confirmed">已确认</option>
+                </select>
+                <input class="input" v-model.trim="fbFilter.route" placeholder="路由，如 /tasks" id="fb-filter-route" spellcheck="false">
+                <input class="input" v-model.trim="fbFilter.submitter" placeholder="提交者" id="fb-filter-submitter" spellcheck="false">
+                <input class="input" v-model.trim="fbFilter.group" placeholder="归属（主管）" id="fb-filter-group" spellcheck="false">
+                <label class="fb-check">
+                    <input type="checkbox" v-model="fbFilter.overdue" id="fb-filter-overdue"> 只看超时未受理
+                </label>
+                <button type="button" class="btn btn-secondary" id="fb-filter-apply"
+                        @click="fbPage = 1; loadFeedbackList()">筛选</button>
+                <button type="button" class="btn btn-ghost" @click="resetFeedbackFilter">重置</button>
+            </div>
+
+            <p class="settings-hint" id="fb-empty" v-if="!fbTotal">没有符合条件的反馈。</p>
+            <div v-else class="fb-rows" id="fb-rows">
+                <div class="fb-row" v-for="row in fbRows" :key="row.id" :id="'fb-row-' + row.id"
+                     :class="{ 'is-overdue': row.overdue }">
+                    <input type="checkbox" v-model="fbChecked" :value="row.id" :id="'fb-check-' + row.id"
+                           aria-label="选择这条反馈">
+                    <span class="fb-badge" :data-status="row.status">{{ row.statusText }}</span>
+                    <button type="button" class="fb-row-main" @click="openFeedback(row.id)">
+                        <span class="fb-row-submitter">{{ row.submitter }}</span>
+                        <span class="fb-row-route">{{ row.route }}</span>
+                        <span class="fb-row-msg">{{ row.message }}</span>
+                        <span class="fb-row-date">{{ row.date }}</span>
+                        <span class="fb-row-overdue" v-if="row.overdue">超时未受理</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="fb-batch" v-if="fbChecked.length">
+                <button type="button" class="btn btn-primary" id="fb-batch-ack"
+                        @click="batchAcknowledge" :disabled="fbBusy">
+                    受理选中（{{ fbChecked.length }}）
+                </button>
+                <span class="settings-hint">批量受理只把「待受理」变成「已收到」；非待受理或不存在的一条一条跳过，不影响同批其它条。</span>
+            </div>
+            <p v-if="fbNote" class="settings-hint settings-warn" id="fb-note">{{ fbNote }}</p>
+
+            <div class="fb-detail" v-if="fbDetail" id="fb-detail">
+                <div class="fb-detail-head">
+                    <span class="fb-badge" :data-status="fbDetail.status">{{ statusText(fbDetail.status) }}</span>
+                    <span class="fb-detail-submitter">{{ submitterText(fbDetail.submitter) }}</span>
+                    <span class="fb-detail-date">{{ (fbDetail.submitted_at || '').slice(0, 16).replace('T', ' ') }}</span>
+                    <button type="button" class="btn btn-ghost" id="fb-detail-close" @click="closeFeedback">关闭详情</button>
+                </div>
+                <div class="fb-detail-msg">{{ fbDetail.message }}</div>
+                <p class="settings-hint" v-if="fbDetail.contact">联系方式：{{ fbDetail.contact }}</p>
+                <p class="settings-hint">
+                    路由 {{ fbDetail.route }} · 页面 {{ fbDetail.page_id }} ·
+                    最近交互 {{ fbDetail.context.component_ref || '—' }}
+                </p>
+                <p class="settings-hint">
+                    客户端 {{ fbDetail.client.platform }} / {{ fbDetail.client.app_version }} ·
+                    视口 {{ fbDetail.context.viewport && fbDetail.context.viewport.width }}×{{ fbDetail.context.viewport && fbDetail.context.viewport.height }}
+                </p>
+                <p class="settings-hint" v-if="fbDetail.capture && fbDetail.capture.note">
+                    截图：{{ fbDetail.capture.note }}
+                </p>
+                <p class="settings-hint" v-if="fbDetail.refs && fbDetail.refs.task_id">
+                    关联任务：{{ fbDetail.refs.task_id }}
+                </p>
+                <div class="fb-detail-shots" v-if="fbDetail.attachments.length">
+                    <img v-for="att in fbDetail.attachments" :key="att.file_id"
+                         :src="att.url" class="fb-detail-shot" alt="反馈截图">
+                </div>
+
+                <div class="settings-subhead">操作轨迹（trace，不含键入值）</div>
+                <div class="fb-trace" id="fb-trace">
+                    <div class="fb-trace-row" v-for="(t, i) in fbDetail.trace" :key="i">{{ traceRow(t) }}</div>
+                    <p class="settings-hint" v-if="!fbDetail.trace.length">这条没带轨迹。</p>
+                </div>
+
+                <div class="settings-subhead">报错（errors）</div>
+                <div class="fb-errors" id="fb-errors">
+                    <div class="fb-error-row" v-for="(line, i) in (fbDetail.errors.console || [])" :key="'c' + i">{{ line }}</div>
+                    <div class="fb-error-row" v-for="(f, i) in (fbDetail.errors.failed_requests || [])" :key="'f' + i">{{ traceRow(f) }}</div>
+                    <p class="settings-hint" v-if="!(fbDetail.errors.console || []).length && !(fbDetail.errors.failed_requests || []).length">这条没带报错。</p>
+                </div>
+
+                <div class="settings-subhead">状态历史</div>
+                <div class="fb-history" id="fb-history">
+                    <div class="fb-history-row" v-for="(h, i) in fbDetail.history" :key="i">{{ historyRow(h) }}</div>
+                </div>
+
+                <div class="settings-subhead">评论（追问与补充）</div>
+                <div class="fb-detail-comments" id="fb-comments">
+                    <div class="fb-comment" v-for="c in fbDetail.comments" :key="c.comment_id">
+                        <div class="fb-comment-head">
+                            <span class="fb-comment-author">{{ c.author.display_name || c.author.id }}</span>
+                            <span class="fb-comment-at">{{ (c.at || '').slice(0, 16).replace('T', ' ') }}</span>
+                        </div>
+                        <div class="fb-comment-body">{{ c.body }}</div>
+                    </div>
+                    <div class="fb-reply">
+                        <textarea class="fb-reply-input" v-model="fbComment" rows="2"
+                                  placeholder="追问提交者…" id="fb-comment-input"></textarea>
+                        <button type="button" class="fb-reply-send" id="fb-comment-send"
+                                @click="submitFeedbackComment" :disabled="fbBusy">发送</button>
+                    </div>
+                </div>
+
+                <div class="settings-subhead">流转</div>
+                <div class="fb-move">
+                    <select class="select" v-model="fbMove.status" id="fb-move-status">
+                        <option value="">选择流转…</option>
+                        <option v-for="opt in nextOptions(fbDetail)" :key="opt.value" :value="opt.value">{{ opt.text }}</option>
+                    </select>
+                    <input class="input" v-model.trim="fbMove.reason" id="fb-move-reason"
+                           placeholder="说明：改了什么、哪个版本生效；resolved/rejected 必填">
+                    <button type="button" class="btn btn-primary" id="fb-move-apply"
+                            @click="submitFeedbackMove" :disabled="fbBusy || !fbMove.status">流转</button>
+                </div>
+
+                <details class="fb-raw">
+                    <summary>原始信封（只读 JSON）</summary>
+                    <pre id="fb-raw-json">{{ JSON.stringify(fbDetail.envelope) }}</pre>
+                </details>
+            </div>
         </template>
     </div>
 
@@ -393,9 +538,11 @@
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
 <script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/settings-capability.js?v=__BUILD__"></script>
+<script src="/assets/js/settings-feedback.js?v=__BUILD__"></script>
 <script src="/assets/js/settings.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>
+<script src="/assets/js/feedback-mine.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback.js?v=__BUILD__"></script>
 </body>
 </html>

@@ -60,16 +60,9 @@ def _now():
 
 
 def _load():
-    # 读也要进锁（RLock 可重入，setCursor 等持锁调用不受影响）：Windows 上
-    # os.replace 换不掉正被读的文件（WinError 5）——无锁读与 _save 的
-    # temp+replace 相撞时，authGuard.touch 之类的请求会 500（并行全量实测
-    # 复现：sweeper/残留线程读 leads.json 的瞬间替换）。持锁读把这个窗口
-    # 关死
-    with _LOCK:
-        return _loadUnlocked()
-
-
-def _loadUnlocked():
+    # WinError 5（replace 撞上正被读的 leads.json）由共享助手
+    # state.replaceWithRetry 兜底（atomicWriteJson 内部，20/40/80/160ms
+    # 退避 4 次）——读侧不另设一套锁，只留一份机制
     try:
         with open(storePath(), encoding='utf-8') as f:
             data = json.load(f)

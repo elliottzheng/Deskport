@@ -32,13 +32,16 @@ def _appendAssistantText(task, text):
     增量订阅者（SSE/轮询）按 seq 去重，若逐 chunk 合并进同一条事件，
     订阅者会停在首推时刻的部分文本。回合结束时 _flushAssistant 以单条
     完整事件落卡，订阅者天然拿到终版；log 流水仍逐 chunk 可追溯。
+
+    批 PS2：chunk 路径不 save 也不 touch——lastText 随轮末 _flushAssistant
+    的 assistant 事件与 _promptOnce 的状态变迁落盘（规格：轮中崩溃时
+    lastText 停在轮初，jsonl 有 chunk 全文可追溯，方案 §6 风险 7 已列明）。
     """
     if not text:
         return
     with store.repo.lock:
         task['_assistantBuf'] = (task.get('_assistantBuf') or '') + text
         task['lastText'] = task['_assistantBuf'][:300]
-        store.repo.save()
     store.repo.log_write(task, {'at': store._now(), 'type': 'assistant_chunk',
                                 'text': text})
 
@@ -135,11 +138,12 @@ def _backfillToolArgs(task, callId, argsText):
     故回填时往 jsonl 追加一行**不带 seq** 的 tool_args_patch 补丁记录
     （targetSeq=被补事件的 seq，args 与内存落卡逐字一致），重启回填与
     /event/<seq> 按它还原；补丁不占事件序号，seq 校正不受影响。
-    落盘的 agent_tasks.json 已剥离 events，store.repo.save() 对回填是空转
-    （批 1 起删除）——args 以 jsonl 补丁行为准。
 
     回填判定（独立验收 2026-11-15 追加）：残片首帧（含 U 批实测的
     "{\"command\": " 这种 11 字半截 JSON）也要补，规则见 _needsBackfill。
+
+    批 PS2 确认：回填只改内存 + 写 jsonl 补丁行，不触发 save/touch——落盘
+    快照已剥离 events（批 PS1），args 以 jsonl 补丁行为准，重启后按它还原。
     """
     if not callId or not argsText:
         return
@@ -239,7 +243,7 @@ def _handleAcpUpdate(task, update):
         if names:
             with store.repo.lock:
                 task['commands'] = names[:200]
-                store.repo.save()
+                store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
         return
     if kind == 'session_info_update':
         # Kimi 会用首轮 prompt 自动起标题（现在开头是平台约束），覆盖后任务名就没意义了。
@@ -597,10 +601,10 @@ def _afterWorklineTurn(task):
         already = bool(task.get('contextHigh'))
         if not high and already and info['ratio'] < 0.5:
             task['contextHigh'] = False
-            store.repo.save()
+            store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
         elif high and not already:
             task['contextHigh'] = True
-            store.repo.save()
+            store.repo.touch()
     if high and not already:
         store.repo.append_event(
             task, 'status',
@@ -661,7 +665,8 @@ def _markTurnKind(task, seq0):
                             'empty': tools == 0 and not said
                             and not (task.get('lastText') or '').strip(),
                             'silent': tools > 0 and not said, 'at': store._now()}
-        store.repo.save()
+        store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush（轮末的
+        # WAITING 变迁 save 会把它一起带走，见 _promptOnce）
     # 批次 P3 触发点（2026-11-14）：空转/静默轮 → 主管收件箱 failure
     if not task.get('closedByUser') and (task['lastTurn']['empty']
                                           or task['lastTurn']['silent']):
@@ -752,7 +757,7 @@ def _sessionThread(task, manifest, resume=False, firstMessage=None, clientFactor
             # liveFrom 之后的事件才是本轮 live 的（R4-5a #3）：wait 重建
             # pending 只认这条水位线之后产生的 permission_request
             task['liveFrom'] = task.get('seq', 0)
-            store.repo.save()
+            store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
         if resume:
             _flushAssistant(task)   # 上次中断未落卡的缓冲先补一条
             if firstMessage:
@@ -874,7 +879,7 @@ def _resumeWithMessage(task, text):
         finally:
             with store.repo.lock:
                 task['resuming'] = False
-                store.repo.save()
+                store.repo.touch()   # 批 PS2：非关键字段等 1 秒 flush
     threading.Thread(target=run, daemon=True).start()
 
     # 唤醒看门狗（R4-3c 复测缺陷）：session/load 可能阻塞在被其他活进程

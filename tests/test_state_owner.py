@@ -82,7 +82,7 @@ def test_write_rejected_when_other_process_owns_state_dir(env):
         with pytest.raises(state_owner.StateDirReadOnly):
             leads_inbox.append('ld_x', 'up', 'report', 'x')
         with pytest.raises(state_owner.StateDirReadOnly):
-            feedback_store._save({'schema_version': '1.0', 'items': []})
+            feedback_store.save({'schema_version': '1.0', 'items': []})
         with pytest.raises(state_owner.StateDirReadOnly):
             worklines_store.WorklineRepository(str(env.tmp / 'wl.json'),
                                                str(env.tmp / 'docs')).save()
