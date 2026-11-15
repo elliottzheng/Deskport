@@ -134,6 +134,8 @@ POST /api/tasks
   可选列表看 `GET /api/tasks/nodes` 的 `models`；续聊沿用原模型。
 - 接手已有 Kimi 会话：`GET /api/tasks/kimi-sessions?cwd=<目录>` 挑候选，
   `{"kimiSessionId": "<id>"}` 建任务（默认 fork 副本不干扰原会话，占用时 400 透传原因）。
+- CLI 一行版：`python deskport.py task "<描述>" --session <会话编号>` = 直接接管原会话
+  （`kimiSessionId` + `fork=false`，不用副本）——返工/复验复用同一个执行方就用它。
 - 任务 close = 明确结束（node 侧进程立即回收）；不 close 的会话保留 45 分钟可随时续聊。
 - 非本机执行点（`"node": "<agent node 或联邦成员>"`）必须给 `"cwd": "<该机器上的目录>"`，
   缺 cwd 或执行点不存在 → 400 并附 `nodes` 提示；目录由对端校验。

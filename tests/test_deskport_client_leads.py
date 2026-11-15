@@ -180,6 +180,21 @@ def test_task_cli_title_flag(server, tmp_path):
     assert 'title' not in _Handler.taskPosts[1]
 
 
+def test_task_cli_session_flag(server, tmp_path):
+    """task --session <会话编号>：请求体带 kimiSessionId 且 fork=false
+    （返工/复验接回原会话继续干活，复用执行方）；不给则两个键都不带。"""
+    code, out, err = _runCli(tmp_path, server, 'task', '按复验意见返工',
+                             '--session', 'session_abc123')
+    assert code == 0, err
+    assert out.splitlines()[0] == 't-cli-1'
+    code, out, err = _runCli(tmp_path, server, 'task', '照常派一个新的')
+    assert code == 0, err
+    assert _Handler.taskPosts[0]['kimiSessionId'] == 'session_abc123'
+    assert _Handler.taskPosts[0]['fork'] is False
+    assert 'kimiSessionId' not in _Handler.taskPosts[1]
+    assert 'fork' not in _Handler.taskPosts[1]
+
+
 def test_lead_cli_unbound(server, tmp_path):
     """没绑主管：lead 打一行提示、exit 0。"""
     handlerLead = _Handler.do_GET

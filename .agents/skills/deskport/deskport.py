@@ -702,6 +702,7 @@ if __name__ == "__main__":
     p.add_argument("-m", "--mode", default="default", help="default=危险操作等审批 / auto=全自动")
     p.add_argument("--model", help="执行点支持的模型名（缺省用执行点默认）")
     p.add_argument("--title", help="任务标题（≤24 字；不给由服务端从描述首行推导）")
+    p.add_argument("--session", metavar="会话编号", help="接回原 Kimi 会话继续干活（返工/复验复用执行方）：直接接管原会话不用副本，被占用时 409")
     p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
                    metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
@@ -808,9 +809,12 @@ if __name__ == "__main__":
                                                  t.get("node") or "local", line[0][:60]))
                 sys.exit(0)
             if a.cmd == "task":
+                # --session：返工/复验接回原会话继续干活（复用执行方）——直接
+                # 接管不用副本（kimiSessionId + fork=false），被占用时 409
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
                                       cwd=_unmangle(a.cwd), model=a.model,
-                                      title=a.title)
+                                      title=a.title, kimi_session=a.session,
+                                      fork=not a.session)
                 print(task.id)
             else:
                 task = dp.task(a.tid)

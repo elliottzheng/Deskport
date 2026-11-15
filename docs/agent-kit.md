@@ -127,7 +127,7 @@ CLI 全部子命令（`python deskport.py <命令> -h` 看各自动态帮助）�
 | `hosts` | 列出主机（SSH 主机 + 本机 `local`） |
 | `run <命令> [-t 秒] [-C 目录]` | 单发执行（无状态），退出码透传 |
 | `ls [路径]` / `cat <路径>` | 列目录 / 取文件到 stdout |
-| `task <描述> [-n 执行点] [-m 模式] [--model 模型] [--title 标题] [--wait 秒] [--allow/--deny]` | 建任务派活；`--wait` 建完就等这一轮结束并打印最终回复 |
+| `task <描述> [-n 执行点] [-m 模式] [--model 模型] [--title 标题] [--session 会话编号] [--wait 秒] [--allow/--deny]` | 建任务派活；`--wait` 建完就等这一轮结束并打印最终回复 |
 | `tasks` | 列出任务（id / 状态 / 执行点 / 标题首行） |
 | `wait <任务id> [--timeout 秒] [--allow/--deny]` | 阻塞等某个任务结束并打印最终回复 |
 | `lead [--register 名字 [--project X]]` | 看绑定的主管；全权令牌 `--register` 自助成为外部主管（没绑打印一行提示） |
@@ -139,7 +139,9 @@ CLI 全部子命令（`python deskport.py <命令> -h` 看各自动态帮助）�
 `lead` / `inbox` / `report` / `approve` 是指挥链上的主管命令：令牌绑了主管才有
 （没绑 `inbox`/`report` 报 400；全权令牌跑 `lead --register "<名字>"` 自助成为主管，
 不需要用户操作）。派活用 `--title` 给标题
-（≤ 24 字）；不给时服务端从描述首行推导。
+（≤ 24 字）；不给时服务端从描述首行推导。返工/复验要接回原会话继续干活（复用
+执行方）用 `task "<描述>" --session <会话编号>`：请求体带 `kimiSessionId` 且
+`fork=false` 直接接管，不用副本（被占用时 409）。
 
 已知的服务端边界（客户端已吸收）：exec 无状态、单条 1–600s、输出上限 2 MiB、含 NUL
 提前拒绝；`read` 整读上限 8 MB，超出自动分块；`create_task` 的 prompt 上限 4000 字符；
