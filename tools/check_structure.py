@@ -24,7 +24,7 @@ LEGACY = {
     'config.py': 565,   # 全局配置聚合（读取/热改/默认值/迁移），拆分会散落语义；2026-11-14 +32=主管收件箱两个阈值 leadWakeMergeSec/leadIdleSec（批次 P3）；2026-11-15 +17=主管审批限期 leadApprovalGraceSec（批次 A）
     # .agents/skills/deskport/{deskport,driver}.py 是发给外部智能体的「拷一个文件就能跑」
     # 客户端/驱动（零依赖、也能当 CLI），拆分会破坏这个约定——按单文件登记，只许变短。
-    '.agents/skills/deskport/deskport.py': 836,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）；2026-11-15 合并批次 A/SR 与 D：+91=主管通信子命令 lead/inbox/report + close/approve（派活收件箱汇报之外，主管关下属与批审批也要在 A1-6 边界内，例 11 无人干预实测要用）+ 库方法（批次 A A2），+39=lead --register 自助成为外部主管与 register_lead 库方法（批次 SR，两侧 lead 子命令合一：不带参查看、--register 注册），+11=inboxAck 收件箱确认 + create_task/CLI 的 --title 标题字段（批次 D，服务端批次 T 起接收），+4=task --session 接回原会话继续干活（kimiSessionId + fork=false，返工/复验复用执行方）
+    '.agents/skills/deskport/deskport.py': 838,   # 单文件客户端（见上注）；2026-11-13 加 task/tasks/wait；2026-11-14 +34=技能包版本协商（自报 X-Deskport-Skill-Version、收 stale 标记并提醒重拉）；2026-11-15 合并批次 A/SR 与 D：+91=主管通信子命令 lead/inbox/report + close/approve（派活收件箱汇报之外，主管关下属与批审批也要在 A1-6 边界内，例 11 无人干预实测要用）+ 库方法（批次 A A2），+39=lead --register 自助成为外部主管与 register_lead 库方法（批次 SR，两侧 lead 子命令合一：不带参查看、--register 注册），+11=inboxAck 收件箱确认 + create_task/CLI 的 --title 标题字段（批次 D，服务端批次 T 起接收），+4=task --session 接回原会话继续干活（kimiSessionId + fork=false，返工/复验复用执行方）
     '.agents/skills/deskport/driver.py': 597,     # 单文件驱动模板（见上注）；2026-11-14 +19=审批 409 分类处理（P0-3）；2026-11-15 +111=inbox 收件箱模式（外部主管长轮询+自动 ack）+ resume 暂停续接 + title.txt 作为 title 字段传给建任务（批次 D，不拼首行）
     'agent_node/acp_session.py': 454,             # ACP 会话单文件实现（见上注）
     'agent_node/node_api.py': 417,                # 节点 API 单文件实现（见上注）
