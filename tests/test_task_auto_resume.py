@@ -9,6 +9,9 @@
 L 返工（主控追加·必须修）：重启落在「唤醒中」（resuming=True 落盘）时，
 启动恢复必须清掉标记——否则任何 message 都被 409「会话正在唤醒，请稍候」
 挡死（线上实测 5 个任务）；清掉之后 message 正常续接。
+
+DR→L3 接缝（主控追件）：部署排空超时把仍在跑的任务标 pausedBy='restart'
+（task_drain._markRestart），正是 L3 的消费方——重启后自动续接不能断。
 """
 import json
 import time
@@ -20,7 +23,7 @@ import config as configMod
 from modules import agent_nodes as nodesMod
 from modules import events as eventsMod
 from modules import leads_inbox
-from modules import task_health
+from modules import task_drain, task_health
 from modules import tasks_api
 from modules import tasks_runner as runner
 from modules import tasks_store as store
@@ -244,3 +247,34 @@ def test_restart_clears_resuming_then_message_resumes(env):
     while time.time() < deadline and not started:
         time.sleep(0.05)
     assert started == [(tid, True, '重启后续上')]
+
+
+def test_drain_timeout_mark_is_resumed_by_l3(env):
+    """DR→L3 接缝（主控追件）：部署排空超时把仍在跑的任务标
+    pausedBy='restart'（task_drain._markRestart，DR 的原话就是「交批次 L3
+    重启后续接」）——重启后 load 据此打 paused，L3 60s 后自动续接。排空
+    超时不白标，L3 也不白接。"""
+    tid = _create(env)
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['sessionId'] = 'session_' + 'd' * 36
+        task['status'] = 'running'          # 在飞回合：排空等的就是它
+        env.repo.save()
+    env.repo.setAgent(tid, {})              # _runningRounds 判「有活客户端」
+
+    result = task_drain.runDrain(1)         # 1s 超时：等不到回合结束 → 标记
+    assert result.get('timedOut') is True
+    assert env.repo.get(tid)['pausedBy'] == 'restart'
+    assert any('pausedBy=restart' in (e.get('text') or '')
+               for e in env.repo.get(tid)['events'])
+
+    repo2 = _restart(env)                   # 重启：running → paused（标记已在）
+    assert repo2.get(tid)['status'] == 'paused'
+    assert repo2.get(tid)['pausedBy'] == 'restart'
+    resumed = []
+    env.monkeypatch.setattr(runner, '_resumeWithMessage',
+                            lambda t, text: resumed.append(t['id']))
+    env.monkeypatch.setattr(task_health, '_startedAt', time.time() - 61)
+
+    task_health.tick(time.time())           # L3 接上 DR 的标记
+    assert resumed == [tid]

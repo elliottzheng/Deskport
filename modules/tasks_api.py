@@ -28,6 +28,7 @@ from modules import leads_inbox, leads_store
 from modules import model_availability
 from modules import events
 from modules import task_inputs
+from modules import session_adopt, task_drain
 from modules.task_wait import (_blockWait, _parseWaitSeconds, _waitSnapshot,
                                parseWaitSeconds)
 
@@ -238,6 +239,14 @@ def createTaskResponse(data, start=True):
                                     % live[0]['id'],
                                     'hint': '去掉 fork:false 改用 fork 副本'}), 409
         # 非本机：kimiSessionId/fork 原样透传到执行点侧 fork+load（R4-7）
+        elif not kimiSessionFork:
+            # 批次 DR：直接接管撞上未关闭任务 → 409 点名（与本机分支同义），
+            # 不抢活会话；fork 副本的占用由接回重试链路兜（session_adopt）
+            holders = session_adopt.holdersOf(kimiSessionId)
+            if holders:
+                return ({'error': '该会话正被未关闭任务占用，不能直接接管',
+                         'holders': holders,
+                         'hint': '先关闭占用任务，或改用 fork 副本接手'}), 409
     # 模型白名单：执行点声明了可选列表时必须命中（§7.1 按活的性质挑模型）
     decl = agent_nodes.nodeModelDecl(node)
     if model and decl['models'] and model not in decl['models']:
@@ -630,6 +639,14 @@ def deliverMessage(task, text, mode='queue', waitSec=None, by=''):
             agent['queue'].put({'type': 'drain'})
             return ({'queued': True, 'position': pos, 'steered': False,
                      'messageId': item.get('id') or ''}), 202
+        if task_drain.draining():
+            # 排空期间（部署中，批次 DR）：等待中的会话只收消息、不开新一轮；
+            # 排空结束后由唤醒信号自动投递（消息在持久队列里，重启不丢）
+            item, pos = _enqueueMessage(task, text, by=by)
+            store.repo.append_event(task, 'status',
+                         text='部署排空中，消息已排队（第 %d 位，排空结束后自动投递）' % pos)
+            return ({'queued': True, 'position': pos, 'steered': False,
+                     'draining': True, 'messageId': item.get('id') or ''}), 202
         wake = {'type': 'message', 'text': text}
         if by:
             wake['by'] = by       # 补 4：runner 落 user 事件时记发信人
@@ -809,18 +826,18 @@ def closeTaskCore(task):
                                           'close 强制终止（回合未返回结果）')
                     task['endedAt'] = store._now()
                     store.repo.append_event(task, 'status', text='已强制终止')
-            if task.get('sessionId'):
-                from modules.agent_nodes import shutdownNodeSession
-                shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     else:
         task_state.transition(task, task_state.TaskState.CLOSED)
         task['endedAt'] = store._now()
         store.repo.append_event(task, 'status', text='会话已结束')
-        # web 重启后 agent 已不在内存——close 仍须释放 node 侧会话锁，
-        # 终止持锁的 kimi 进程（R4-5 余项 A：不能"既不能续、又不释放"）
-        if task.get('sessionId'):
-            from modules.agent_nodes import shutdownNodeSession
-            shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
+    # 批次 DR：close 必须确保节点侧持锁的 kimi 进程退出。原实现只在"强制
+    # 终止"分支里杀——正常路径靠会话线程 finally 的 client.shutdown()，线程
+    # 卡住/状态从 failed 侧落定时锁会残留，接回即 "in use"（fork 与直接
+    # 接管都认这把锁）。终态落地后按 sessionId 补一次：幂等（节点已删则
+    # 404），本机 stdio 无节点时安全空转。
+    if task.get('sessionId'):
+        from modules.agent_nodes import shutdownNodeSession
+        shutdownNodeSession(task.get('node') or 'local', task['sessionId'])
     # close 语义：返回的就是终态（已 cancel 的任务保持 cancelled，不会改判）
     payload = {'ok': True, 'status': task.get('status')}
     if forced:
