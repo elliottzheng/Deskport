@@ -514,6 +514,11 @@ class Task:
         return self.dp._request("POST", f"/api/tasks/{self.id}/permission",
                                 {"requestId": request_id, "optionId": option_id, "deny": deny})
 
+    def answer(self, request_id: str, text: str) -> dict:
+        """答复下属的提问（批次 L L2）：审批按"允许"放行，答复立即投递。"""
+        return self.dp._request("POST", f"/api/tasks/{self.id}/answer",
+                                {"requestId": request_id, "text": text})
+
     def cancel(self) -> dict:
         return self.dp._request("POST", f"/api/tasks/{self.id}/cancel", {})
 
@@ -721,6 +726,10 @@ if __name__ == "__main__":
     p = sub.add_parser("result", help="提交结构化结果（POST /api/tasks/<id>/result）：无 MCP 工具时的退路")
     p.add_argument("--task", required=True, help="任务 id")
     p.add_argument("--json", required=True, metavar="文件", help="结果 JSON 文件（- 读 stdin）")
+    p = sub.add_parser("answer", help="答复下属任务的提问（requestId + 答复文本）")
+    p.add_argument("tid")
+    p.add_argument("requestId")
+    p.add_argument("text")
     a = ap.parse_args()
 
     def _unmangle(p):
@@ -777,8 +786,11 @@ if __name__ == "__main__":
             if a.cmd == "inbox":
                 entries, lastSeq = dp.inbox(a.after, a.wait)
                 for e in entries:
+                    text = " ".join(str(e.get("text") or "").split())
+                    if e.get("resolved"):
+                        text += "（已处理）"   # 审批已落定的 escalation：别再当未处理
                     print("%d\t%s\t%s" % (e.get("seq") or 0, e.get("kind") or "",
-                                          " ".join(str(e.get("text") or "").split())))
+                                          text))
                 print("lastSeq=%d" % lastSeq)
                 sys.exit(0)
             if a.cmd == "close":
@@ -790,7 +802,7 @@ if __name__ == "__main__":
                 sys.exit(0)
             print("seq=%d" % dp.report(a.text))
             sys.exit(0)
-        if a.cmd in ("task", "tasks", "wait", "result"):
+        if a.cmd in ("task", "tasks", "wait", "result", "answer"):
             cfg = _load_config()
             dp = Deskport(a.url or cfg.get("url"),
                           insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
@@ -805,6 +817,10 @@ if __name__ == "__main__":
                     line = (t.get("title") or t.get("prompt") or "").splitlines() or [""]
                     print("%s  %-9s %-12s %s" % (t.get("id"), t.get("status") or "",
                                                  t.get("node") or "local", line[0][:60]))
+                sys.exit(0)
+            if a.cmd == "answer":
+                r = dp.task(a.tid).answer(a.requestId, a.text)
+                print("ANSWERED %s -> %s" % (a.tid, r.get("status") or "已投递"))
                 sys.exit(0)
             if a.cmd == "task":
                 if a.result:   # 不建任务：打印该 id 的最新结构化结果

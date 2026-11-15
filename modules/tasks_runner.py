@@ -11,7 +11,7 @@ import threading
 import time
 
 import config
-from modules import leads_escalation, leads_inbox, sensitive_values
+from modules import leads_inbox, sensitive_values
 from modules import session_adopt, task_drain, task_permission, task_result, task_result_mcp
 from modules import tasks_store as store
 from modules import task_events, task_state, task_node
@@ -206,6 +206,7 @@ def _handleAcpUpdate(task, update):
         rawText = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
         with store.repo.lock:
             task['_currentTool'] = None   # 工具收尾（R4-8 currentTool 清空）
+            task['_toolStall'] = None     # L4：卡住标记随之清除（指挥台不再待办）
         text, truncated = task_events.truncateEvent('tool_result', rawText)
         store.repo.append_event(task, 'tool_result',
                      text=text, full=rawText, truncated=truncated,
@@ -241,6 +242,63 @@ def _handleAcpUpdate(task, update):
         return
     # available_commands_update / current_mode_update 等：忽略
 
+def _approvePermission(agent, requestId=''):
+    """把挂起审批按"允许"放行（L2）：requestId 给空 = 当前挂起的那条。
+
+    返回 (ok, 错误消息)。与 /permission 端点同一机制（置 permDecision +
+    唤醒等待循环）——事件由等待循环落卡，不在这里重复写。
+    """
+    if not agent:
+        return False, '任务没有活动会话，无法处理这条审批'
+    with store.repo.lock:
+        perm = agent.get('perm') or {}
+        if not perm or (requestId and perm.get('requestId') != requestId):
+            return False, '授权请求已失效（可能已超时或已处理）'
+        optionId = next((str(o.get('optionId') or '') for o in perm.get('options') or []
+                         if o.get('kind') in ('allow_once', 'allow_always')), '')
+        if not optionId:
+            return False, '这条审批没有可放行的选项'
+        decision = agent.get('permDecision')
+        if decision is None or decision.get('value') is not None:
+            return False, '授权请求已失效（可能已超时或已处理）'
+        decision['value'] = optionId
+        ev = agent.get('permEvent')
+    if ev is not None:
+        ev.set()
+    return True, ''
+
+def _awaitPermissionCleared(task, timeout=2.0):
+    """等等待循环跳出并清掉 pendingPermission（有界）；清了返回 True。
+
+    不清（等待循环没在跑/卡住）也照常投递——审批侧已落定，消息作为普通
+    下一条到达，最坏是晚一轮，不会丢。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with store.repo.lock:
+            if not task.get('pendingPermission'):
+                return True
+        time.sleep(0.05)
+    return False
+
+def answerPermission(task, requestId, text, by=''):
+    """L2 答复入口（/answer 端点用）：审批按允许放行 + 答复 steer 立即投递。
+
+    先放行再投递——steer 的队首消息会被 pendingPermission 闸门挡住
+    （_popQueuedMessage），顺序反了答复就躺在队列里干等审批超时。
+    返回 (payload, status)。
+    """
+    with store.repo.lock:
+        agent = store.repo.agentOf(task.get('id') or '')
+    ok, err = _approvePermission(agent, requestId)
+    if not ok:
+        return {'error': err}, 409
+    _awaitPermissionCleared(task)
+    from modules import tasks_api      # 延迟导入：tasks_api 模块级 import 本模块
+    payload, code = tasks_api.deliverMessage(task, text, 'steer', by=by)
+    payload = dict(payload or {})
+    payload['answered'] = True
+    return payload, code
 def _afterWorklineTurn(task):
     """轮末收尾（R5-1a）：执行方改过 WORKLINE.md 才写回，超阈值提示轮换。"""
     if not task.get('workline'):
@@ -356,9 +414,16 @@ def _popQueuedMessage(task):
 
     两个投递闸门：有 live 挂起审批时不投（R4-3c——旧审批 5 分钟超时拒绝
     会把刚开的新一轮带死，等审批落定后的唤醒信号再投）；用户已关闭任务
-    不投。"""
+    不投。例外（L2）：挂起的审批是提问（AskUserQuestion）时，队首消息当作
+    答复——按"允许"放行；投递由清完标记后的 backlog 信号触发再次 drain。
+    """
     with store.repo.lock:
         if task.get('pendingPermission') or task.get('closedByUser'):
+            if task.get('pendingPermission') and task.get('messageQueue'):
+                agent = store.repo.agentOf(task.get('id') or '')
+                perm = (agent.get('perm') if agent else None) or {}
+                if perm.get('question'):
+                    _approvePermission(agent)
             return None
         mq = task.get('messageQueue') or []
         if not mq:

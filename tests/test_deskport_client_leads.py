@@ -27,7 +27,10 @@ ENTRIES = [
     {'seq': 1, 'dir': 'up', 'kind': 'escalation', 'at': 1.0,
      'text': '任务 aabbccdd 请求审批：Bash，参数 「rm -rf build」（requestId req-1）',
      'ref': {'task': 'aabbccdd', 'requestId': 'req-1'}},
-    {'seq': 2, 'dir': 'up', 'kind': 'report', 'at': 2.0,
+    {'seq': 2, 'dir': 'up', 'kind': 'escalation', 'at': 1.5, 'resolved': True,
+     'text': '任务 11223344 请求审批：Bash，参数 「ls」（requestId req-2）',
+     'ref': {'task': '11223344', 'requestId': 'req-2'}},
+    {'seq': 3, 'dir': 'up', 'kind': 'report', 'at': 2.0,
      'text': '任务 eeff0011 本轮结束：工具 3 个', 'ref': {}},
 ]
 
@@ -139,13 +142,16 @@ def test_lead_inbox_report_cli(server, tmp_path):
     assert code == 0, err
     lines = out.splitlines()
     assert lines[0].startswith('1\tescalation\t任务 aabbccdd 请求审批')
-    assert lines[1].startswith('2\treport\t任务 eeff0011 本轮结束')
-    assert lines[-1] == 'lastSeq=2'
+    assert lines[1].startswith('2\tescalation\t任务 11223344 请求审批')
+    assert lines[1].endswith('（已处理）')     # 审批已落定：别再当未处理
+    assert lines[2].startswith('3\treport\t任务 eeff0011 本轮结束')
+    assert not lines[2].endswith('（已处理）')
+    assert lines[-1] == 'lastSeq=3'
 
     code, out, err = _runCli(tmp_path, server, 'inbox', '--after', '1')
     assert code == 0, err
-    assert out.splitlines()[0].startswith('2\treport\t')
-    assert out.splitlines()[-1] == 'lastSeq=2'
+    assert out.splitlines()[0].startswith('2\tescalation\t')
+    assert out.splitlines()[-1] == 'lastSeq=3'
 
     code, out, err = _runCli(tmp_path, server, 'report', 'B3 已完成，结论见任务卡')
     assert code == 0, err

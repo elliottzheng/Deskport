@@ -213,12 +213,24 @@ def run_shard(idx, files, basetemp_root):
 
 
 def collect_total(files):
-    """--collect-only 拿条数基线，用于核对分组合计有没有少跑。"""
+    """--collect-only 拿条数基线，用于核对分组合计有没有少跑。
+
+    子进程同样给隔离 APPDATA（批 L state_owner 起，模块级 create_app 会去拿
+    状态目录所有者锁；不隔离时撞线上进程的锁，5 个 import app 的文件收集
+    失败，基线凭空少几十条，条数核对永远对不上）。
+    """
     cmd = [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
            '--collect-only']
     cmd += ['tests/%s' % f for f in files]
-    p = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
-                       encoding='utf-8', errors='replace', timeout=300)
+    env = dict(os.environ)
+    appdata = Path(tempfile.mkdtemp(prefix='wp-co-appdata-'))
+    env['APPDATA'] = str(appdata)
+    try:
+        p = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True,
+                           text=True, encoding='utf-8', errors='replace',
+                           timeout=300)
+    finally:
+        shutil.rmtree(appdata, ignore_errors=True)
     out = (p.stdout or '') + (p.stderr or '')
     m = re.search(r'(\d+) tests? collected', out)
     if m:

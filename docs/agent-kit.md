@@ -10,7 +10,7 @@
 |---|---|---|
 | `SKILL.md` | 智能体 | 接口速查：快命令、SFTP、持久会话、任务派活、工作线、主管通信 |
 | `COLLABORATION.md` | 主控 | 协作原则（指挥链：用户 → 主管 → 下属）：分工、派活规格、审批边界、验收、省上下文 |
-| `deskport.py` | 两边 | Python 客户端（832 行、零依赖），也能当 CLI |
+| `deskport.py` | 两边 | Python 客户端（851 行、零依赖），也能当 CLI |
 | `driver.py` | 主控 | 驱动模板：别名目录、边界判定、自动放行、409 排队、收件箱模式、暂停续接 |
 | `driver.example.json` | 主控 | `driver.json` 最小样例（必填 root/danger/safe，带 `_说明`） |
 
@@ -103,7 +103,7 @@ print(routed, task.until(600)["finalText"])
 
 | 对象 | 拿到的办法 | 关键方法 |
 |---|---|---|
-| `Deskport` | `deskport.Deskport(url, token=...)` | `hosts` `host` `run` `ls` `read` `write` `upload` `session` `nodes` `create_task` `task` `tasks` `worklines` `create_workline` `kimi_sessions` `lead` `inbox` `report` `closeTask` `approve` |
+| `Deskport` | `deskport.Deskport(url, token=...)` | `hosts` `host` `run` `ls` `read` `write` `upload` `session` `nodes` `create_task` `task` `tasks` `worklines` `create_workline` `kimi_sessions` `lead` `inbox` `report` `closeTask` `approve` `submit_result` |
 | `Host` | `deskport.connect(host, cwd=...)` 或 `dp.host(name)` | `sh` `run` `cd` `using(shell)` `session` `ls` `read` `read_text` `write` `path` |
 | `Session` | `h.session()` | `run` `sh` `close`（`with` 自动关；cd/export/venv 都延续） |
 | `Task` | `dp.create_task` / `dp.task(id)` | `until` `wait` `events` `message` `permission` `compact` `cancel` `close` |
@@ -127,14 +127,17 @@ CLI 全部子命令（`python deskport.py <命令> -h` 看各自动态帮助）�
 | `hosts` | 列出主机（SSH 主机 + 本机 `local`） |
 | `run <命令> [-t 秒] [-C 目录]` | 单发执行（无状态），退出码透传 |
 | `ls [路径]` / `cat <路径>` | 列目录 / 取文件到 stdout |
-| `task <描述> [-n 执行点] [-m 模式] [--model 模型] [--title 标题] [--session 会话编号] [--wait 秒] [--allow/--deny]` | 建任务派活；`--wait` 建完就等这一轮结束并打印最终回复 |
+| `task <描述> [-n 执行点] [-m 模式] [--model 模型] [--title 标题] [--session 会话编号] [--expects impl\|verify] [--wait 秒] [--allow/--deny]` | 建任务派活；`--expects` 要求结构化交付（执行方须调 submit_result 提交）；`--wait` 建完就等这一轮结束并打印最终回复 |
+| `task <任务id> --result` | 不建任务：打印该任务 id 的最新结构化结果 JSON |
 | `tasks` | 列出任务（id / 状态 / 执行点 / 标题首行） |
 | `wait <任务id> [--timeout 秒] [--allow/--deny]` | 阻塞等某个任务结束并打印最终回复 |
+| `result --task <任务id> --json <文件>` | 提交结构化结果（无 MCP 工具时的退路；`-` 读 stdin，400 带逐字段 errors 可改后重交） |
 | `lead [--register 名字 [--project X]]` | 看绑定的主管；全权令牌 `--register` 自助成为外部主管（没绑打印一行提示） |
 | `inbox [--after N] [--wait 秒]` | 收件箱条目，一行一条，末尾 `lastSeq=` 游标 |
 | `report "<一句话>"` | 向用户汇报（主管唯一的嘴） |
 | `close <任务id>` | 关闭任务（明确结束，回收进程） |
 | `approve <任务id> <requestId> [--deny]` | 审批下属的 escalation（只批 allow_once；拒绝加 `--deny`） |
+| `answer <任务id> <requestId> "<答复>"` | 答复下属任务的提问（审批按"允许"放行，答复立即投递） |
 
 `lead` / `inbox` / `report` / `approve` 是指挥链上的主管命令：令牌绑了主管才有
 （没绑 `inbox`/`report` 报 400；全权令牌跑 `lead --register "<名字>"` 自助成为主管，

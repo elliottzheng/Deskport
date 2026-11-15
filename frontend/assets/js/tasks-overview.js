@@ -17,7 +17,7 @@
     };
     var STATE_TEXT = {busy: '在忙', asleep: '睡着', waiting_you: '等你',
                       paused: '已暂停'};
-    var KIND_TEXT = {permission: '审批', report: '汇报', problem: '问题'};
+    var KIND_TEXT = {permission: '审批', report: '汇报', notice: '提醒', problem: '问题', stall: '卡住'};
     var OVERVIEW_INTERVAL = 5000;         // 5 秒一刷；页面不可见时暂停（mixin 里挡）
 
     // 任务状态/模式文案：从 tasks.js 的 statusLabel/modeLabel 原样搬来

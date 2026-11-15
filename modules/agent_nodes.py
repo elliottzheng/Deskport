@@ -449,12 +449,24 @@ class RemoteAcpClient(agent_busy.BusyPromptMixin):
     def cancel(self):
         # 置位本地停止标记：续接等待中被 close/cancel 时必须立刻跳出等待
         self._cancelAsked = True
+        stillRunning = False
         try:
             nodeRequest(self._node(), 'POST',
                         '/api/sessions/%s/cancel' % self.node_sid,
                         {}, timeout=10)
+            # L4：发完 session/cancel 再读一次节点实况（既有 GET
+            # /api/sessions/<sid> 的 running 字段，节点协议不改）——重启后
+            # 重新接上的会话里这条 cancel 打到同一个 node sid 上，节点侧
+            # cancelTurn 照常把 session/cancel 送进 kimi 进程；回合还没
+            # 收尾就由调用方如实回报 nodeStillRunning，不假装停了
+            status, data = nodeRequest(self._node(), 'GET',
+                                       '/api/sessions/%s' % self.node_sid,
+                                       None, timeout=10)
+            session = (data or {}).get('session') or {}
+            stillRunning = bool(session.get('running'))
         except Exception:
             pass
+        return stillRunning
 
     def close(self):
         """只断开事件通道；远端会话进程保持存活以供随时接手。"""

@@ -17,9 +17,8 @@ MCP 面（工具 schema / 会话令牌 / 注入）在 modules/task_result_mcp.py
 import json
 import logging
 import re
-import time
 
-from modules import leads_inbox, task_node
+from modules import leads_inbox
 from modules import tasks_store as store
 
 log = logging.getLogger('task-result')

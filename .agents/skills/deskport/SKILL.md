@@ -207,10 +207,17 @@ POST /api/tasks/<id>/result   → 同一份 schema（HTTP 提交面；认会话�
 
 - 收下属事件：`GET /api/agent/leads/inbox?after=<seq>&wait=<秒>`（长轮询，
   语义同任务 wait；没绑主管 → 400，提示先用 `/api/settings/leads` 建主管并绑令牌）。
+  全部条目照返（游标语义不变），审批已落定的 escalation 带 `resolved: true`，
+  CLI 显示时加「（已处理）」——别再当未处理去追问。
 - 主动向用户汇报：`POST /api/agent/leads/report {"text": "..."}`——怎么送到
   用户眼前由 Deskport 决定（v1 设置页可见），主管只见这一个工具。
 - 用户对主管说的话走 `POST /api/settings/leads/<id>/inbox`（网页会话），
   托管主管会被立即唤醒。
+- 下属用 AskUserQuestion 提问（批次 L L2）：收件箱里是一条 `kind='question'`
+  的条目（问题文本 + 选项 label + requestId），托管主管被立即唤醒。答复用
+  `POST /api/tasks/<id>/answer {"requestId": "...", "text": "..."}`（主管令牌
+  只许答复 `task.lead` 是自己的任务；网页会话也可）——审批按"允许"放行，
+  答复立即投递给该任务。CLI：`deskport.py answer <task> <requestId> "<答复>"`。
 - CLI 一行版（托管主管照这个用）：`python deskport/deskport.py lead`（我绑的
   主管）、`python deskport/deskport.py inbox [--after N] [--wait 秒]`（收件箱
   条目，一行一条，末尾 `lastSeq=`）、`python deskport/deskport.py report "<一句话>"`、
@@ -229,6 +236,8 @@ POST /api/tasks/<id>/result   → 同一份 schema（HTTP 提交面；认会话�
 GET  /api/tasks/<id>                              → 状态（含 model/workspace/error）
 GET  /api/tasks/<id>/log                          → 完整 jsonl 流水
 POST /api/tasks/<id>/message    {"text": "..."}   → 续聊/追问（回合间）
+POST /api/tasks/<id>/answer     {"requestId": "...", "text": "..."}
+                                                 → 答复下属提问：放行 + 立即投递
 POST /api/tasks/<id>/permission {"requestId": "...", "optionId": "...", "deny": false}
 POST /api/tasks/<id>/cancel | /close              → 都返回 status；close 幂等
 ```

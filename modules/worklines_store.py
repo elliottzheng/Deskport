@@ -20,7 +20,7 @@ import time
 import uuid
 
 import config
-from modules import state, task_node
+from modules import state, state_owner, task_node
 
 BATON_FILE = 'WORKLINE.md'     # 工作区里的副本，也是执行方的写回目标
 PROMPT_LIMIT = 4000            # 首条消息总长预算（与建任务 prompt 上限一致）
@@ -168,6 +168,8 @@ class WorklineRepository:
                 self.items.update(raw)
 
     def save(self):
+        # L6：只读进程（状态目录属于 web）一律明确异常（读/加载不受影响）
+        state_owner.ensureWritable('worklines.json')
         with self.lock:
             try:
                 state.atomicWriteJson(self.store_path, self.items)

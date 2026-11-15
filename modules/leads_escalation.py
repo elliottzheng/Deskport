@@ -19,6 +19,11 @@ P3 里同一位置的 notice（不要两条都写）。
 （不能上交给自己），老链路于是静默停摆——补一条 down 方向的用户可见提示，
 指挥台/设置页能看见卡住的原因（批次 A 返工，不唤醒、不上交）。
 正文不可信（§4 红线）：参数摘要一律引用形态（「」包起来）。
+
+落定（主控追加）：审批一出结果（任何人批准/拒绝/超时/任务关闭），runner
+在写 permission_result 的同一处调 resolvePermission 标记对应 escalation
+已处理——收件箱只追加不改写，落定状态记主管记录；未读计数、L1 提醒、
+指挥台徽标都只统计未落定的 escalation，inbox 接口逐条带 resolved 字段。
 """
 import json
 import logging
@@ -71,6 +76,39 @@ def escalatePermission(task, title, args, requestId):
     except Exception as e:
         log.warning('lead escalation failed: %s', e)
         return ''
+
+
+def resolvePermission(task, requestId, by=''):
+    """审批落定（批准/拒绝/超时/取消/任务关闭）→ 对应 escalation 标记 resolved。
+
+    主控线上实测：驱动几秒内批掉审批，收件箱却堆着几十条未读 escalation，
+    L1 于是提醒"主管好久没处理 50 多条"——全是处理过的。落定状态记在主管
+    记录里（leads_store.resolvedRequests，requestId→{at, by}，有上限），
+    收件箱 JSONL 保持只追加不改写；读侧（L1/指挥台/inbox 接口）只把未落定
+    的 escalation 当待处理。由 tasks_runner 在写 permission_result 时调
+    （所有落定路径的唯一汇集点）。返回标记了几个（0/1；没有对应 escalation
+    就不写——没绑主管/主管自己的托管任务本来就没 escalation）。
+    """
+    try:
+        leadId = leads_inbox.triggerLead(task)
+        if not leadId:
+            return 0
+        lead = leads_store.get(leadId)
+        if not isinstance(lead, dict):
+            return 0
+        entries, _last = leads_inbox.entriesAfter(leadId, 0, 'up')
+        hit = [e for e in entries
+               if e.get('kind') == 'escalation'
+               and str((e.get('ref') or {}).get('requestId') or '') == str(requestId or '')]
+        if not hit:
+            return 0        # 这条审批从没上交过（无主管等）：不留垃圾标记
+        if leads_inbox.entryResolved(lead, hit[0]):
+            return 0        # 已落定（幂等）
+        leads_store.setResolved(leadId, requestId, by)
+        return 1
+    except Exception as e:
+        log.warning('lead escalation resolve failed: %s', e)
+        return 0
 
 
 def escalationHandedOver(task, requestId, graceSec):

@@ -172,15 +172,44 @@ def _pendingPermission(task):
 
 
 def _reportPending(lead, entries):
-    """主管未读汇报（dir='down' 且 seq > reportSeq）→ 每条的 pending 行。"""
+    """主管未读汇报（dir='down' 且 seq > reportSeq）→ 每条的 pending 行。
+
+    kind 按条目原样带出：down 侧绝大多数是 report（汇报），但 L1 的主管
+    反应超时提醒与批次 A 的主管自己待批提示都是 notice——指挥台不该把它们
+    显示成「汇报」（返工：以前一律硬编码 report）。
+    """
     rows = []
     for entry in entries:
-        rows.append({'kind': 'report', 'at': _int(entry.get('at')),
+        rows.append({'kind': entry.get('kind') or 'report', 'at': _int(entry.get('at')),
                      'leadId': lead.get('id') or '',
                      'title': _firstLine(lead.get('name'), TITLE_MAX) or '主管',
                      'detail': _firstLine(entry.get('text')),
                      'seq': _int(entry.get('seq'))})
     return rows
+
+
+def _stallPending(task):
+    """卡住的工具调用（L4）：无主管的任务进指挥台「等你处理」。
+
+    标记由 task_health 巡检写入（task['_toolStall']，只对无主任务），工具
+    收尾即清；行只在该任务还在 running 时出现。有主管的走主管收件箱
+    failure，不进这里（规格 L4 的两路分流）。
+    """
+    stall = task.get('_toolStall')
+    if not isinstance(stall, dict) or (task.get('status') or '') != 'running':
+        return None
+    sec = _int(stall.get('sec')) or _int(stall.get('minutes')) * 60
+    if sec >= 60:
+        waited = '%d 分钟' % (sec // 60)
+    else:
+        waited = '%d 秒' % sec       # toolStallSec < 60：显示秒（0 也曾显示成「?」）
+    return {'kind': 'stall', 'at': _int(stall.get('at')),
+            'taskId': task.get('id') or '', 'leadId': task.get('lead') or '',
+            'title': _firstLine(task.get('title') or task.get('prompt'),
+                                TITLE_MAX) or '任务',
+            'detail': '工具 %s 已 %s无输出'
+                      % (_firstLine(stall.get('name'), TITLE_MAX) or '工具',
+                         waited)}
 
 
 def _problemPending(tasks, now):
@@ -274,6 +303,9 @@ def overview():
 
     for task in tasks:                    # 任意任务的挂起审批都进待办
         row = _pendingPermission(task)
+        if row:
+            pending.append(row)
+        row = _stallPending(task)         # L4：卡住的工具调用（无主任务）
         if row:
             pending.append(row)
     pending += _problemPending(tasks, now)

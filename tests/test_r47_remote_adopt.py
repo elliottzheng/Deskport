@@ -139,8 +139,7 @@ def test_node_session_create_forks_then_loads(tmp_path, monkeypatch):
                 self.ring = Ring()
 
             def start(self, resume_session_id=None, mcp_servers=None):
-                started['resume'] = resume_session_id
-                started['mcpServers'] = mcp_servers
+                started['resume'], started['mcp'] = resume_session_id, mcp_servers
                 self.kimi_session_id = resume_session_id
 
             def stop(self):
@@ -356,8 +355,7 @@ def test_node_api_sessions_body_reaches_create(tmp_path, monkeypatch):
                        kimi_session_id='', fork=True, mcp_servers=None):
             seen.update(cwd=cwd, mode=mode, title=title,
                         resume=resume_session_id, model=model,
-                        kimi=kimi_session_id, fork=fork,
-                        mcp_servers=mcp_servers)
+                        kimi=kimi_session_id, fork=fork, mcp_servers=mcp_servers)
             return StubSession()
 
         mgr.create = fakeCreate
