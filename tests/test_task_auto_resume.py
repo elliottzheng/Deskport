@@ -238,4 +238,9 @@ def test_restart_clears_resuming_then_message_resumes(env):
                            data=json.dumps({'text': '重启后续上'}),
                            content_type='application/json')
     assert resp.status_code == 202, resp.get_json()
+    # _resumeWithMessage 起的是后台线程：202 先返回、线程可能还没跑——有上限
+    # 轮询等它真起来再断言（并行负载下不等会偶发 []，主控授权修的同类问题）
+    deadline = time.time() + 5
+    while time.time() < deadline and not started:
+        time.sleep(0.05)
     assert started == [(tid, True, '重启后续上')]
