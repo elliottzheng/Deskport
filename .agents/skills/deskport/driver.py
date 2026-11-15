@@ -1,20 +1,29 @@
 """通用驱动：把同目录的 deskport.py 当方向盘，指挥一个托管智能体干活。
 
     driver.py -h | --help                                 打印本用法（不碰任何状态）
+    driver.py inbox [--wait 秒]                           收件箱模式（外部主管）：长轮询，有新条目
+                                                          一行一条打印（[kind] 摘要，≤200 字）后退出 0；
+                                                          超时无新条目打 IDLE 退出 2；令牌未绑主管一句话
+                                                          报错退出 2；游标存 run/_inbox/state.json，打印完
+                                                          自动 ack
     driver.py <别名> new <会话id|w:工作线id|-> [档位]      先 new 建任务，之后才能 y/n/c/m/st
-    driver.py <别名> [y|n|c|m [档位]|st]
+    driver.py <别名> [y|n|c|m [档位]|st|resume]
 
     new <目标>  用 msg.txt 建任务：`new <kimi会话id>` 接手已有会话（fork 副本），
-               `new w:<工作线id>` 在工作线上派活，`new -` 直接新开任务
+               `new w:<工作线id>` 在工作线上派活，`new -` 直接新开任务；
+               run/<别名>/title.txt 存在时作为 title 传给建任务（不拼进提示词）
     (别名后无命令)  接着跑，等这一轮结束（结论写 run/<别名>/last.txt 一行）
     y | n      批准 / 拒绝卡住的审批，然后接着跑
     c          压缩执行方上下文（/compact，一批活之间用）
     m [档位]   把 run/<别名>/msg.txt 发出去；换档位时同时切换预授权
     st         只打印状态（任务号、档位、上下文用量、有没有挂着的审批）
+    resume     任务被部署打成 paused/interrupted 时：先发一条续接消息（默认文案，
+               可用 run/<别名>/msg.txt 覆盖），再照常驱动
 
 边界全在 driver.json（脚本同目录，或 DRIVER_CONFIG 指过去）：必填 root/danger/safe，
 可选 profiles/extraWritable/defaultProfile/serverPolicy——字段与最小样例见同目录
-driver.example.json；缺文件、缺键都会一句话报错并指向它。
+driver.example.json；缺文件、缺键都会一句话报错并指向它。（inbox 模式不驱动任务，
+不需要 driver.json。）
 
 「响应即上下文」的落实：stdout 只出一行结论（DONE / STOP / TIMEOUT），全量流水进
 run/<别名>/log；命令本身短到两个字符（`driver.py a y`）。
@@ -39,6 +48,10 @@ RUN_ROOT = Path(os.environ.get("DRIVER_RUN_DIR") or (HERE / "run"))
 TIMEOUT, MAX_TEXT, STALL_SEC = 900, 3000, 600   # 一轮等待上限 / 结论正文上限 / 无事件判停
 EXAMPLE = HERE / "driver.example.json"          # 最小样例：driver.json 缺什么照它补
 REQUIRED_KEYS = ("root", "danger", "safe")      # 边界三件套：去哪写、什么停、什么放
+INBOX_DIR = RUN_ROOT / "_inbox"                 # 收件箱模式的游标（不占别名目录）
+INBOX_WAIT, INBOX_MAX_TEXT = 60, 200            # 长轮询缺省秒 / 条目摘要上限
+RESUME_TEXT = ('中枢重启过，这一轮被打断了；先确认做到哪一步，再从断点继续，'
+               '边界与交付要求不变')             # resume 的默认续接文案（msg.txt 可覆盖）
 
 
 class DriverError(Exception):
@@ -177,13 +190,14 @@ class Policy:
 # ---------------------------------------------------------------- 别名目录
 
 class Run:
-    """一个别名一个目录：state.json / msg.txt / last.txt / log / pending.json。"""
+    """一个别名一个目录：state.json / msg.txt / title.txt / last.txt / log / pending.json。"""
 
     def __init__(self, alias: str):
         self.dir = RUN_ROOT / alias
         self.dir.mkdir(parents=True, exist_ok=True)
         self.state = self.dir / "state.json"
         self.msg = self.dir / "msg.txt"
+        self.title = self.dir / "title.txt"
         self.last = self.dir / "last.txt"
         self.logf = self.dir / "log"
         self.pending = self.dir / "pending.json"
@@ -225,6 +239,87 @@ class Run:
 
 
 # ---------------------------------------------------------------- 驱动循环
+
+def _inboxState() -> dict:
+    """收件箱模式的游标（run/_inbox/state.json）；损坏/缺失都从 0 开始。"""
+    try:
+        return json.loads((INBOX_DIR / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _inboxSave(seq: int) -> None:
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    (INBOX_DIR / "state.json").write_text(
+        json.dumps({"seq": int(seq)}), encoding="utf-8")
+
+
+def _inboxWait(args) -> int:
+    """解析 --wait 秒（缺省 60，夹到 1–600）；不认识的参数一句话报错。"""
+    wait, i = INBOX_WAIT, 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--wait":
+            if i + 1 >= len(args):
+                raise DriverError("--wait 要跟秒数（1–600）")
+            raw, i = args[i + 1], i + 2
+        elif arg.startswith("--wait="):
+            raw, i = arg.split("=", 1)[1], i + 1
+        else:
+            raise DriverError("inbox 只认 --wait 秒（收到 %r）" % arg)
+        try:
+            wait = int(raw)
+        except (TypeError, ValueError):
+            raise DriverError("--wait 要跟秒数（1–600），收到 %r" % raw) from None
+    return max(1, min(600, wait))
+
+
+def inboxMode(args) -> int:
+    """外部主管的收件箱模式：长轮询 → 一行一条 → 自动 ack。
+
+    退出码：0 有新条目；2 超时无新条目（打 IDLE）/ 未绑主管 / 参数与连接问题。
+    """
+    try:
+        wait = _inboxWait(args)
+    except DriverError as err:
+        print("driver: %s" % err, flush=True)
+        return 2
+    try:
+        dp = deskport.connect().dp
+        after = int(_inboxState().get("seq") or 0)
+        entries, lastSeq = dp.inbox(after, wait)
+        if not entries:
+            print("IDLE", flush=True)
+            return 2
+        for e in entries:
+            text = " ".join(str(e.get("text") or "").split())[:INBOX_MAX_TEXT]
+            print("[%s] %s" % (e.get("kind") or "?", text), flush=True)
+        try:
+            dp.inboxAck(lastSeq)                 # 打印完自动 ack，别让下轮重复
+        except Exception as err:                 # ack 失败不甩栈：警告一句，结论照旧
+            print("WARN 已打印但 ack 失败（%s），下次可能重复" % str(err)[:120],
+                  flush=True)
+            return 0
+        _inboxSave(lastSeq)
+        return 0
+    except deskport.DeskportError as err:        # 没绑主管 → 400：一句话说清去哪绑
+        print("driver: %s" % err, flush=True)
+        return 2
+    except urllib.error.URLError as err:         # 证书 / 连不上：同 driver 主链路口径
+        reason = getattr(err, "reason", err)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            print(CERT_HINT, flush=True)
+        else:
+            print("driver: 连不上对端（%s）；查地址、网络与服务是否在跑" % reason,
+                  flush=True)
+        return 2
+    except (OSError, http.client.HTTPException) as err:
+        print("driver: %s: %s" % (type(err).__name__, str(err)[:200]), flush=True)
+        return 2
+    except ValueError as err:                    # 缺地址/缺令牌：deskport 已说清
+        print("driver: %s" % err, flush=True)
+        return 2
+
 
 def _brief(event: dict) -> str:
     a = event.get("args") or {}
@@ -290,8 +385,9 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
             run.pending.write_text(json.dumps(event, ensure_ascii=False, indent=1), encoding="utf-8")
             run.say("STOP %s | %s | %s" % (why, event.get("name"), _brief(event)))
             return 3
-        if st == "paused":                               # 中枢重启等原因暂停：不是超时也不是完成
-            run.say("STOP paused 任务被暂停，先查状态再续（driver.py <别名> st）")
+        if st == "paused":                               # 部署/重启把在飞任务打成 paused：不是失败
+            run.say("STOP paused 任务被暂停（web 重启会这样）；"
+                    "driver.py <别名> resume 发续接消息再跑")
             return 3
         if st == "running":
             info = _retry(task.info, run)
@@ -369,6 +465,8 @@ def main(argv=None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__.strip(), flush=True)
         return 0
+    if argv[0] == "inbox":                              # 收件箱模式：无别名、不读 driver.json
+        return inboxMode(argv[1:])
     alias, rest = argv[0], argv[1:]
     cmd = rest[0] if rest else ""
     run = None
@@ -398,6 +496,10 @@ def main(argv=None) -> int:
             profile = rest[2] if len(rest) > 2 else profile
             text = run.msg.read_text(encoding="utf-8")
             opts = {"policy": policy.serverPolicy() or None}
+            if run.title.exists():                     # 标题走 title 字段（不拼进提示词）
+                title = run.title.read_text(encoding="utf-8").strip()
+                if title:
+                    opts["title"] = title
             if target.startswith("w:"):
                 routed, task = dp.workline(target[2:]).send(text, **opts)
                 run.log("  [routed] %s" % routed)
@@ -416,7 +518,15 @@ def main(argv=None) -> int:
                 run.say("ST %s profile=%s %s context=%s/%s" % (info.get("status"), profile, q,
                         ctx.get("used"), ctx.get("max")))
                 return 0
-            if cmd in ("y", "n"):
+            if cmd == "resume":
+                info = _retry(task.info, run)
+                if info.get("status") in ("paused", "interrupted"):
+                    text = (run.msg.read_text(encoding="utf-8")
+                            if run.msg.exists() else RESUME_TEXT)
+                    _retry(lambda: task.message(text), run)
+                    run.log("  [resume] %s → 已发续接消息" % info.get("status"))
+                task.seq = 0                           # 从头跟这一轮
+            elif cmd in ("y", "n"):
                 if run.pending.exists():
                     event = json.loads(run.pending.read_text(encoding="utf-8"))
                     try:
