@@ -39,7 +39,7 @@ LEGACY = {
     'modules/tasks_store.py': 462,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +12=L3 pausedBy='restart' + L6 只读闸门；+3=启动清 resuming 唤醒标记（L 返工：落盘的 resuming 会让重启后一切 message 409）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
-    'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620, 'tests/test_leads_escalation.py': 458, 'tests/test_task_policy.py': 506,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）｜task_policy：审批边界回归集，11-15 合并 main（拆出 task_policy_pipe/readonly）后 506：L5 按名字杀进程正反例（含 //IM 双斜杠与 Get-Process 管道返工用例）
+    'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620, 'tests/test_leads_escalation.py': 475, 'tests/test_task_policy.py': 506,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）｜task_policy：审批边界回归集，11-15 合并 main（拆出 task_policy_pipe/readonly）后 506：L5 按名字杀进程正反例（含 //IM 双斜杠与 Get-Process 管道返工用例）
 }
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码
