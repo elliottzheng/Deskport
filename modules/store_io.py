@@ -20,6 +20,12 @@ log = logging.getLogger('tasks')
 # 锁序固定为 调用方锁→_IO_LOCK，无反向等待
 _IO_LOCK = threading.Lock()
 
+# 批 PS2 追件：os.replace 的退避重试（秒）。Windows 上杀毒软件/索引服务/
+# 并发读者会短暂占用目标文件，replace 报 PermissionError（WinError 5/32）
+# ——线上 160 次 save tasks failed 与全量里 test_concurrent_saves 偶发红都
+# 是这个根因，而 payload 早已在临时文件里写好，重试一次往往就成
+_REPLACE_BACKOFF_SEC = (0.02, 0.04, 0.08, 0.16)
+
 
 class SeqGate:
     """序号门：已落盘序号。只允许在 _IO_LOCK 内读写——调用方（tasks_store）
@@ -30,6 +36,23 @@ class SeqGate:
         self.savedSeq = 0
 
 
+def _replaceWithRetry(tmp, path):
+    """os.replace 带退避重试（批 PS2 追件）：PermissionError 不直接放弃。
+
+    Windows 上目标文件被杀毒/索引/并发读者短暂占用时 replace 报 WinError
+    5/32（PermissionError）；临时文件里 payload 已写好，重试即可。按
+    20/40/80/160ms 退避重试 4 次，仍败把最后一次的异常抛给调用方（记
+    save tasks failed、清临时文件），不吞异常也不改序号门语义。
+    """
+    for wait in _REPLACE_BACKOFF_SEC:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(wait)
+    os.replace(tmp, path)      # 最后一次：成败都交给调用方处理
+
+
 def saveSnapshot(path, payload, seq, gate):
     """把已序列化的 payload 原子写到 path；返回落笔后的 savedSeq。
 
@@ -37,6 +60,8 @@ def saveSnapshot(path, payload, seq, gate):
     写盘（并发 os.replace 同一目标必撞 WinError 5/32）、序号门（旧快照不
     覆写已落盘的更新快照）。序号门的读-比-写-更新整段在 _IO_LOCK 内完成，
     比较用锁内读到的 gate.savedSeq，锁外读旧值绕过门的路堵死（P1）。
+    批 PS2 追件：replace 遇 PermissionError 按 _REPLACE_BACKOFF_SEC 退避
+    重试 4 次（瞬时占用是常态，不是状态损坏）。
     """
     with _IO_LOCK:
         if seq <= gate.savedSeq:
@@ -48,7 +73,7 @@ def saveSnapshot(path, payload, seq, gate):
             try:
                 with os.fdopen(fd, 'w', encoding='utf-8') as f:
                     f.write(payload)
-                os.replace(tmp, path)
+                _replaceWithRetry(tmp, path)
             except OSError:
                 try:
                     os.unlink(tmp)
