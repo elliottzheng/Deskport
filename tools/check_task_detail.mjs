@@ -104,20 +104,6 @@ let cookie = '';
     cookie = (r.headers.get('set-cookie') || '').split(';')[0];
     if (r.status !== 302) { console.log('FATAL: 登录失败 ' + r.status); process.exit(2); }
 }
-const overview = await (await fetch(BASE + '/api/command/overview',
-    {headers: {cookie}})).json();
-let taskIds = [];
-(function walk(nodes) {
-    (nodes || []).forEach(n => {
-        if (n.type === 'task' && n.id) { taskIds.push(n.id); }
-        walk(n.children);
-    });
-})(overview.tree);
-if (ONLY) { taskIds = taskIds.filter(id => ONLY.split(',').includes(id)); }
-taskIds = taskIds.slice(0, 8);
-if (!taskIds.length) { console.log('FATAL: 树上没有任务'); process.exit(2); }
-console.log('tasks: ' + taskIds.join(' '));
-
 await cdp('Page.enable');
 await cdp('Runtime.enable');
 await cdp('Log.enable');
@@ -193,7 +179,26 @@ for (const w of WIDTHS) {
     await cdp('Page.navigate', {url: BASE + '/tasks'});
     await waitFor(`(function () { return document.querySelectorAll('.cmd-node').length >= 2; })()`,
                   '树渲染 @ ' + w);
-    for (const id of taskIds) {
+    // 已关闭任务默认只露最近 5 条：点「更多」把裁剪掉的也挂上，8 个任务都覆盖到
+    for (let i = 0; i < 3; i += 1) {
+        const clicked = await evaluate(`(function () {
+            var btn = Array.prototype.slice.call(document.querySelectorAll('.cmd-more'))
+                .filter(function (b) { return b.offsetParent !== null; })[0];
+            if (btn) { btn.click(); return true; }
+            return false; })()`);
+        if (!clicked) { break; }
+        await sleep(600);
+    }
+    // 任务清单从 DOM 收集（点过「更多」之后才是全量；API 的树仍是裁剪后的）
+    let ids = await evaluate(`(function () {
+        return Array.prototype.slice.call(
+            document.querySelectorAll('.cmd-node[data-key^="task:"]'))
+            .map(function (n) { return n.getAttribute('data-key').slice(5); }); })()`);
+    if (ONLY) { ids = ids.filter(id => ONLY.split(',').includes(id)); }
+    ids = ids.slice(0, 8);
+    if (!ids.length) { console.log('FATAL: 树上没有任务 @ ' + w); process.exit(2); }
+    console.log('W' + w + ' tasks(' + ids.length + '): ' + ids.join(' '));
+    for (const id of ids) {
         await backIfFullscreen();
         // 树上点这个任务（祖先折叠着就先全部展开）
         for (let round = 0; round < 2; round += 1) {
