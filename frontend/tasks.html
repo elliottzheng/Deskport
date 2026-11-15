@@ -143,8 +143,18 @@
 
         <aside class="task-detail" v-if="detail">
             <div class="task-detail-head">
-                <div>
-                    <div class="task-detail-title">{{ detail.title || detail.prompt }}</div>
+                <div class="task-detail-head-main">
+                    <div class="task-detail-title" v-if="!titleEdit"
+                         @click="startTitleEdit"
+                         :title="'点这改名：' + (detail.title || detail.prompt)">
+                        {{ detail.title || detail.prompt }}
+                    </div>
+                    <input v-else ref="titleInput" class="input task-detail-title-input"
+                           v-model="titleDraft" maxlength="40" :disabled="titleBusy"
+                           placeholder="新标题（1–40 字，回车保存，Esc 取消）"
+                           @keydown.enter.prevent="saveTitle"
+                           @keydown.esc="cancelTitleEdit" @blur="cancelTitleEdit">
+                    <p class="load-error task-detail-title-error" v-if="titleError">{{ titleError }}</p>
                     <div class="task-detail-meta">
                         {{ detail.createdLabel }} · {{ statusLabel(detail.status) }} · {{ modeLabel(detail.mode) }}
                         <span v-if="cwdLine"> · {{ cwdLine }}</span>
@@ -273,6 +283,11 @@
             <div v-else>
                 <button type="button" class="btn btn-ghost cmd-sheet-back" @click="newSheetTab = ''">← 返回</button>
                 <div class="task-composer">
+                    <div class="field">
+                        <label class="field-label" for="new-task-title">标题（可空）</label>
+                        <input id="new-task-title" class="input" v-model.trim="newTitle"
+                               maxlength="40" placeholder="留空按提示词自动生成，如：整理简历">
+                    </div>
                     <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
                               placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
                               @keydown.ctrl.enter="create"></textarea>

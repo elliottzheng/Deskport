@@ -66,6 +66,7 @@ window.FilesMethodsCore = {
         async navigate(path) {
             if (path === this.currentPath && this.loc !== 'inbox') { return; }
             this.loc = '';
+            this.crumbJumpOpen = false;   // M2: 离开当前路径即收起上级跳转弹层
             this.backStack.push(this.currentPath || '');
             this.fwdStack = [];
             this.currentPath = path;
@@ -273,6 +274,11 @@ window.FilesMethodsCore = {
         },
         toggleMobileNav() {   // MOB-04: 移动端快速访问抽屉
             this.mobileNav = !this.mobileNav;
+        },
+        // M2: 「…」上级跳转弹层里点某一级
+        jumpToCrumb(c) {
+            this.crumbJumpOpen = false;
+            return this.navigate(c.path);
         },
         exitSelMode() {
             this.selMode = false;

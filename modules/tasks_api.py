@@ -19,7 +19,7 @@ from modules import kimi_acp
 from modules import task_events
 from modules import task_policy
 from modules import tasks_runner as runner
-from modules import task_state
+from modules import task_state, task_title
 from modules import tasks_store as store
 from modules import worklines_store
 from modules import fsutil, node_path, staging, task_cwd, task_node
@@ -109,10 +109,13 @@ def createTask():
     payload, code = createTaskResponse(data)
     return jsonify(payload), code
 
-def createTaskResponse(data):
+def createTaskResponse(data, start=True):
     """建任务核心（/api/tasks 与 /api/worklines/<id> 的派活共用）。
 
     返回 (payload, status)。工作线（R5-1a）在这里合并默认值、注入接力棒。
+    start=False（批次 A：一键托管主管用）：只建卡不启动会话——调用方先把
+    技能包与令牌落盘再 startTask，避免会话首轮跑时文件还没就位；失败回滚
+    也因此不需要杀会话（从没起过）。
     """
     store.repo.load()
     data = dict(data or {})
@@ -257,7 +260,7 @@ def createTaskResponse(data):
         if limit > 0 and len(running) >= limit:
             # 429 带占用明细（R4-9）：调用方不必再查一轮就知道是谁占着名额
             holders = [{'id': t['id'], 'owner': t.get('owner') or '未知',
-                        'title': t.get('title') or ''} for t in running]
+                        'title': task_title.titleFor(t)} for t in running]
             return ({'error': '并发任务已达上限 %d，请稍后再试' % limit,
                             'limit': limit, 'running': len(running),
                             'holders': holders}), 429
@@ -296,8 +299,15 @@ def createTaskResponse(data):
         except OSError:
             pass
         return ({'error': str(e)}), 400
+    # 批次 T：显式标题（可选，1–40 字超长截断）；没给按提示词推默认标题，
+    # 带工作线时套「工作线标题 · 默认标题」——titleSource 记来历，老任务
+    # （无该键）在摘要输出时按同规则补推（tasks_store.titleFor）
+    if (rawTitle := data.get('title')) is not None \
+            and not isinstance(rawTitle, str):
+        return ({'error': 'title 需为字符串（1–40 字；留空自动生成）'}), 400
+    title, titleSource = task_title.resolveTitle(rawTitle, prompt, workline)
     task = {
-        'id': taskId, 'title': prompt.splitlines()[0][:40],
+        'id': taskId, 'title': title, 'titleSource': titleSource,
         'prompt': prompt, 'workspace': workspace, 'status': 'queued',
         'createdAt': store._now(), 'startedAt': 0, 'endedAt': 0,
         'seq': 0, 'events': [], 'lastText': '',
@@ -337,16 +347,28 @@ def createTaskResponse(data):
         detail = prompt[:160] + (' · model=%s' % model if model else '')
         events.log('agent.task.create', tokenName, 'ok', detail,
                    request.remote_addr, **_agentOnBehalfOf())
-    runner._startTask(task, manifest)
+    if start:
+        runner._startTask(task, manifest)
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:
         # 发完直接阻塞到回合结束/需决策（R4-3），省一次轮询往返；
         # task: summaryBrief 让调用方不重查任务卡就能拿到元数据
         snap = _blockWait(task, 0, waitSec)
         snap['task'] = store.repo.summaryBrief(task)
+        snap['titleSource'] = task.get('titleSource') or ''
         snap['paths'] = inputs
         return (snap), 200
-    return ({'task': store.repo.summary(task), 'paths': inputs}), 202
+    return ({'task': store.repo.summary(task), 'paths': inputs,
+             'titleSource': task.get('titleSource') or ''}), 202
+
+
+def startTask(task, manifest):
+    """启动任务会话（批次 A：一键托管主管把「建卡」与「启动」分两步用）。
+
+    建卡（createTaskResponse(start=False)）之后、技能包/令牌落盘之后调用；
+    其余调用方走 createTaskResponse 的默认路径，不经过这里。
+    """
+    runner._startTask(task, manifest)
 
 
 @blueprint.route('/api/tasks/<taskId>', methods=['GET'])
@@ -854,6 +876,9 @@ def taskPermission(task, taskId):
             if optionId not in valid:
                 return jsonify({'error': '无效的选项'}), 400
         agent['permDecision']['value'] = optionId
+        # 批次 A（A4-4）：谁批的留痕——结果事件（permission_result）带 by：
+        # 主管令牌名（主管经令牌通道批准）或「面板」（用户在面板批准）
+        agent['permDecision']['by'] = getattr(g, 'agentTokenName', '') or '面板'
         agent['permEvent'].set()
     waitSec = _parseWaitSeconds(data.get('wait'))
     if waitSec:

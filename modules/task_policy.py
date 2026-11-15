@@ -11,16 +11,32 @@
     1. 命令段命中 denyCommands → ask（deny 的语义是"强制人工"）；
     1b. 命令段或文件工具的路径参数命中敏感文件（config.json / 令牌文件）
         → ask（R5-2 内建 deny，policy 压不掉，read-only 白名单也压不掉）；
+    1c. 命令含未闭合 heredoc（<<TAG 找不到终止行）→ ask
+        （rule=danger:heredoc）：`cat <<EOF & rm -rf y` 里 & 之后的命令
+        bash 实测会执行，而剩余文本不可判定，整条不猜（四验返工；闭合
+        heredoc 的既有行为不变，见 task_policy_pipe.stripHeredocs）；
     2. 危险模式（ask，即使段首命中 allowCommands）：
        - 原始命令里（单引号内除外）出现 $( 或反引号——双引号不保护命令替换；
        - 剔除引号内容与豁免项（2>&1、>/dev/null、2>/dev/null、1>/dev/null）
          之后仍存在输出重定向 >；
        - find 的 -exec / -delete；xargs 后面跟非只读命令（含 xargs 悬空）；
        - 按名字批量杀进程：taskkill /IM、taskkill /F /T、Stop-Process
-         -Name、pkill、killall（L5；按 PID 结束不受影响）；
+         -Name、Get-Process … | Stop-Process（管道无 -Name）、pkill、
+         killall（L5；按 PID 结束不受影响；Git Bash 的 //IM 双斜杠写法
+         同样命中）；
     3. 只读工具（kind=read 或名称白名单）→ allow；
-    4. execute：剔除引号后按两侧带空白的 && || | ; 与换行拆段，每段都命中
-       任一 allowCommands → allow；
+    4. execute：剔除引号后按 && || | ; 裸 `&`（bash 后台分隔符，两侧都执行
+       ——三验返工）与换行拆段，每段都命中任一 allowCommands → allow；管道
+       下游只读消费段（`|` 右侧 head/tail/grep/wc/sort/uniq 且只带普通参数）
+       豁免逐段命中，上游段仍须整段命中（`cd "<工作区>" && python deskport/…
+       2>&1 | head -40` 不该挂；`rm -rf x | head` 照旧 ask；消费段允许带
+       2>/dev/null / 2>&1，其它重定向不豁免）；
+    4b. 二次返工（主控拍板）：policy 带 readonlyRoots（一键托管主管：工作区
+       + 项目目录 cwd）时，每段都是边界内的只读命令（cat/type/head/tail/
+       ls/dir/find/grep/rg/wc/file/stat，旗标只在 task_policy_readonly 的
+       FLAGS 白名单表内）且所有路径参数（含 cd 目标）realpath 解析后落在
+       根内 → allow（rule=readonly-roots）；解析结果再查敏感文件（8.3 短名
+       /链接后的 .agent-token 也逃不掉）；越界/表外旗标/% $ ~ ` ! 不放行；
     5. 写文件工具（edit/delete）的路径（审批请求带出的 paths——Edit/Write 的
        diff 块实测只有 path、args 里没有 + 参数里的路径）全部落在 allowPaths
        下 → allow；
@@ -33,6 +49,9 @@
 import json
 import os
 import re
+
+from modules import task_policy_pipe
+from modules.task_policy_readonly import SENSITIVE_FILE_RE, segmentsReadonly, underAny
 
 READONLY_KINDS = {'read'}
 WRITE_KINDS = {'edit', 'delete'}
@@ -48,55 +67,31 @@ DANGER_SUBST = re.compile(r'\$\(|`')
 STRIP_DQ = re.compile(r'"[^"]*"')
 STRIP_SQ = re.compile(r"'[^']*'")
 REDIRECT_EXEMPT = ('2>&1', '>/dev/null', '2>/dev/null', '1>/dev/null')
-SEGMENT_SPLIT = re.compile(r'\s*(?:&&|\|\||\||;)\s*|\n')
 FIND_UNSAFE = re.compile(r'(?:^|[\s;&|])-(?:exec|delete)\b')
 XARGS = re.compile(r'\bxargs\b')
 FIRST_WORD = re.compile(r'^\s*([A-Za-z_][\w.-]*)')
 CD_RE = re.compile(r'\bcd\s+(?:"([^"]+)"|\'([^\']+)"?|([^\s;&|]+))', re.I)
-HEREDOC_RE = re.compile(r'<<-?\s*[\'"]?([A-Za-z_][\w.-]*)[\'"]?')
-# R5-2 内建 deny：读中枢配置/令牌文件的调用一律 ask——命中即 ask，独立于
-# 调用方 denyCommands（policy 写了 allowCommands 也压不过它）。模式：
-# 中枢/成员 config.json、.agent-token / agent_node_token 类令牌文件、
-# 本机 node 令牌 ~/.deskport-agent-node/token
-SENSITIVE_FILE_RE = tuple(re.compile(p, re.I) for p in (
-    r'config\.json',
-    r'\.agent[_-]?token',
-    r'agent[_-]?node[_-]?token',
-    r'deskport-agent-node[/\\]token',
-))
 # L5 内建询问（批次 L）：按名字批量杀进程——taskkill /IM、taskkill /F /T、
-# Stop-Process -Name、pkill、killall。共同点是作用于「非本任务启动的进程
-# 树」（2026-11-15 事故：执行方 taskkill 掉所有 Edge）。按 PID 结束进程
-# （taskkill /PID 1234、Stop-Process -Id 1234）不命中任何一条，不受影响。
+# Stop-Process -Name、Get-Process … | Stop-Process（管道、无 -Name）、
+# pkill、killall。共同点是作用于「非本任务启动的进程树」（2026-11-15 事故：
+# 执行方 taskkill 掉所有 Edge）。按 PID 结束进程（taskkill /PID 1234、
+# Stop-Process -Id 1234）不命中任何一条，不受影响。Git Bash（MSYS）会把
+# /IM 改写传成 //IM——开关参数正则一律 `/{1,2}`，双斜杠写法同样命中
+# （返工：//IM 曾整条绕过高危询问）。
 # 启发式（文档已声明）：宁多问——引号内文本同样参与匹配，藏起来的参数
 # 一样危险；同一行内 /F 与 /T 任意顺序都算。
 KILL_BY_NAME_RES = (
-    (re.compile(r'\btaskkill\b[^\r\n]*?\s/IM\b', re.I), 'taskkill /IM'),
-    (re.compile(r'\btaskkill\b[^\r\n]*?\s/F\b[^\r\n]*?\s/T\b'
-                r'|\btaskkill\b[^\r\n]*?\s/T\b[^\r\n]*?\s/F\b', re.I),
+    (re.compile(r'\btaskkill\b[^\r\n]*?\s/{1,2}IM\b', re.I), 'taskkill /IM'),
+    (re.compile(r'\btaskkill\b[^\r\n]*?\s/{1,2}F\b[^\r\n]*?\s/{1,2}T\b'
+                r'|\btaskkill\b[^\r\n]*?\s/{1,2}T\b[^\r\n]*?\s/{1,2}F\b', re.I),
      'taskkill /F /T'),
     (re.compile(r'\bStop-Process\b[^\r\n]*?-Name\b', re.I), 'Stop-Process -Name'),
+    (re.compile(r'\bGet-Process\b[^\r\n]*?\|\s*Stop-Process\b', re.I),
+     'Get-Process | Stop-Process'),
     (re.compile(r'(?:^|[\s;&|(])pkill\b', re.I), 'pkill'),
     (re.compile(r'(?:^|[\s;&|(])killall\b', re.I), 'killall'),
 )
 
-
-def _stripHeredocs(cmd):
-    """去掉 heredoc 正文（<<TAG 到独占一行的 TAG）：正文是数据，不参与
-    引号剥离/命令替换检测/分段——否则正文里的引号与 $( 会误伤判定。"""
-    out = cmd
-    while True:
-        m = HEREDOC_RE.search(out)
-        if not m:
-            return out
-        tag = m.group(1)
-        start = out.find('\n', m.end())
-        if start < 0:
-            return out[:m.start()]
-        tm = re.search(r'^%s\s*$' % re.escape(tag), out[start + 1:], re.M)
-        if not tm:
-            return out[:start]
-        out = out[:start + 1] + out[start + 1 + tm.end():]
 
 DEFAULT_POLICY = {'allowPaths': [], 'allowCommands': [], 'denyCommands': [],
                   'default': 'ask', 'timeoutSec': None, 'allowBackground': False}
@@ -154,18 +149,6 @@ def validatePolicy(policy):
             'denyCommands': denyCommands, 'default': default,
             'timeoutSec': timeoutSec,
             'allowBackground': bool(policy.get('allowBackground'))}
-
-
-def _underAny(path, allowPaths):
-    """前缀判定：先 normpath 折叠 `..`/混合斜杠（R4-2 验收漏洞——
-    `root\\..\\other\\x` 曾绕过前缀直落 allow），再按目录边界 + 大小写
-    不敏感比较（web-platform-dev-evil 不会误匹配 web-platform-dev）。"""
-    p = os.path.normpath(str(path).replace('/', '\\')).lower()
-    for root in allowPaths:
-        r = os.path.normpath(str(root).replace('/', '\\')).lower().rstrip('\\')
-        if p == r or p.startswith(r + '\\'):
-            return True
-    return False
 
 
 def _pathsInArgs(args):
@@ -325,7 +308,7 @@ def killByNameHit(args):
     """命中按名字批量杀进程的内建询问规则（L5）→ 形态名，否则 ''。
 
     只认命令文本（_commandText）：Read/Edit 等非命令工具没有命令，直接不
-    命中。按 PID 结束（taskkill /PID、Stop-Process -Id）不命中。
+    命中。按 PID 结束（taskkill /PID、//PID、Stop-Process -Id）不命中。
     """
     cmd = _commandText(args)
     if not cmd.strip():
@@ -359,7 +342,12 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
 
     segments = None
     if cmd.strip():
-        cmdNoHeredoc = _stripHeredocs(cmd)
+        cmdNoHeredoc = task_policy_pipe.stripHeredocs(cmd)
+        if cmdNoHeredoc is None:
+            # 四验返工（必须修）：heredoc 找不到终止行——`cat <<EOF &
+            # rm -rf y` 里分隔符之后的命令 bash 实测会执行，而剩余文本
+            # 不可判定，整条 ask，不猜
+            return 'ask', 'danger:heredoc'
         outsideSingle = STRIP_SQ.sub('', cmdNoHeredoc)
         if DANGER_SUBST.search(outsideSingle):
             return 'ask', 'danger:command-substitution'
@@ -383,11 +371,11 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
                         return 'ask', 'danger:redirect'
                     p = os.path.normpath(os.path.join(base, p))
                 resolved.append(p)
-            if not resolved or not all(_underAny(p, allowPaths) for p in resolved):
+            if not resolved or not all(underAny(p, allowPaths) for p in resolved):
                 return 'ask', 'danger:redirect'
         if FIND_UNSAFE.search(stripped):
             return 'ask', 'danger:find'
-        segments = [s for s in SEGMENT_SPLIT.split(stripped) if s.strip()]
+        segments = [s for s, _ in task_policy_pipe.splitSegments(stripped)]
         if XARGS.search(stripped):
             # xargs 的消费命令：同段后继词，或（悬空时）下一个段的首词；
             # 拿不到消费命令、或消费命令非只读 → ask
@@ -415,12 +403,30 @@ def evaluate(policy, kind='', name='', args=None, cwd=None, paths=None):
         return 'allow', 'read-only'
 
     if cmd.strip() and segments and allowRes:
-        if all(any(r.search(seg) for r in allowRes) for seg in segments):
+        # 批次 A 返工：管道下游的只读消费段豁免逐段命中（主管的自然形状
+        # `cd "<工作区>" && python deskport/deskport.py --help 2>&1 | head -40`
+        # 不该整体挂起等人工）；上游段仍须整段命中 allowCommands
+        if task_policy_pipe.segmentsAllowed(stripped, cmdNoHeredoc, allowRes):
             return 'allow', 'allowCommands'
+
+    if cmd.strip() and policy.get('readonlyRoots') \
+            and not any(r.search(cmdNoHeredoc) for r in SENSITIVE_FILE_RE):
+        # 批次 A 二次返工（主控拍板）：托管主管边界内的只读命令自动放行
+        # （cat/ls/grep/find… 的路径参数全在工作区或项目目录内）。敏感
+        # 文件按未剥引号原文再查一遍——引号里的 .agent-token 剥引号的
+        # segments 判定看不见，不能漏进白名单
+        roots = [str(r).strip() for r in policy['readonlyRoots']
+                 if str(r or '').strip()]
+        if roots:
+            ok, sensitive = segmentsReadonly(cmdNoHeredoc, str(cwd or ''), roots)
+            if sensitive:   # realpath 展开 8.3/符号链接后命中敏感文件
+                return 'ask', 'deny:sensitive-file'
+            if ok:
+                return 'allow', 'readonly-roots'
 
     if kind in WRITE_KINDS or WRITE_NAMES.match(name or ''):
         writePaths = explicitPaths + list(_pathsInArgs(args))
-        if writePaths and all(_underAny(p, allowPaths) for p in writePaths):
+        if writePaths and all(underAny(p, allowPaths) for p in writePaths):
             return 'allow', 'allowPaths'
 
     return default, 'default'

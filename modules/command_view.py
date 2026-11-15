@@ -27,7 +27,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from modules import leads_inbox, leads_store
+from modules import leads_inbox, leads_store, task_title
 from modules import tasks_store as store
 
 blueprint = Blueprint('command_view', __name__)
@@ -209,7 +209,7 @@ def _problemPending(tasks, now):
         rows.append({'kind': 'problem', 'at': _problemEndedAt(task),
                      'taskId': task.get('id') or '',
                      'leadId': task.get('lead') or '',
-                     'title': _firstLine(task.get('title') or task.get('prompt'),
+                     'title': _firstLine(task_title.titleFor(task),
                                          TITLE_MAX) or '任务',
                      'detail': reason})
     return rows

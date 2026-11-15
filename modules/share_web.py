@@ -344,7 +344,8 @@ def _uploadRemote(rec, node, data, subdir):
 def _delegate(rec, data, way):
     """交给 AI：新建任务或接到已有任务（字段规则与交付全部复用 share_core）。"""
     source = {k: data.get(k) for k in ('prompt', 'mode', 'node', 'cwd', 'model',
-                                       'taskId', 'organize', 'folderName')}
+                                       'taskId', 'organize', 'folderName',
+                                       'title')}
     if not share_core._text(source['prompt']):
         source['prompt'] = rec['prompt']    # 页面没改就用 stage 时带的那句话
     files = [item['path'] for item in rec['files']]

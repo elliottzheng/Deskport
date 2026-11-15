@@ -233,17 +233,20 @@ class Deskport:
                     cwd: str | None = None, paths: list[str] | None = None,
                     model: str | None = None, attachments: dict[str, bytes | str] | None = None,
                     kimi_session: str | None = None, fork: bool = True,
-                    policy: dict | None = None) -> "Task":
+                    policy: dict | None = None, title: str | None = None) -> "Task":
         """派活给 Deskport 托管的智能体。mode=default 逐项审批，全自动显式传 "auto"。
         node=执行点（缺省 "local"）；cwd=执行目录（本机可给绝对目录，任务目录仍是 workspace；
         非本机给该机器上已存在的目录，缺省 = 任务目录）。kimi_session 接手（R4-7）：默认 fork
         副本，fork=False 直接接管原会话（被占用时 409）。model 可选（见 nodes() 的 models）；
         attachments={文件名: 内容} 随任务上传，prompt 上限 4000 字符。policy=审批边界（R4-2）：
         {"allowPaths":[...], "allowCommands":[正则], "denyCommands":[正则], "default":"ask|allow|deny",
-        "timeoutSec":n}；边界内自动放行，越界才挂起。"""
+        "timeoutSec":n}；边界内自动放行，越界才挂起。title=任务标题（批次 T，≤40 字；
+        留空按提示词自动生成，主管派活必须显式给）。"""
         if len(prompt) > 4000:
             raise ValueError(f"prompt {len(prompt)} 字符超过服务端上限 4000；长内容请用 attachments")
         body: dict = {"prompt": prompt, "node": node, "mode": mode}
+        if title:
+            body["title"] = title
         if model:
             body["model"] = model
         if kimi_session:
@@ -263,7 +266,62 @@ class Deskport:
             body["paths"] = paths
         if policy:
             body["policy"] = policy
+        if title:
+            body["title"] = title
         return Task(self, self._request("POST", "/api/tasks", body)["task"]["id"])
+
+    # ---- 主管通信（指挥链）：令牌绑了主管才有 ----
+    def lead(self) -> dict | None:
+        """我绑定的主管（GET /api/agent/lead）；没绑返回 None。"""
+        return self._request("GET", "/api/agent/lead").get("lead")
+
+    def inbox(self, after: int = 0, wait: int | None = None) -> tuple[list[dict], int]:
+        """收件箱条目（GET /api/agent/leads/inbox）：返回 (entries, lastSeq)。
+
+        after=上次的 lastSeq（只取更新的）；wait=长轮询秒（1–600，语义同任务
+        wait）。没绑主管 → DeskportError(400)。
+        """
+        q = "?after=%d" % int(after or 0)
+        if wait:
+            q += "&wait=%d" % int(wait)
+        j = self._request("GET", "/api/agent/leads/inbox" + q)
+        return j.get("entries") or [], int(j.get("lastSeq") or 0)
+
+    def report(self, text: str) -> int:
+        """向用户汇报（POST /api/agent/leads/report）：一句结论；返回 seq。"""
+        return int(self._request("POST", "/api/agent/leads/report",
+                                 {"text": text}).get("seq") or 0)
+
+    def inboxAck(self, seq: int) -> dict:
+        """确认收件箱读到哪（POST /api/agent/leads/inbox/ack）：readSeq 只增
+        不减，条目不删。"""
+        return self._request("POST", "/api/agent/leads/inbox/ack",
+                             {"seq": int(seq)})
+
+    def closeTask(self, task_id: str) -> dict:
+        """按 id 关闭一个任务（POST /api/tasks/<id>/close）：明确结束会话，
+        node 侧进程立即回收；悬着的任务占名额，干完了就关（协作原则 §6）。"""
+        return self._request("POST", f"/api/tasks/{task_id}/close", {})
+
+    def approve(self, task_id: str, request_id: str, deny: bool = False,
+                option_id: str = "") -> dict:
+        """审批挂起的请求（主管处理下属 escalation 的一行式）：deny=True 拒绝；
+        否则自取 allow_once 选项，取不到就报错（不静默授予会话级授权）走 report。"""
+        if not deny and not option_id:
+            ev = self._request("GET", f"/api/tasks/{task_id}/events"
+                              "?types=permission_request").get("events") or []
+            for e in ev:
+                if str(e.get("requestId") or "") == str(request_id):
+                    for opt in e.get("options") or []:
+                        if opt.get("kind") == "allow_once":
+                            option_id = opt.get("optionId") or ""
+                            break
+                    break
+            if not option_id:
+                raise ValueError(f"请求 {request_id} 没有 allow_once 选项（不授予会话级授权）——请 report 上交用户")
+        return self._request("POST", f"/api/tasks/{task_id}/permission",
+                             {"requestId": request_id, "optionId": option_id,
+                              "deny": bool(deny)})
 
     # ---- 端点 ----
     def hosts(self) -> list[dict]:
@@ -271,6 +329,19 @@ class Deskport:
 
     def host(self, name: str, cwd: str | None = None) -> "Host":
         return Host(self, name, cwd)
+
+    # ---- 主管（批次 SR：全权令牌自助成为外部主管，无需用户操作）----
+    def register_lead(self, name: str, project: str = "") -> dict:
+        """用本令牌自助成为外部主管（仅全权令牌可用）。
+
+        服务端建 kind=external 主管并把调用令牌绑上去。已绑同名 → 200 返回
+        现有记录；已绑别的名字 / 名字被非 retired 主管占用 → 409
+        （DeskportError，detail 里带回已绑主管）；受限/联邦/设备令牌 403。
+        """
+        body = {"name": name}
+        if project:
+            body["project"] = project
+        return self._request("POST", "/api/agent/lead", body)["lead"]
 
     def upload(self, name: str, data: bytes | str) -> str:
         """上传文件到 Deskport 本机任务区，返回本机路径（可放进 create_task 的 paths）。"""
@@ -626,6 +697,9 @@ if __name__ == "__main__":
     ap.add_argument("-C", "--cwd", help="远端工作目录")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("hosts")
+    p = sub.add_parser("lead", help="主管：--register <名字> 自助成为外部主管（全权令牌）；不带则看当前绑定")
+    p.add_argument("--register", metavar="名字", help="用本令牌注册成为外部主管")
+    p.add_argument("--project", help="主管备注（课题/项目，可空）")
     p = sub.add_parser("run"); p.add_argument("command"); p.add_argument("-t", "--timeout", type=int, default=30)
     p = sub.add_parser("ls"); p.add_argument("path", nargs="?", default=".")
     p = sub.add_parser("cat"); p.add_argument("path")
@@ -634,11 +708,25 @@ if __name__ == "__main__":
     p.add_argument("-n", "--node", help="执行点（缺省 local）")
     p.add_argument("-m", "--mode", default="default", help="default=危险操作等审批 / auto=全自动")
     p.add_argument("--model", help="执行点支持的模型名（缺省用执行点默认）")
+    p.add_argument("--title", help="任务标题（≤40 字，建议 ≤24；派活必须给，留空则按提示词自动生成）")
+    p.add_argument("--session", metavar="会话编号", help="接回原 Kimi 会话继续干活（返工/复验复用执行方）：直接接管原会话不用副本，被占用时 409")
     p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
                    metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
     p.add_argument("--deny", action="store_true", help="卡在审批时拒绝，继续等")
     p = sub.add_parser("tasks", help="列出任务（id / 状态 / 执行点 / 提示词首行）")
+    p = sub.add_parser("inbox", help="收件箱条目（GET /api/agent/leads/inbox），一行一条")
+    p.add_argument("--after", type=int, default=0, help="只取 seq 大于它的条目（上次的 lastSeq）")
+    p.add_argument("--wait", type=int, default=None, metavar="秒",
+                   help="长轮询等待新条目（1–600，语义同任务 wait）")
+    p = sub.add_parser("report", help="向用户汇报（POST /api/agent/leads/report）")
+    p.add_argument("text", help="一句话结论（+ 需要用户决定的事）")
+    p = sub.add_parser("close", help="关闭一个任务（明确结束，回收进程）")
+    p.add_argument("tid", help="任务 id")
+    p = sub.add_parser("approve", help="审批一个挂起的请求（主管处理下属 escalation）")
+    p.add_argument("tid", help="任务 id")
+    p.add_argument("request_id", help="requestId（收件箱 escalation 条目里带）")
+    p.add_argument("--deny", action="store_true", help="拒绝（缺省批准）")
     p = sub.add_parser("wait", help="等某个任务结束并打印最终回复")
     p.add_argument("tid")
     p.add_argument("--timeout", type=int, default=900)
@@ -678,6 +766,48 @@ if __name__ == "__main__":
             for h in dp.hosts():
                 print(f"{h['name']}\t{h['host']}:{h['port']}\t{h['id']}")
             sys.exit(0)
+        if a.cmd in ("lead", "inbox", "report", "close", "approve"):
+            cfg = _load_config()
+            dp = Deskport(a.url or cfg.get("url"),
+                          insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
+                          cafile=cfg.get("cafile"))
+            if a.cmd == "lead":
+                if a.register:
+                    try:
+                        lead = dp.register_lead(a.register, a.project or "")
+                    except DeskportError as e:
+                        if e.status != 409:
+                            raise
+                        existing = dp.lead()   # 已绑定的令牌：看现有主管，退出 0
+                        if not existing:       # 名字被别的主管占用：真冲突，报错
+                            raise
+                        lead = existing
+                else:
+                    lead = dp.lead()
+                if not lead:
+                    print("（未绑定主管）")
+                else:
+                    print("%s\t%s\t%s\t%s" % (lead.get("id") or "",
+                                              lead.get("name") or "",
+                                              lead.get("kind") or "",
+                                              lead.get("status") or ""))
+                sys.exit(0)
+            if a.cmd == "inbox":
+                entries, lastSeq = dp.inbox(a.after, a.wait)
+                for e in entries:
+                    print("%d\t%s\t%s" % (e.get("seq") or 0, e.get("kind") or "",
+                                          " ".join(str(e.get("text") or "").split())))
+                print("lastSeq=%d" % lastSeq)
+                sys.exit(0)
+            if a.cmd == "close":
+                print(json.dumps(dp.closeTask(a.tid), ensure_ascii=False))
+                sys.exit(0)
+            if a.cmd == "approve":
+                print(json.dumps(dp.approve(a.tid, a.request_id, deny=a.deny),
+                                 ensure_ascii=False))
+                sys.exit(0)
+            print("seq=%d" % dp.report(a.text))
+            sys.exit(0)
         if a.cmd in ("task", "tasks", "wait", "answer"):
             cfg = _load_config()
             dp = Deskport(a.url or cfg.get("url"),
@@ -694,8 +824,12 @@ if __name__ == "__main__":
                 print("ANSWERED %s -> %s" % (a.tid, r.get("status") or "已投递"))
                 sys.exit(0)
             if a.cmd == "task":
+                # --session：返工/复验接回原会话继续干活（复用执行方）——直接
+                # 接管不用副本（kimiSessionId + fork=false），被占用时 409
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
-                                      cwd=_unmangle(a.cwd), model=a.model)
+                                      cwd=_unmangle(a.cwd), model=a.model,
+                                      title=a.title, kimi_session=a.session,
+                                      fork=not a.session)
                 print(task.id)
             else:
                 task = dp.task(a.tid)
