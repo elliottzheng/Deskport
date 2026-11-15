@@ -222,7 +222,7 @@ test('nodeView: 未登记令牌也有直接活动；没有活动时不加那行'
     const quiet = nodeView(node('lead', {id: 'ld_b', name: '睡'}), 0, '', {});
     assert.equal(quiet.activityText, '');
     assert.equal(quiet.activity, null);
-    assert.deepEqual(quiet.activityRecent, undefined);
+    assert.deepEqual(quiet.activityRecent, []);
     // 任务节点不显示直接活动
     const tk = nodeView(task('t1', {activity: ACTIVITY}), 1, '', {});
     assert.equal(tk.activityText, '');

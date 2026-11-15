@@ -126,7 +126,7 @@
             kindText: '', state: '', stateText: '', waitingYou: false,
             dotClass: '', statusText: '', sub: '', lastReportText: '',
             lastSeenText: '', unreadReports: 0, taskId: '', paused: false,
-            activityText: '', activity: null,
+            activityText: '', activity: null, activityRecent: [],
         };
         if (type === 'lead') {
             view.kindText = kindTextOf(n.kind);
@@ -251,14 +251,17 @@
                         return view;
                     });
                 },
-                // 待办行 + 它在树上的路径（"主管 A › 任务 a2"）
+                // 待办行 + 它在树上的路径（"主管 A › 任务 a2"）+ 人话字段
                 pendingWithPath() {
                     var index = this.treeIndexMap;
+                    var view = (typeof WPTasksOverview !== 'undefined'
+                                && WPTasksOverview.events
+                                && WPTasksOverview.events.pendingView) || null;
                     return (this.pendingRows || []).map(function (p) {
-                        var hit = index[p.taskId || ''];
-                        var path = hit ? hit.path.join(' › ') : (p.leadName || '');
-                        return Object.assign({}, p, {path: path});
-                    });
+                        if (!view) { return p; }
+                        return view(p, index, this.leadsById,
+                                    (this.overview && this.overview.retiredLeads) || {});
+                    }, this);
                 },
             },
             mounted() {
@@ -280,8 +283,13 @@
                     this.treeOpen = open;
                     writeOpen(open);
                 },
-                // 点节点主体：托管主管打开它的会话；其余切换展开
+                // 点节点主体：任务节点打开它的详情；托管主管打开它的会话；
+                // 其余（分组节点）切换展开
                 openNode(row) {
+                    if (row.type === 'task') {
+                        this.openTask(row.id, row);
+                        return;
+                    }
                     if (row.type === 'lead' && row.taskId) {
                         this.openTask(row.taskId);
                         return;

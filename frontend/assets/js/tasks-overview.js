@@ -89,6 +89,9 @@
                 kindText: KIND_TEXT[kind] || kind || '待办',
                 title: p.title || '',
                 detail: p.detail || '',
+                // U3：审批行的「下属自述的用途」与派活令牌名（后端 _pendingPermission）
+                purpose: p.purpose || '',
+                owner: p.owner || '',
                 at: p.at || 0,
                 taskId: p.taskId || '',
                 leadId: p.leadId || '',

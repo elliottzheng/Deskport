@@ -220,3 +220,16 @@ MJPEG 长响应，`Content-Type: multipart/x-mixed-replace; boundary=frame`。�
   orphan 组，照样挂得上。
 - 已知缺口：`agent.session.open` 的审计条目不带令牌名（只有 `on_behalf_of`），
   归不到具体指挥者，只能跳过——要补得在写入侧加令牌名。
+
+#### 审批行的人话字段（批次 U3）
+
+`kind == "permission"` 的 pending 行除共有字段外还带：
+
+| 键 | 说明 |
+|---|---|
+| `detail` | 命令本身（Bash 的 `command`）；没有 command 的工具退化为参数摘要 |
+| `purpose` | 下属自述的用途（ACP permission 的 `description` 字段） |
+| `owner` | 派活令牌名（前端据此在未登记成主管时标「未登记的指挥者：<令牌名>」） |
+
+前端按这些字段 + 树上索引渲染成「任务标题 · 主管/派活者 · 命令 · 用途」，
+不再把 command 与其它参数糊成一行、也不再直接显示原始 JSON。

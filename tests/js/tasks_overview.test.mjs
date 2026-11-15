@@ -143,3 +143,17 @@ test('newLeadKindChoices: 外部接入可建，托管置灰即将支持', () => 
     assert.equal(hosted.enabled, false);
     assert.ok(hosted.hint.includes('即将支持'));
 });
+
+test('pendingRows: 审批行带上 purpose 与 owner（U3 人话字段）', () => {
+    const rows = pendingRows([
+        {kind: 'permission', at: 100, taskId: 't1', leadId: 'ld_1',
+         title: 'Bash', detail: 'ls -la /tmp', purpose: '看看目录',
+         owner: 'kimi-code', requestId: 'rq-1', options: []},
+    ], {ld_1: {id: 'ld_1', name: '甲'}}, {});
+    assert.equal(rows[0].purpose, '看看目录');
+    assert.equal(rows[0].owner, 'kimi-code');
+    // 老行（没有这两个键）不抛，退回空串
+    const old = pendingRows([{kind: 'report', leadId: 'ld_1'}], {ld_1: {name: '甲'}}, {});
+    assert.equal(old[0].purpose, '');
+    assert.equal(old[0].owner, '');
+});

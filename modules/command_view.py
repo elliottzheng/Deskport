@@ -6,14 +6,13 @@
 .drive/批次U2-指挥台树.md：用户只和少数主管说话，待办只来自主管上交的事。本模块
 把散在各处的数据聚成指挥台的一屏——等你处理 + 一棵指挥树；数据全部来自现有存储
 （tasks_store / leads_store / leads_inbox / 审计日志），只读、不改它们。鉴权：
-/api/command/* 只认网页会话（不在 authGuard 的令牌通道前缀表里）。
+/api/command/* 只认网页会话。
 
 U2 起前端改用 tree 字段（旧字段 pending/leads/unassigned/retiredLeads 原样保留，
-供回滚与对账）；节点形状、key、计数口径与 activity 见 docs/api.md 的 overview
-一节。一级节点五形 lead/owner/direct/orphan/more：lead 节点本身即它的托管任务
-（ownTask 从子项剔除但计入计数）；任务节点只带 TASK_NODE_KEYS、不带 counts；
-其它节点带逐级汇总的 counts（等待同时给 waiting/waiting_you 两个同值键）。
-响应体积：300 个任务 < 200KB（树与旧字段承载同一批任务，摘要写了两遍）。
+供回滚与对账）；节点形状、key、计数口径、activity 与审批行人话字段都见 docs/api.md
+的 overview 一节。lead 节点本身即它的托管任务（ownTask 从子项剔除但计入计数）；任务
+节点只带 TASK_NODE_KEYS；其它节点带逐级汇总的 counts（等待给 waiting/waiting_you
+两个同值键）。响应体积：300 个任务 < 200KB（树与旧字段各写一遍任务摘要）。
 """
 import json
 import time
@@ -69,10 +68,9 @@ def _argsSummary(args):
                 value = stripped
         else:
             value = stripped
-    if isinstance(value, dict):
-        parts = [str(v) for v in value.values() if v not in (None, '')]
-    elif isinstance(value, list):
-        parts = [str(v) for v in value if v not in (None, '')]
+    if isinstance(value, (dict, list)):
+        seq = value.values() if isinstance(value, dict) else value
+        parts = [str(v) for v in seq if v not in (None, '')]
     else:
         parts = [str(value)] if value not in (None, '') else []
     return _firstLine(' · '.join(parts), ARG_SUMMARY_MAX)
@@ -97,10 +95,8 @@ def _splitTasks(tasks):
             closedTasks.append(task)
         else:
             openTasks.append(task)
-    openTasks.sort(key=lambda t: -(_int(t.get('lastActiveAt'))
-                                   or _int(t.get('createdAt'))))
-    closedTasks.sort(key=lambda t: -(_int(t.get('endedAt'))
-                                     or _int(t.get('createdAt'))))
+    openTasks.sort(key=lambda t: -(_int(t.get('lastActiveAt')) or _int(t.get('createdAt'))))
+    closedTasks.sort(key=lambda t: -(_int(t.get('endedAt')) or _int(t.get('createdAt'))))
     hidden = max(0, len(closedTasks) - CLOSED_KEEP)
     briefs = [_brief(t) for t in openTasks]
     briefs += [_brief(t) for t in closedTasks[:CLOSED_KEEP]]
@@ -110,8 +106,7 @@ def _splitTasks(tasks):
 def _taskCounts(tasks):
     """卡片第二行的下属计数：在跑（running+queued）/ 等待 / 出错。
 
-    等待同时给 waiting 与 waiting_you 两个同值键：旧 leads[].counts 用前者，
-    树节点按 U2 规格用后者（前端 countsText 优先读 waiting_you）。
+    等待同时给 waiting 与 waiting_you 两个同值键（旧字段读前者、树读后者）。
     """
     waiting = sum(1 for t in tasks if (t.get('status') or '') == 'waiting')
     return {'running': sum(1 for t in tasks
@@ -136,8 +131,7 @@ def _problemReason(task):
 
 def _problemEndedAt(task):
     """结束时间：endedAt 优先，老数据没有就退 lastActiveAt/createdAt。"""
-    return (_int(task.get('endedAt')) or _int(task.get('lastActiveAt'))
-            or _int(task.get('createdAt')))
+    return _int(task.get('endedAt')) or _int(task.get('lastActiveAt')) or _int(task.get('createdAt'))
 
 
 def _pendingPermission(task):
@@ -160,10 +154,16 @@ def _pendingPermission(task):
             options = [o for o in (event.get('options') or [])
                        if isinstance(o, dict)]
             break
+    # U3：审批行要说人话——命令/路径单独一条，下属自述的用途（description）
+    # 单独一条，派活令牌名也带上（未登记成主管时前端据此标「未登记的指挥者」）
+    cmd = args.get('command') if isinstance(args, dict) else None
+    purpose = _firstLine(args.get('description'), REASON_MAX) if isinstance(args, dict) else ''
+    command = _firstLine(cmd, ARG_SUMMARY_MAX) if cmd else _argsSummary(args)
     return {'kind': 'permission', 'at': at,
             'taskId': task.get('id') or '', 'leadId': task.get('lead') or '',
             'title': _firstLine(title, TITLE_MAX) or '工具调用',
-            'detail': _argsSummary(args), 'requestId': requestId,
+            'detail': command, 'purpose': purpose, 'requestId': requestId,
+            'owner': str(task.get('owner') or ''),
             'options': [{'optionId': str(o.get('optionId') or ''),
                          'name': str(o.get('name') or ''),
                          'kind': str(o.get('kind') or '')} for o in options]}

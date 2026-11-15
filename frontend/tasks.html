@@ -39,10 +39,14 @@
                     <div class="cmd-pending-main" @click="locatePending(p)"
                          :title="p.path ? '在指挥树里定位：' + p.path : ''">
                         <div class="cmd-pending-title">
-                            {{ p.title }}<span class="cmd-pending-lead" v-if="p.leadName"> · {{ p.leadName }}</span>
+                            <span class="cmd-pending-task" v-if="p.taskTitle">{{ p.taskTitle }}</span>
+                            <span class="cmd-pending-title-text" v-else>{{ p.title }}</span>
+                            <span class="cmd-pending-lead" v-if="p.showLead"> · {{ p.leadName }}</span>
                         </div>
                         <div class="cmd-pending-sub" v-if="p.detail">{{ p.detail }}</div>
+                        <div class="cmd-pending-purpose" v-if="p.purpose">用途：{{ p.purpose }}</div>
                         <div class="cmd-pending-path" v-if="p.path">在树上：{{ p.path }}</div>
+                        <p class="cmd-pending-hint" v-if="p.unregistered">{{ p.registerHint }}</p>
                     </div>
                     <div class="cmd-pending-actions">
                         <template v-if="p.kind === 'permission'">
@@ -184,36 +188,64 @@
                 </div>
             </div>
             <div class="task-chat" ref="chat">
-                <div class="task-event" v-for="e in events" :key="e.seq" :class="'ev-' + e.type">
-                    <div v-if="e.type === 'user'" class="ev-user">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'assistant'" class="ev-text">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'tool'" class="ev-tool">
-                        <span class="ev-tool-name">{{ e.name }}</span>
-                        <code>{{ shortArgs(e.args) }}</code>
+                <div class="task-event" v-for="row in eventRows" :key="row.key" :class="'ev-' + row.type">
+                    <div v-if="row.type === 'user'" class="ev-user">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'assistant'" class="ev-text">{{ row.text }}</div>
+                    <!-- 工具调用：Bash 显示命令、文件类显示路径、其它显示 工具名 · 关键参数 -->
+                    <div v-else-if="row.type === 'tool'" class="ev-tool">
+                        <div class="ev-tool-head">
+                            <span class="ev-tool-name">{{ row.tool }}</span>
+                            <span class="ev-tool-text" :class="'ev-tool-' + row.kind">{{ row.headline }}</span>
+                            <button type="button" class="ev-tool-more" v-if="row.expandable"
+                                    @click="toggleTool(row)">
+                                {{ row.open ? '收起' : '展开全部（' + row.totalLines + ' 行）' }}
+                            </button>
+                        </div>
+                        <pre class="ev-tool-body" v-if="row.open && row.preview.length">{{ row.preview.join('\n') }}</pre>
+                        <div class="ev-tool-diff" v-if="row.open && row.diff">
+                            <pre class="ev-diff-old" v-if="row.diff.oldLines.length">- {{ row.diff.oldLines.join('\n- ') }}</pre>
+                            <pre class="ev-diff-new" v-if="row.diff.newLines.length">+ {{ row.diff.newLines.join('\n+ ') }}</pre>
+                            <p class="ev-diff-meta" v-if="row.diff.oldTotal > row.diff.oldLines.length || row.diff.newTotal > row.diff.newLines.length">
+                                改动片段默认只显示前几行（旧 {{ row.diff.oldTotal }} 行 / 新 {{ row.diff.newTotal }} 行）
+                            </p>
+                        </div>
+                        <p class="ev-tool-purpose" v-if="row.purpose">用途：{{ row.purpose }}</p>
                     </div>
-                    <details v-else-if="e.type === 'tool_result'" class="ev-result">
-                        <summary>工具结果<span v-if="e.truncated">（已截断）</span></summary>
-                        <button v-if="e.truncated && fullEvents[e.seq] === undefined"
-                                type="button" class="btn btn-ghost ev-full"
-                                @click.prevent.stop="loadFull(e)">查看完整</button>
-                        <pre>{{ fullEvents[e.seq] !== undefined ? fullEvents[e.seq] : e.text }}</pre>
-                    </details>
-                    <div v-else-if="e.type === 'permission_request'" class="permission-card">
-                        <div class="permission-title">需要你授权：{{ e.name || '工具调用' }}</div>
-                        <div class="permission-opts" v-if="!permissionResolved(e)">
+                    <!-- 工具结果：默认折叠，标题说几行，展开后限高纵向滚动 -->
+                    <div v-else-if="row.type === 'tool_result'" class="ev-result" :class="{open: row.open}">
+                        <button type="button" class="ev-result-summary" @click="toggleResult(row)">
+                            <span class="ev-result-caret" :class="{open: row.open}">▾</span>
+                            {{ row.title }}
+                        </button>
+                        <div class="ev-result-body" v-if="row.open">
+                            <button v-if="row.truncated && row.full === undefined"
+                                    type="button" class="btn btn-ghost ev-full"
+                                    @click.stop="loadResultFull(row)">查看完整</button>
+                            <pre>{{ row.full !== undefined ? row.full : row.text }}</pre>
+                        </div>
+                    </div>
+                    <!-- 审批卡片：谁的任务 · 工具 · 命令 · 下属自述的用途 -->
+                    <div v-else-if="row.type === 'permission_request'" class="permission-card">
+                        <div class="permission-title">需要你授权：{{ row.tool }}</div>
+                        <p class="permission-cmd" v-if="row.command || row.path">{{ row.command || row.path }}</p>
+                        <p class="permission-purpose" v-if="row.purpose">用途：{{ row.purpose }}</p>
+                        <div class="permission-opts" v-if="!row.resolved">
                             <button type="button" class="btn btn-secondary"
-                                    v-for="o in e.options" :key="o.optionId"
-                                    @click="resolvePermission(e, o)">
+                                    v-for="o in row.options" :key="o.optionId"
+                                    @click="resolvePermission(row.raw, o)">
                                 {{ o.name || o.kind }}
                             </button>
-                            <button type="button" class="btn btn-ghost" @click="resolvePermission(e, null)">拒绝</button>
+                            <button type="button" class="btn btn-ghost" @click="resolvePermission(row.raw, null)">拒绝</button>
                         </div>
-                        <div class="permission-done" v-else>{{ permissionResultText(e) }}</div>
+                        <div class="permission-done" v-else>{{ row.resultText }}</div>
                     </div>
-                    <div v-else-if="e.type === 'status'" class="ev-status">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'plan'" class="ev-plan">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'error'" class="ev-error">{{ e.text }}</div>
-                    <div v-else class="ev-log">{{ e.text }}</div>
+                    <!-- 连续 status 合并成一行淡色时间线 -->
+                    <div v-else-if="row.type === 'status-run'" class="ev-status-run"
+                         :title="row.count + ' 条状态'">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'plan'" class="ev-plan">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'error'" class="ev-error">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'auto_approved' || row.type === 'auto_denied'" class="ev-auto">{{ row.text }}</div>
+                    <div v-else class="ev-log">{{ row.text }}</div>
                 </div>
                 <p class="task-waiting" v-if="detail.status === 'running'">Kimi 正在执行…</p>
                 <p class="task-waiting" v-else-if="detail.status === 'waiting'">{{ detail.awaitingAnswer ? 'Kimi 在等你回答上面的问题。' : '这一轮已结束，可以继续追问。' }}</p>
@@ -433,6 +465,7 @@
 <script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-overview.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-tree.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-events.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>

@@ -167,15 +167,18 @@ def test_pending_permission_row(env):
     """例 2：挂起审批 → 待办一行，含工具名/参数摘要/options/所属主管。"""
     login(env.client)
     lead = newLead(env, '甲')
-    task = putTask(env, 't1', lead=lead, status='running')
-    permEvent(task, args={'command': 'ls -la', 'path': '/tmp/a.txt'})
+    task = putTask(env, 't1', lead=lead, status='running', owner='kimi-code')
+    permEvent(task, args={'command': 'ls -la', 'description': '看看目录里有什么'})
     data = overview(env)
     rows = [p for p in data['pending'] if p['kind'] == 'permission']
     assert len(rows) == 1
     row = rows[0]
     assert row['taskId'] == 't1' and row['leadId'] == lead
     assert row['requestId'] == 'rq-1' and row['title'] == 'Bash'
-    assert row['detail'] == 'ls -la · /tmp/a.txt'
+    # U3：命令单独一条（不再把 command 和其它值糊成一行），用途/派活令牌也带上
+    assert row['detail'] == 'ls -la'
+    assert row['purpose'] == '看看目录里有什么'
+    assert row['owner'] == 'kimi-code'
     assert [o['optionId'] for o in row['options']] == ['o1', 'o2']
     # 名下有审批 → 主管卡片标「等你」
     assert data['leads'][0]['state'] == 'waiting_you'
