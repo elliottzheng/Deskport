@@ -265,6 +265,53 @@ class Deskport:
             body["policy"] = policy
         return Task(self, self._request("POST", "/api/tasks", body)["task"]["id"])
 
+    # ---- 主管通信（指挥链）：令牌绑了主管才有 ----
+    def lead(self) -> dict | None:
+        """我绑定的主管（GET /api/agent/lead）；没绑返回 None。"""
+        return self._request("GET", "/api/agent/lead").get("lead")
+
+    def inbox(self, after: int = 0, wait: int | None = None) -> tuple[list[dict], int]:
+        """收件箱条目（GET /api/agent/leads/inbox）：返回 (entries, lastSeq)。
+
+        after=上次的 lastSeq（只取更新的）；wait=长轮询秒（1–600，语义同任务
+        wait）。没绑主管 → DeskportError(400)。
+        """
+        q = "?after=%d" % int(after or 0)
+        if wait:
+            q += "&wait=%d" % int(wait)
+        j = self._request("GET", "/api/agent/leads/inbox" + q)
+        return j.get("entries") or [], int(j.get("lastSeq") or 0)
+
+    def report(self, text: str) -> int:
+        """向用户汇报（POST /api/agent/leads/report）：一句结论；返回 seq。"""
+        return int(self._request("POST", "/api/agent/leads/report",
+                                 {"text": text}).get("seq") or 0)
+
+    def closeTask(self, task_id: str) -> dict:
+        """按 id 关闭一个任务（POST /api/tasks/<id>/close）：明确结束会话，
+        node 侧进程立即回收；悬着的任务占名额，干完了就关（协作原则 §6）。"""
+        return self._request("POST", f"/api/tasks/{task_id}/close", {})
+
+    def approve(self, task_id: str, request_id: str, deny: bool = False,
+                option_id: str = "") -> dict:
+        """审批挂起的请求（主管处理下属 escalation 的一行式）：deny=True 拒绝；
+        否则自取 allow_once 选项，取不到就报错（不静默授予会话级授权）走 report。"""
+        if not deny and not option_id:
+            ev = self._request("GET", f"/api/tasks/{task_id}/events"
+                              "?types=permission_request").get("events") or []
+            for e in ev:
+                if str(e.get("requestId") or "") == str(request_id):
+                    for opt in e.get("options") or []:
+                        if opt.get("kind") == "allow_once":
+                            option_id = opt.get("optionId") or ""
+                            break
+                    break
+            if not option_id:
+                raise ValueError(f"请求 {request_id} 没有 allow_once 选项（不授予会话级授权）——请 report 上交用户")
+        return self._request("POST", f"/api/tasks/{task_id}/permission",
+                             {"requestId": request_id, "optionId": option_id,
+                              "deny": bool(deny)})
+
     # ---- 端点 ----
     def hosts(self) -> list[dict]:
         return self._request("GET", "/api/agent/hosts")["hosts"]
@@ -273,10 +320,6 @@ class Deskport:
         return Host(self, name, cwd)
 
     # ---- 主管（批次 SR：全权令牌自助成为外部主管，无需用户操作）----
-    def lead(self) -> dict | None:
-        """我（本令牌）绑了哪个主管；没绑返回 None。"""
-        return self._request("GET", "/api/agent/lead").get("lead")
-
     def register_lead(self, name: str, project: str = "") -> dict:
         """用本令牌自助成为外部主管（仅全权令牌可用）。
 
@@ -654,6 +697,18 @@ if __name__ == "__main__":
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
     p.add_argument("--deny", action="store_true", help="卡在审批时拒绝，继续等")
     p = sub.add_parser("tasks", help="列出任务（id / 状态 / 执行点 / 提示词首行）")
+    p = sub.add_parser("inbox", help="收件箱条目（GET /api/agent/leads/inbox），一行一条")
+    p.add_argument("--after", type=int, default=0, help="只取 seq 大于它的条目（上次的 lastSeq）")
+    p.add_argument("--wait", type=int, default=None, metavar="秒",
+                   help="长轮询等待新条目（1–600，语义同任务 wait）")
+    p = sub.add_parser("report", help="向用户汇报（POST /api/agent/leads/report）")
+    p.add_argument("text", help="一句话结论（+ 需要用户决定的事）")
+    p = sub.add_parser("close", help="关闭一个任务（明确结束，回收进程）")
+    p.add_argument("tid", help="任务 id")
+    p = sub.add_parser("approve", help="审批一个挂起的请求（主管处理下属 escalation）")
+    p.add_argument("tid", help="任务 id")
+    p.add_argument("request_id", help="requestId（收件箱 escalation 条目里带）")
+    p.add_argument("--deny", action="store_true", help="拒绝（缺省批准）")
     p = sub.add_parser("wait", help="等某个任务结束并打印最终回复")
     p.add_argument("tid")
     p.add_argument("--timeout", type=int, default=900)
@@ -689,29 +744,47 @@ if __name__ == "__main__":
             for h in dp.hosts():
                 print(f"{h['name']}\t{h['host']}:{h['port']}\t{h['id']}")
             sys.exit(0)
-        if a.cmd == "lead":
+        if a.cmd in ("lead", "inbox", "report", "close", "approve"):
             cfg = _load_config()
             dp = Deskport(a.url or cfg.get("url"),
                           insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
                           cafile=cfg.get("cafile"))
-            if a.register:
-                try:
-                    lead = dp.register_lead(a.register, a.project or "")
-                except DeskportError as e:
-                    if e.status != 409:
-                        raise
-                    existing = dp.lead()   # 已绑定的令牌：看现有主管，退出 0
-                    if not existing:       # 名字被别的主管占用：真冲突，报错
-                        raise
-                    lead = existing
-            else:
-                lead = dp.lead()
-            if not lead:
-                print("未绑定主管（全权令牌可用 lead --register <名字> 自助成为外部主管）")
-            else:
-                print("主管 %s（id %s）%s" % (
-                    lead.get("name") or "?", lead.get("id") or "?",
-                    (" project=%s" % lead["project"]) if lead.get("project") else ""))
+            if a.cmd == "lead":
+                if a.register:
+                    try:
+                        lead = dp.register_lead(a.register, a.project or "")
+                    except DeskportError as e:
+                        if e.status != 409:
+                            raise
+                        existing = dp.lead()   # 已绑定的令牌：看现有主管，退出 0
+                        if not existing:       # 名字被别的主管占用：真冲突，报错
+                            raise
+                        lead = existing
+                else:
+                    lead = dp.lead()
+                if not lead:
+                    print("（未绑定主管）")
+                else:
+                    print("%s\t%s\t%s\t%s" % (lead.get("id") or "",
+                                              lead.get("name") or "",
+                                              lead.get("kind") or "",
+                                              lead.get("status") or ""))
+                sys.exit(0)
+            if a.cmd == "inbox":
+                entries, lastSeq = dp.inbox(a.after, a.wait)
+                for e in entries:
+                    print("%d\t%s\t%s" % (e.get("seq") or 0, e.get("kind") or "",
+                                          " ".join(str(e.get("text") or "").split())))
+                print("lastSeq=%d" % lastSeq)
+                sys.exit(0)
+            if a.cmd == "close":
+                print(json.dumps(dp.closeTask(a.tid), ensure_ascii=False))
+                sys.exit(0)
+            if a.cmd == "approve":
+                print(json.dumps(dp.approve(a.tid, a.request_id, deny=a.deny),
+                                 ensure_ascii=False))
+                sys.exit(0)
+            print("seq=%d" % dp.report(a.text))
             sys.exit(0)
         if a.cmd in ("task", "tasks", "wait"):
             cfg = _load_config()

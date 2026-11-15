@@ -9,7 +9,8 @@
   SHA-256（tokenHash），GET 列表绝不含 hash 或明文；
 - 三档权限：缺省 scopes = 全权；显式 ["upload","share"] / ["share"]，
   其它组合 400 并列出可选（与 agent_api.agentHasScope 的白名单语义一致）；
-- 名称 1-24 字符、不含 < > " ' 与换行、不可重名；总数上限 10 条；
+- 名称 1-24 字符、不含 < > " ' 与换行、不可重名；手工令牌总数上限 10 条
+  （批次 A：绑定了托管主管的专属令牌另设上限 20 条，两套名额分开数）；
 - 不许删最后一条全权令牌——否则可能把自己锁在门外，400 并说明原因；
 - 写完即热生效：config.setAgentTokens 原子写 + 失效 mtime 缓存，
   agentFromRequest 下一读就是新值，无需重启；
@@ -26,11 +27,15 @@ from flask import Blueprint, jsonify, request
 
 import config
 from modules import events
+from modules import leads_store
 from modules.agent_api import SCOPE_FULL, SCOPE_SHARE, SCOPE_UPLOAD, tokenHash
 
 blueprint = Blueprint('agent_tokens', __name__)
 
 MAX_TOKENS = 10
+# 批次 A：绑定了托管主管的令牌是中枢一键签发的「专属令牌」（名字 主管·<name>），
+# 一个主管一条，量随托管主管数走——另设上限，不占上面 10 个手工名额。
+MAX_HOSTED_TOKENS = 20
 MAX_NAME = 24
 BAD_NAME_CHARS = '<>"\'\r\n\t'
 
@@ -50,6 +55,26 @@ def _isFull(entry):
     if not isinstance(scopes, list) or not scopes:
         return True
     return SCOPE_FULL in [str(s).strip() for s in scopes]
+
+
+def isHostedBound(entry):
+    """令牌绑定的主管是不是托管主管（批次 A 的两套名额只认 hosted）。
+
+    绑定悬空（主管记录被手删）不算托管——那条令牌仍占手工名额，吊销它
+    要靠正常途径，不会因"以为是专属令牌"而被绕过删除。
+    """
+    leadId = str(entry.get('lead') or '')
+    if not leadId:
+        return False
+    lead = leads_store.get(leadId)
+    return isinstance(lead, dict) and str(lead.get('kind') or '') == 'hosted'
+
+
+def tokenCounts(tokens=None):
+    """(手工名额已用, 托管名额已用)——两套名额分开数（批次 A A1-2）。"""
+    tokens = config.getAgentTokens() if tokens is None else tokens
+    hosted = sum(1 for t in tokens if isHostedBound(t))
+    return len(tokens) - hosted, hosted
 
 
 def _cleanScopes(raw):
@@ -102,9 +127,15 @@ def createAgentToken():
     if any(str(t.get('name') or '').strip() == name for t in tokens):
         return jsonify({'error': '已存在同名令牌: %s（换个名字，审计才分得清'
                                  '是谁）' % name}), 400
-    if len(tokens) >= MAX_TOKENS:
+    # 批次 A：两套名额分开数——绑了托管主管的专属令牌不占 10 个手工名额
+    plainUsed, hostedUsed = tokenCounts(tokens)
+    if plainUsed >= MAX_TOKENS:
         return jsonify({'error': '智能体令牌最多 %d 个, 请先吊销不用的'
                                  % MAX_TOKENS}), 400
+    if hostedUsed >= MAX_HOSTED_TOKENS:
+        return jsonify({'error': '托管主管的专属令牌最多 %d 个（已 %d）——先'
+                                 '停用或删除不用的托管主管'
+                        % (MAX_HOSTED_TOKENS, hostedUsed)}), 400
     token = secrets.token_urlsafe(32)   # 明文只进这次响应, 不写任何文件
     entry = {'id': secrets.token_hex(8), 'name': name,
              'tokenHash': tokenHash(token), 'createdAt': _now()}
