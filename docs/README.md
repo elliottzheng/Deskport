@@ -23,7 +23,7 @@
 | [agent-network.md](agent-network.md) | 智能体网络架构：中枢与执行点、通信通道、任务生命周期、工作线、韧性、信任模型、扩展动作、设计原则与成本取舍、多智能体协作模式、自主运转（指挥链） |
 | [agent-kit.md](agent-kit.md) | 智能体技能包：手册 + 协作原则 + 客户端 + 驱动、自举命令、`driver.json` 边界、CLI 子命令表、接入约定 |
 | [lead-role.md](lead-role.md) | 主管角色说明（托管主管一键创建时注入）：拆活派活、事件驱动、审批沿链上行、只用 report 汇报、命令边界 |
-| [onboarding-external-agent.md](onboarding-external-agent.md) | 给外部智能体的接入说明（通用版，地址用占位符）：拉技能包 → 放令牌 → 验身份 → 请用户把令牌绑到主管 → 当主管的工作方式 → 常见问题 |
+| [onboarding-external-agent.md](onboarding-external-agent.md) | 给外部智能体的接入说明（通用版，地址用占位符）：拉技能包 → 放令牌 → 验身份 → 全权令牌自助成为主管 → 当主管的工作方式 → 常见问题 |
 | [audit-agent-network.md](audit-agent-network.md) | 智能体网络质量审计：实测缺陷清单与结论 |
 | [lessons-agent-api-feedback.md](lessons-agent-api-feedback.md) | 外部智能体使用反馈沉淀的经验与决策 |
 

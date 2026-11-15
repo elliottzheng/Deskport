@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#F4F7FB">
 <link rel="icon" href="data:,">
-<title>任务 — Deskport</title>
+<title>指挥台 — Deskport</title>
 <link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
@@ -18,111 +18,127 @@
 <main class="container tasks-page" id="app" v-cloak>
     <div class="page-head">
         <div>
-            <h1 class="page-title">任务</h1>
-            <p class="page-sub">给 Kimi 一句话，选上文件，回来看结果。</p>
+            <h1 class="page-title">指挥台</h1>
+            <p class="page-sub">只看主管上交的事；派活、发话、建主管都在右上角。</p>
         </div>
+        <button type="button" class="btn btn-primary cmd-new-btn" @click="openNewSheet()">新建</button>
     </div>
 
     <div class="tasks-layout" :class="{ 'show-detail': !!selectedId }">
         <section class="tasks-main">
-            <div class="task-composer">
-                <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
-                          placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
-                          @keydown.ctrl.enter="create"></textarea>
-                <div class="task-files" v-if="isLocalRun">
-                    <span class="task-file" v-for="p in paths" :key="p">
-                        {{ baseName(p) }}
-                        <button type="button" title="移除" @click="removePath(p)">&times;</button>
-                    </span>
-                    <button type="button" class="btn btn-secondary" @click="openPicker">从收件箱选择</button>
-                    <button type="button" class="btn btn-ghost" @click="togglePathMenu">添加路径</button>
-                </div>
-                <div class="task-path-menu" v-if="pathMenuOpen">
-                    <div class="task-path-sec" v-if="quickDirs.length">
-                        <div class="task-path-title">快速访问</div>
-                        <button type="button" class="task-path-item" v-for="d in quickDirs" :key="d.path"
-                                :class="{ added: paths.indexOf(d.path) >= 0 }" @click="addQuick(d.path)">
-                            <span class="task-path-tag">{{ d.tag }}</span>
-                            <span class="task-path-name">{{ d.label }}</span>
-                            <span class="task-path-full">{{ d.path }}</span>
-                        </button>
-                    </div>
-                    <div class="task-path-sec" v-if="recentPaths.length">
-                        <div class="task-path-title">最近用过</div>
-                        <button type="button" class="task-path-item" v-for="p in recentPaths" :key="p"
-                                :class="{ added: paths.indexOf(p) >= 0 }" @click="addQuick(p)">
-                            <span class="task-path-tag">最近</span>
-                            <span class="task-path-name">{{ baseName(p) }}</span>
-                            <span class="task-path-full">{{ p }}</span>
-                        </button>
-                    </div>
-                    <div class="task-path-sec">
-                        <div class="task-path-title">手动输入</div>
-                        <div class="task-path-add">
-                            <input class="input" v-model.trim="pathInput" spellcheck="false"
-                                   placeholder="C:\data\... 文件或文件夹" @keydown.enter="addPath">
-                            <button type="button" class="btn btn-secondary" @click="addPath">添加</button>
+            <p class="load-error cmd-load-error" v-if="overviewError">
+                没加载出来：{{ overviewError }}
+                <button type="button" class="btn btn-secondary" @click="loadOverview">重试</button>
+            </p>
+            <p class="empty-tip" v-if="!overview && overviewState !== 'error'">加载中…</p>
+
+            <section class="card cmd-pending" v-if="overview && pendingRows.length">
+                <div class="card-title">等你处理<span class="title-side">{{ pendingRows.length }} 件</span></div>
+                <div class="cmd-pending-row" v-for="p in pendingRows" :key="p.key">
+                    <span class="cmd-kind" :class="'cmd-kind-' + p.kind">{{ p.kindText }}</span>
+                    <div class="cmd-pending-main">
+                        <div class="cmd-pending-title">
+                            {{ p.title }}<span class="cmd-pending-lead" v-if="p.leadName"> · {{ p.leadName }}</span>
                         </div>
+                        <div class="cmd-pending-sub" v-if="p.detail">{{ p.detail }}</div>
+                    </div>
+                    <div class="cmd-pending-actions">
+                        <template v-if="p.kind === 'permission'">
+                            <button type="button" class="btn btn-secondary"
+                                    v-for="o in p.options" :key="o.optionId"
+                                    @click="resolvePendingPermission(p, o)">
+                                {{ o.name || o.kind }}
+                            </button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="resolvePendingPermission(p, null)">拒绝</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="openTask(p.taskId, p)">查看</button>
+                        </template>
+                        <template v-else-if="p.kind === 'report'">
+                            <button type="button" class="btn btn-secondary"
+                                    @click="markReportRead(p)">已读</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="speakToLead(p.leadId)">回复</button>
+                        </template>
+                        <template v-else>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="openTask(p.taskId, p)">查看</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="closeProblemTask(p)">关闭</button>
+                        </template>
+                    </div>
+                    <p class="cmd-row-error" v-if="rowErrors[p.key]">{{ rowErrors[p.key] }}</p>
+                </div>
+            </section>
+
+            <section class="cmd-leads">
+                <div class="cmd-sec-title">主管</div>
+                <div class="card cmd-lead-card" v-for="l in leadCards" :key="l.id"
+                     :class="{ open: l.expanded }" @click="toggleLead(l)">
+                    <div class="cmd-lead-head">
+                        <span class="cmd-lead-name">{{ l.name }}</span>
+                        <span class="cmd-lead-kind">{{ l.kindText }}</span>
+                        <span class="cmd-badge" :class="'cmd-badge-' + l.state">{{ l.stateText }}</span>
+                        <span class="cmd-lead-unread" v-if="l.unreadReports">{{ l.unreadReports }} 条新汇报</span>
+                    </div>
+                    <div class="cmd-lead-sub">
+                        <span>{{ l.countsText }}</span>
+                        <span class="cmd-lead-report" v-if="l.lastReportText">汇报：{{ l.lastReportText }}</span>
+                        <span v-if="l.lastSeenText">最近活跃 {{ l.lastSeenText }}</span>
+                    </div>
+                    <div class="cmd-lead-actions" @click.stop>
+                        <button type="button" class="btn btn-ghost" @click="speakToLead(l.id)">发话</button>
+                        <button type="button" class="btn btn-ghost"
+                                v-if="l.kind === 'hosted' && l.taskId"
+                                @click="openTask(l.taskId)">打开主管会话</button>
+                        <button type="button" class="btn btn-ghost" @click="toggleLeadPause(l)">
+                            {{ l.status === 'paused' ? '恢复' : '暂停' }}
+                        </button>
+                    </div>
+                    <p class="cmd-row-error" v-if="leadErrors[l.id]">{{ leadErrors[l.id] }}</p>
+                    <div class="cmd-lead-tasks" v-if="l.expanded" @click.stop>
+                        <button type="button" class="cmd-task-row" v-for="t in l.tasks"
+                                :key="t.id" @click="openTask(t.id)">
+                            <span :class="t.dotClass"></span>
+                            <span class="cmd-task-main">
+                                <span class="cmd-task-title">{{ t.title }}</span>
+                                <span class="cmd-task-sub" v-if="t.sub">{{ t.sub }}</span>
+                            </span>
+                            <span class="cmd-task-status">{{ t.statusText }}</span>
+                        </button>
+                        <p class="empty-tip" v-if="!l.tasks.length">它名下还没有任务。</p>
+                        <button type="button" class="btn btn-ghost cmd-more"
+                                v-if="l.closedHidden > 0 && !moreTasks[l.id]"
+                                @click="loadMoreTasks(l)">
+                            更多（还有 {{ l.closedHidden }} 条已关闭）
+                        </button>
+                        <p class="cmd-more-hint" v-if="moreCapped[l.id]">仅显示最近 50 条</p>
                     </div>
                 </div>
-                <div class="task-options">
-                    <label class="task-mode">执行点
-                        <select class="input task-where" v-model="runWhere">
-                            <option value="local">本机</option>
-                            <option v-for="n in remoteNodes" :key="n.name" :value="n.name">{{ n.name }}</option>
-                        </select>
-                    </label>
-                    <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
-                           spellcheck="false" :placeholder="remoteCwdPlaceholder">
-                    <template v-if="isLocalRun">
-                        <label class="task-mode" for="task-local-cwd">工作目录</label>
-                        <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
-                               spellcheck="false" list="task-cwd-roots"
-                               :placeholder="cwdRoots.length ? cwdRoots[0] : '绝对路径，如 C:\Users\你的用户名\Documents'">
-                        <datalist id="task-cwd-roots">
-                            <option v-for="d in cwdRoots" :key="d" :value="d"></option>
-                        </datalist>
-                    </template>
-                    <label class="task-mode">模式
-                        <select class="input" v-model="mode">
-                            <option value="auto">自动批准（推荐）</option>
-                            <option value="default">逐项批准</option>
-                            <option value="plan">只读规划</option>
-                            <option value="yolo">全部放行</option>
-                        </select>
-                    </label>
-                    <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
-                    <span class="task-hint task-cwd-hint" v-if="isLocalRun">留空 = Deskport 分配的任务目录；填了必须是已存在的绝对路径，且在工作目录或默认工作空间之下<template v-if="cwdRoots.length">（可选：{{ cwdRoots.join('、') }}）</template></span>
-                </div>
-                <div class="task-compose-foot">
-                    <span class="task-hint">{{ isLocalRun
-                        ? '在独立工作区执行；输入文件复制一份，不改原件。'
-                        : '在所选节点的远端目录执行；直接使用远端已有文件。' }}</span>
-                    <button type="button" class="btn btn-primary" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
-                        {{ busy ? '创建中…' : '开始任务' }}
-                    </button>
-                </div>
-                <p class="load-error" v-if="error">{{ error }}</p>
-            </div>
+                <p class="empty-tip" v-if="overview && !leadCards.length">还没有主管——点右上角「新建」建一个外部主管。</p>
+            </section>
 
-            <div class="leads-filter" id="leads-filter" v-if="leadsState === 'ok' && leads.length">
-                    <button type="button" class="leads-filter-btn" :class="{ active: !leadFilter }" @click="setLeadFilter('')">全部</button>
-                    <button type="button" class="leads-filter-btn" v-for="l in filterItems()" :key="l.id"
-                            :class="{ active: leadFilter === l.id }" @click="setLeadFilter(l.id)">{{ l.name }}</button>
-                </div>
-
-                <div class="task-list">
-                <button type="button" class="task-row" v-for="t in tasks" :key="t.id"
-                        :class="{ active: selectedId === t.id }" @click="select(t)">
-                    <span class="task-dot" :class="'is-' + t.status"></span>
-                    <span class="task-row-main">
-                        <span class="task-row-title">{{ t.title || t.prompt }}</span>
-                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}<template v-if="t.node"> · {{ t.node }}</template><template v-if="t.lead"> · {{ leadName(t.lead) }}</template></span>
-                    </span>
-                    <span class="task-row-count" v-if="t.resultFiles && t.resultFiles.length">{{ t.resultFiles.length }} 个结果</span>
+            <section class="card cmd-unassigned" v-if="overview && unassignedView.count">
+                <button type="button" class="cmd-unassigned-head"
+                        @click="unassignedOpen = !unassignedOpen">
+                    <span>其它任务 {{ unassignedView.title }}</span>
+                    <span class="cmd-unassigned-caret" :class="{ open: unassignedView.open }">▾</span>
                 </button>
-                <p class="empty-tip" v-if="!tasks.length">还没有任务。上面写一句，选个文件试试。</p>
-            </div>
+                <div class="cmd-lead-tasks" v-if="unassignedView.open">
+                    <button type="button" class="cmd-task-row" v-for="t in unassignedView.tasks"
+                            :key="t.id" @click="openTask(t.id)">
+                        <span :class="t.dotClass"></span>
+                        <span class="cmd-task-main">
+                            <span class="cmd-task-title">{{ t.title }}</span>
+                            <span class="cmd-task-sub" v-if="t.sub">{{ t.sub }}</span>
+                        </span>
+                        <span class="cmd-task-status">{{ t.statusText }}</span>
+                    </button>
+                    <p class="cmd-more-hint" v-if="unassignedView.closedHidden > 0">
+                        已关闭的仅显示最近 5 条（还有 {{ unassignedView.closedHidden }} 条）
+                    </p>
+                </div>
+            </section>
         </section>
 
         <aside class="task-detail" v-if="detail">
@@ -134,6 +150,9 @@
                         <span v-if="cwdLine"> · {{ cwdLine }}</span>
                         <span v-if="detail.lastActiveLabel"> · 最近 {{ detail.lastActiveLabel }}</span>
                     </div>
+                    <div class="task-detail-lead" v-if="detail.lead">
+                        所属主管：<a href="#" @click.prevent="gotoLead(detail.lead)">{{ leadNameOf(detail.lead) }}</a>
+                    </div>
                 </div>
                 <div class="task-head-actions">
                     <select class="input task-mode-switch" :value="detail.mode"
@@ -144,7 +163,7 @@
                         <option value="plan">只读规划</option>
                         <option value="yolo">全部放行</option>
                     </select>
-                    <button type="button" class="btn btn-ghost task-back" @click="backToList">← 列表</button>
+                    <button type="button" class="btn btn-ghost task-back cmd-detail-back" @click="backToList()">← 返回</button>
                     <a class="btn btn-ghost" :href="logUrl" title="下载完整 jsonl 日志">日志</a>
                     <button type="button" class="btn btn-ghost" v-if="isRunning" @click="cancel">停止本轮</button>
                     <button type="button" class="btn btn-ghost" v-if="canEnd" @click="closeSession">结束会话</button>
@@ -209,6 +228,151 @@
         </aside>
     </div>
 
+    <div class="inbox-mask" v-if="newSheetOpen" @click.self="newSheetOpen = false">
+        <div class="inbox-sheet cmd-sheet">
+            <div class="inbox-sheet-head">
+                <span>新建</span>
+                <button class="inbox-x" @click="newSheetOpen = false">&times;</button>
+            </div>
+            <div class="cmd-sheet-choice" v-if="newSheetTab === ''">
+                <button type="button" class="cmd-choice" @click="newSheetTab = 'lead'">
+                    <span class="cmd-choice-title">新建主管</span>
+                    <span class="cmd-choice-hint">本批只做外部接入：建成后到设置页签发令牌并绑定</span>
+                </button>
+                <button type="button" class="cmd-choice" @click="newSheetTab = 'task'">
+                    <span class="cmd-choice-title">直接派活</span>
+                    <span class="cmd-choice-hint">自己派一个任务，不绑主管</span>
+                </button>
+            </div>
+            <div v-else-if="newSheetTab === 'lead'">
+                <button type="button" class="btn btn-ghost cmd-sheet-back" @click="newSheetTab = ''">← 返回</button>
+                <div class="cmd-kind-row">
+                    <div class="cmd-kind-opt" v-for="c in newLeadKinds" :key="c.kind"
+                         :class="c.enabled ? 'is-on' : 'is-off'" :title="c.hint">
+                        <span class="cmd-kind-title">{{ c.title }}</span>
+                        <span class="cmd-kind-hint">{{ c.hint }}</span>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="new-lead-name">名称</label>
+                    <input id="new-lead-name" class="input" v-model.trim="newLeadName"
+                           placeholder="主管名字，1–24 个字符">
+                </div>
+                <div class="field">
+                    <label class="field-label" for="new-lead-project">项目标签（可空）</label>
+                    <input id="new-lead-project" class="input" v-model.trim="newLeadProject"
+                           placeholder="如：奥赛集训">
+                </div>
+                <button type="button" class="btn btn-primary"
+                        :disabled="newLeadBusy || !newLeadName" @click="createExternalLead">
+                    {{ newLeadBusy ? '创建中…' : '建成外部主管' }}
+                </button>
+                <p class="load-error" v-if="newLeadError">{{ newLeadError }}</p>
+                <p class="cmd-ok" v-if="newLeadOk">{{ newLeadOk }}</p>
+            </div>
+            <div v-else>
+                <button type="button" class="btn btn-ghost cmd-sheet-back" @click="newSheetTab = ''">← 返回</button>
+                <div class="task-composer">
+                    <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
+                              placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
+                              @keydown.ctrl.enter="create"></textarea>
+                    <div class="task-files" v-if="isLocalRun">
+                        <span class="task-file" v-for="p in paths" :key="p">
+                            {{ baseName(p) }}
+                            <button type="button" title="移除" @click="removePath(p)">&times;</button>
+                        </span>
+                        <button type="button" class="btn btn-secondary" @click="openPicker">从收件箱选择</button>
+                        <button type="button" class="btn btn-ghost" @click="togglePathMenu">添加路径</button>
+                    </div>
+                    <div class="task-path-menu" v-if="pathMenuOpen">
+                        <div class="task-path-sec" v-if="quickDirs.length">
+                            <div class="task-path-title">快速访问</div>
+                            <button type="button" class="task-path-item" v-for="d in quickDirs" :key="d.path"
+                                    :class="{ added: paths.indexOf(d.path) >= 0 }" @click="addQuick(d.path)">
+                                <span class="task-path-tag">{{ d.tag }}</span>
+                                <span class="task-path-name">{{ d.label }}</span>
+                                <span class="task-path-full">{{ d.path }}</span>
+                            </button>
+                        </div>
+                        <div class="task-path-sec" v-if="recentPaths.length">
+                            <div class="task-path-title">最近用过</div>
+                            <button type="button" class="task-path-item" v-for="p in recentPaths" :key="p"
+                                    :class="{ added: paths.indexOf(p) >= 0 }" @click="addQuick(p)">
+                                <span class="task-path-tag">最近</span>
+                                <span class="task-path-name">{{ baseName(p) }}</span>
+                                <span class="task-path-full">{{ p }}</span>
+                            </button>
+                        </div>
+                        <div class="task-path-sec">
+                            <div class="task-path-title">手动输入</div>
+                            <div class="task-path-add">
+                                <input class="input" v-model.trim="pathInput" spellcheck="false"
+                                       placeholder="C:\data\... 文件或文件夹" @keydown.enter="addPath">
+                                <button type="button" class="btn btn-secondary" @click="addPath">添加</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="task-options">
+                        <label class="task-mode">执行点
+                            <select class="input task-where" v-model="runWhere">
+                                <option value="local">本机</option>
+                                <option v-for="n in remoteNodes" :key="n.name" :value="n.name">{{ n.name }}</option>
+                            </select>
+                        </label>
+                        <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
+                               spellcheck="false" :placeholder="remoteCwdPlaceholder">
+                        <template v-if="isLocalRun">
+                            <label class="task-mode" for="task-local-cwd">工作目录</label>
+                            <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
+                                   spellcheck="false" list="task-cwd-roots"
+                                   :placeholder="cwdRoots.length ? cwdRoots[0] : '绝对路径，如 C:\Users\你的用户名\Documents'">
+                            <datalist id="task-cwd-roots">
+                                <option v-for="d in cwdRoots" :key="d" :value="d"></option>
+                            </datalist>
+                        </template>
+                        <label class="task-mode">模式
+                            <select class="input" v-model="mode">
+                                <option value="auto">自动批准（推荐）</option>
+                                <option value="default">逐项批准</option>
+                                <option value="plan">只读规划</option>
+                                <option value="yolo">全部放行</option>
+                            </select>
+                        </label>
+                        <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
+                        <span class="task-hint task-cwd-hint" v-if="isLocalRun">留空 = Deskport 分配的任务目录；填了必须是已存在的绝对路径，且在工作目录或默认工作空间之下<template v-if="cwdRoots.length">（可选：{{ cwdRoots.join('、') }}）</template></span>
+                    </div>
+                    <div class="task-compose-foot">
+                        <span class="task-hint">{{ isLocalRun
+                            ? '在独立工作区执行；输入文件复制一份，不改原件。'
+                            : '在所选节点的远端目录执行；直接使用远端已有文件。' }}</span>
+                        <button type="button" class="btn btn-primary cmd-start-btn" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
+                            {{ busy ? '创建中…' : '开始任务' }}
+                        </button>
+                    </div>
+                    <p class="load-error" v-if="error">{{ error }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="inbox-mask" v-if="speakOpen" @click.self="speakOpen = false">
+        <div class="inbox-sheet cmd-sheet cmd-speak">
+            <div class="inbox-sheet-head">
+                <span>给 {{ speakLeadName }} 发话</span>
+                <button class="inbox-x" @click="speakOpen = false">&times;</button>
+            </div>
+            <textarea class="input cmd-speak-input" v-model.trim="speakText" rows="3"
+                      placeholder="说一句话…（托管主管会被立即唤醒）"></textarea>
+            <div class="cmd-speak-foot">
+                <button type="button" class="btn btn-primary"
+                        :disabled="speakBusy || !speakText" @click="sendSpeak">
+                    {{ speakBusy ? '发送中…' : '发送' }}
+                </button>
+            </div>
+            <p class="load-error" v-if="speakError">{{ speakError }}</p>
+        </div>
+    </div>
+
     <div class="inbox-mask" v-if="pickerOpen" @click.self="pickerOpen = false">
         <div class="inbox-sheet">
             <div class="inbox-sheet-head">
@@ -246,7 +410,9 @@
 <script src="/assets/js/app-shell.js?v=__BUILD__"></script>
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
 <script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-overview.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>

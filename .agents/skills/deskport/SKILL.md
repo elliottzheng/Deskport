@@ -208,6 +208,7 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
   202 是受理不是完成。
 - 主管归属（指挥链 P1）：令牌可绑主管（设置页管理），建的任务自动记 `task.lead`；
   `GET /api/agent/lead` 自查绑没绑（没绑 `{"lead": null}`）。
+- 全权令牌可以用 `deskport.py lead --register <名字>` 自助成为外部主管，无需用户操作。
 - 按主管筛任务：`GET /api/tasks?lead=me`（按自己令牌绑的主管筛，没绑 400）
   或 `?lead=<主管id>`；主管被停用时建任务 403，已有任务的读/续聊/审批/关闭照常。
 

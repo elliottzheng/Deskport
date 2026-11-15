@@ -222,12 +222,41 @@
         return '/path';
     }
 
+    // ---- 就地错误条（批次 U 返工）：行动失败在出错的那一行显示，几秒后自愈 ----
+    // 错误袋是 Vue 实例 data 里的一个对象（field 名），按 key 存文案；同 key
+    // 重复出现只留最新一条，ttl 到了自动消失（下次成功由调用方 clearError）。
+    // 定时器句柄放模块级——不进响应式数据，免得被 Vue 代理。
+    var _flashTimers = {};
+
+    function flashError(vm, field, key, msg, ttlMs) {
+        var bag = Object.assign({}, vm[field]);
+        bag[key] = String(msg || '出错了，请稍后再试');
+        vm[field] = bag;
+        var tk = field + '|' + key;
+        if (_flashTimers[tk]) { clearTimeout(_flashTimers[tk]); }
+        _flashTimers[tk] = setTimeout(function () {
+            var next = Object.assign({}, vm[field]);
+            delete next[key];
+            vm[field] = next;
+        }, ttlMs || 5000);
+    }
+
+    function clearError(vm, field, key) {
+        var bag = vm[field] || {};
+        if (!bag[key]) { return; }
+        var next = Object.assign({}, bag);
+        delete next[key];
+        vm[field] = next;
+    }
+
     window.WPCommon = {
         fmtSize: fmtSize,
         fmtTime: fmtTime,
         fmtAgo: fmtAgo,
         escapeHtml: escapeHtml,
         confirm: confirmDialog,
+        flashError: flashError,
+        clearError: clearError,
         fullscreenToggle: fullscreenToggle,
         cwdExample: cwdExample,
         uploadBox: {

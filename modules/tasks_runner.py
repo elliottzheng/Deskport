@@ -13,7 +13,7 @@ import time
 import config
 from modules import leads_escalation, leads_inbox, sensitive_values
 from modules import tasks_store as store
-from modules import task_state, task_node
+from modules import task_events, task_state, task_node
 from modules import task_engines
 from modules import worklines_store
 from modules.kimi_acp import KimiAcp, extractText
@@ -48,8 +48,8 @@ def _flushAssistant(task):
         buf = task.pop('_assistantBuf', '') or ''
     if not buf:
         return
-    store.repo.append_event(task, 'assistant', text=buf[:store.MAX_TEXT],
-                            full=buf, truncated=len(buf) > store.MAX_TEXT)
+    text, truncated = task_events.truncateEvent('assistant', buf)
+    store.repo.append_event(task, 'assistant', text=text, full=buf, truncated=truncated)
 
 
 def _argsText(args):
@@ -111,20 +111,51 @@ def _rememberLateArgs(task, update):
     return callId, argsText
 
 
+def _needsBackfill(args, argsText):
+    """是否把后到的参数补进已落卡的 tool 事件（主控 2026-11-15 定规则）。
+
+    已落卡的 args 为空、或不是合法完整 JSON（流式首帧残片，如 "{"、
+    "{\"command\": "——U 批验收实测的形状），且后到的 argsText 是合法完整
+    JSON → 回填。后到的参数本来就是权威值；已落卡是合法完整 JSON 时不覆盖
+    （先落的完整参数同样是权威值）。后到的不是合法 JSON 时也不回填——流式
+    中途残片盖过去只会把事件卡在半截参数上。
+    """
+    if _parseArgs(args) is not None:
+        return False        # 已落卡完整：不覆盖
+    return _parseArgs(argsText) is not None
+
+
 def _backfillToolArgs(task, callId, argsText):
-    """把后到的参数补进已落卡的 tool 事件（写入前同样脱敏，R5-2）。"""
+    """把后到的参数补进已落卡的 tool 事件（写入前同样脱敏，R5-2）。
+
+    只改内存不够：批 PS1 起窗口从 jsonl 回填，而 jsonl 该行是参数未到时写
+    的（args 为空），重启后回填看到的还是空——真实 Kimi 正是这种流式形状
+    （_rememberLateArgs），主控 2026-11-15 决定不接受"重启后看不到命令"。
+    故回填时往 jsonl 追加一行**不带 seq** 的 tool_args_patch 补丁记录
+    （targetSeq=被补事件的 seq，args 与内存落卡逐字一致），重启回填与
+    /event/<seq> 按它还原；补丁不占事件序号，seq 校正不受影响。
+    落盘的 agent_tasks.json 已剥离 events，store.repo.save() 对回填是空转
+    （批 1 起删除）——args 以 jsonl 补丁行为准。
+
+    回填判定（独立验收 2026-11-15 追加）：残片首帧（含 U 批实测的
+    "{\"command\": " 这种 11 字半截 JSON）也要补，规则见 _needsBackfill。
+    """
     if not callId or not argsText:
         return
-    text = sensitive_values.redactText(argsText)[:store.MAX_TEXT]
+    text = sensitive_values.redactText(argsText)
+    text, flag = task_events.truncateEvent('tool', text)
     with store.repo.lock:
         for event in reversed(task.get('events') or []):
             if event.get('type') != 'tool' or event.get('callId') != callId:
                 continue
-            if event.get('args'):
+            if not _needsBackfill(event.get('args'), argsText):
                 return
             event['args'] = text
-            event['truncated'] = len(argsText) > store.MAX_TEXT
-            store.repo.save()
+            event['truncated'] = flag
+            store.repo.log_write(task, {'type': 'tool_args_patch',
+                                        'targetSeq': event.get('seq'),
+                                        'args': text, 'truncated': flag,
+                                        'at': store._now()})
             return
 
 
@@ -166,11 +197,10 @@ def _handleAcpUpdate(task, update):
             # 主控可观测（R4-8）：执行方正在跑的工具，tool_result 到达即清
             task['_currentTool'] = {'name': update.get('title') or '',
                                     'since': store._now()}
+        args, truncated = task_events.truncateEvent('tool', argsText)
         store.repo.append_event(task, 'tool',
                      name=update.get('title') or update.get('kind') or 'tool',
-                     args=argsText[:store.MAX_TEXT],
-                     full=argsText,
-                     truncated=len(argsText) > store.MAX_TEXT,
+                     args=args, full=argsText, truncated=truncated,
                      callId=callId, status=update.get('status') or '')
         return
     if kind == 'tool_call_update':
@@ -184,22 +214,21 @@ def _handleAcpUpdate(task, update):
         rawText = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
         with store.repo.lock:
             task['_currentTool'] = None   # 工具收尾（R4-8 currentTool 清空）
+        text, truncated = task_events.truncateEvent('tool_result', rawText)
         store.repo.append_event(task, 'tool_result',
-                     text=rawText[:store.MAX_TOOL_RESULT],
-                     full=rawText,
-                     truncated=len(rawText) > store.MAX_TOOL_RESULT,
+                     text=text, full=rawText, truncated=truncated,
                      callId=update.get('toolCallId') or '',
                      name=update.get('title') or '')
         return
     if kind == 'plan':
-        entries = update.get('entries') or []
         lines = []
-        for item in entries:
+        for item in update.get('entries') or []:
             if isinstance(item, dict):
                 lines.append('%s %s' % (item.get('status') or '', item.get('content') or ''))
             else:
                 lines.append(str(item))
-        store.repo.append_event(task, 'plan', text='\n'.join(lines)[:store.MAX_TEXT])
+        planText, _ = task_events.truncateEvent('plan', '\n'.join(lines))
+        store.repo.append_event(task, 'plan', text=planText)
         return
     if kind == 'available_commands_update':
         # R4-8：只存名字列表进任务详情（commands），其余忽略

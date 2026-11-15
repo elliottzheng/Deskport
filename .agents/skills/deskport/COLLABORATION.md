@@ -64,6 +64,10 @@
 - **带边界**：`policy`（allowPaths/allowCommands/denyCommands）随任务下发，
   服务端先放行边界内、越界才挂起。
 
+**迭代用增量测试，交付前全量**：改代码过程中用 `python tools/run_tests.py --files ...`
+或 `--changed` 只跑相关文件（秒级），交付前跑一次全量 `python tools/run_tests.py`
+（并行、约 1–2 分钟）；别直接串行 `pytest tests`，全量 6 分钟还会撞单条命令时限。
+
 ## 3. 主管的一天（事件驱动，派完就睡）
 
 1. **派活**：按第 2 节把目标拆成小块派出去，一句话清单记在回复里。

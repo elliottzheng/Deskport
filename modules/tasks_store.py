@@ -13,18 +13,16 @@ import threading
 import time
 
 import config
-from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node
+from modules import contracts, fsutil, store_io, task_state, task_cwd, task_node, task_events
 from modules import sensitive_values
 from modules.staging import safeAttachmentName
+from modules.task_events import MAX_EVENTS, MAX_TEXT, MAX_TOOL_RESULT  # noqa: F401（store.MAX_* 兼容旧引用）
 
 log = logging.getLogger('tasks')
 
 MAX_FILE_MB = 200
 MAX_TASK_MB = 500
 MAX_TASK_FILES = 3000
-MAX_EVENTS = 2000
-MAX_TEXT = 8000
-MAX_TOOL_RESULT = 4000
 MAX_UPLOAD_MB = 32        # /api/tasks/files 单文件上限（§7b 过渡：智能体没有
                           # exec/sftp 之前的文件投递通道）
 
@@ -98,7 +96,9 @@ class TaskRepository:
     def __init__(self, store_path, log_dir):
         self.store_path = store_path
         self.log_dir = log_dir
-        self.tasks = {}
+        # 批 PS1：tasks 直接按下标/.get 取值也触发事件回填（见 HydratingMap）
+        self.tasks = task_events.HydratingMap(
+            lambda task: task_events.hydrateEvents(task, self.log_path(task)))
         self.lock = threading.RLock()
         # 阻塞等待（R4-3）：以 repo.lock 为条件锁——append_event 在锁内
         # notify_all，等待方 wait() 期间整体放锁，追加方照常入队
@@ -108,6 +108,7 @@ class TaskRepository:
         self.loaded = False
         self._saveSeq = 0        # 落盘快照序号（捕获时发号，防旧快照覆新）
         self._savedGate = store_io.SeqGate()   # 已落盘序号（锁内持有，P1）
+        self._keepLegacyShape = False   # 旧格式留原件失败：本进程按旧格式写，不剥离
 
     # ---- 公开访问器：上层不再直接摸私有容器 ----
     def get(self, taskId):
@@ -116,7 +117,7 @@ class TaskRepository:
 
     def list(self):
         with self.lock:
-            return list(self.tasks.values())
+            return [self.tasks[k] for k in self.tasks]   # 逐键取值：__getitem__ 触发回填
 
     def put(self, task):
         with self.lock:
@@ -165,6 +166,9 @@ class TaskRepository:
             raw = store_io.loadSnapshot(self.store_path)
             if isinstance(raw, dict):
                 self.tasks.update(raw)
+                if any('events' in t for t in raw.values() if isinstance(t, dict)):
+                    # 旧格式快照（批 PS1）：第一次 save 前留 .pre-migration-*.bak 原件
+                    self._keepLegacyShape = not task_events.backupLegacyStore(self.store_path)
             dirty = False
             for task in self.tasks.values():
                 # P0-3（外部智能体反馈 2026-11-14，已复现）：审批记录只在内存，
@@ -192,10 +196,12 @@ class TaskRepository:
         # "dictionary changed size during iteration"。锁内只生成字符串并发
         # 序号；读 savedSeq→比较→写盘→更新 savedSeq 整段收在 store_io 的
         # _IO_LOCK 内完成（SeqGate），锁外不再读写 savedSeq——否则旧序号
-        # save 拿锁外读到的旧值进门，把已落盘的新快照盖掉（验收-R P1）
+        # save 拿锁外读到的旧值进门，把已落盘的新快照盖掉（验收-R P1）。
+        # 批 PS1：快照只存元数据（events/_ 键不落盘）；旧格式已由 load 留原件
         with self.lock:
             try:
-                payload = json.dumps(self.tasks, ensure_ascii=False)
+                payload = task_events.snapshotPayload(self.tasks,
+                                                       self._keepLegacyShape)
             except (TypeError, ValueError) as e:
                 log.warning('serialize tasks failed: %s', e)
                 return
@@ -206,13 +212,9 @@ class TaskRepository:
     def log_path(self, task):
         return os.path.join(self.log_dir, task['id'] + '.jsonl')
 
-    def log_write(self, task, entry):
-        try:
-            os.makedirs(self.log_dir, exist_ok=True)
-            with open(self.log_path(task), 'a', encoding='utf-8') as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-        except OSError as e:
-            log.warning('append task log failed: %s', e)
+    def log_write(self, task, entry):   # 重试与失败计数见 task_events.appendJsonl
+        task_events.appendJsonl(self.log_dir, self.log_path(task),
+                                json.dumps(entry, ensure_ascii=False) + '\n')
 
     def append_event(self, task, etype, **payload) -> contracts.TaskEvent:
         full = payload.pop('full', None)
@@ -222,6 +224,10 @@ class TaskRepository:
             task['lastActiveAt'] = _now()   # 每次事件都刷新（R4-8：轮中可见活跃）
             event = {'seq': task['seq'], 'at': _now(), 'type': etype}
             event.update(payload)
+            entry = dict(event)
+            if full is not None:
+                entry['text'] = full
+            self.log_write(task, entry)   # 批 PS1：先写 jsonl（真相先落地），再进窗口/save
             events = task.setdefault('events', [])
             events.append(event)
             if len(events) > MAX_EVENTS:
@@ -230,10 +236,6 @@ class TaskRepository:
                 task['lastText'] = payload['text'][:300]
             self.save()
             self.evCond.notify_all()   # 唤醒 /wait 阻塞订阅者（R4-3）
-        entry = dict(event)
-        if full is not None:
-            entry['text'] = full
-        self.log_write(task, entry)
         return event
 
     def summaryBrief(self, task):

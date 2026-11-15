@@ -45,6 +45,8 @@ const PAGES = [
         name: 'tasks',
         html: 'frontend/tasks.html',
         js: ['frontend/assets/js/tasks-leads.js',
+             'frontend/assets/js/settings-leads.js',
+             'frontend/assets/js/tasks-overview.js',
              'frontend/assets/js/tasks.js'],
     },
 ];

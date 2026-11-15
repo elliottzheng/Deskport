@@ -19,7 +19,6 @@
                 pathMenuLoaded: false,
                 quickDirs: [],
                 recentPaths: [],
-                tasks: [],
                 selectedId: null,
                 detail: null,
                 events: [],
@@ -31,13 +30,12 @@
                 fullEvents: {},
                 error: '',
                 notice: '',
+                savedScroll: 0,
                 pickerOpen: false,
                 pickerSource: 'all',
                 inboxItems: [],
                 picked: {},
-                listTimer: null,
                 detailTimer: null,
-                autoSelected: false,
             };
         },
         computed: {
@@ -119,45 +117,16 @@
         mounted() {
             this.loadRecent();
             this.loadCwdRoots();
-            this.refresh();
             this.loadNodes();
-            this.listTimer = setInterval(this.refresh, 2000);
             this.detailTimer = setInterval(this.pollDetail, 1000);
         },
         beforeUnmount() {
-            clearInterval(this.listTimer);
             clearInterval(this.detailTimer);
         },
         methods: {
-            async refresh() {
-                if (document.visibilityState !== 'visible') { return; }
-                try {
-                    const url = WPTasksLeads.taskListUrl('/api/tasks?full=1', this.leadFilter);
-                    const r = await fetch(url);
-                    const data = await r.json();
-                    if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                    this.tasks = data.tasks || [];
-                    if (!this.selectedId && !this.autoSelected && this.tasks.length) {
-                        this.autoSelected = true;
-                        this.select(this.tasks[0]);
-                    } else if (this.selectedId && this.detail) {
-                        const id = this.selectedId;
-                        const cur = this.tasks.find(function (t) { return t.id === id; });
-                        if (cur) {
-                            // R4-0 列表是精简摘要：只合并存在的键，
-                            // 缺的字段（resultFiles/canContinue…）由 loadEvents 全量轮询补
-                            const patch = {};
-                            ['status', 'resultFiles', 'error', 'lastText', 'canContinue',
-                             'pendingPermission', 'canResume', 'awaitingAnswer', 'mode',
-                             'lastActiveLabel', 'queuedMessages'].forEach(function (k) {
-                                if (cur[k] !== undefined) { patch[k] = cur[k]; }
-                            });
-                            this.detail = Object.assign({}, this.detail, patch);
-                        }
-                    }
-                } catch (err) { /* 保持当前列表 */ }
-            },
             async select(task) {
+                // 手机上详情是全屏 sheet：打开前记住列表滚动位置，返回时还原
+                this.savedScroll = window.scrollY || 0;
                 this.selectedId = task.id;
                 this.detail = task;
                 this.events = [];
@@ -242,12 +211,13 @@
                     });
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                    this.tasks.unshift(data.task);
                     this.prompt = '';
                     this.paths = [];
                     this.pathMenuOpen = false;
                     if (isLocal) { this.rememberCwd(cwd); }
+                    this.newSheetOpen = false;
                     await this.select(data.task);
+                    await this.loadOverview();   // 新任务（无主）立刻进「其它任务」
                 } catch (err) {
                     this.error = err.message;
                 } finally {
@@ -331,13 +301,15 @@
                     await this.loadEvents();
                 }
             },
-            backToList() {
-                this.autoSelected = true;
+            backToList(restoreScroll) {
                 this.selectedId = null;
                 this.detail = null;
                 this.events = [];
                 this.after = 0;
                 this.message = '';
+                if (restoreScroll === false) { return; }   // 调用方自己滚（回主管卡片）
+                const scroll = this.savedScroll || 0;
+                this.$nextTick(function () { window.scrollTo(0, scroll); });
             },
             async cancel() {
                 if (!this.selectedId) { return; }
@@ -468,18 +440,6 @@
             fmtTime(ts) {
                 return WPCommon.fmtTime(ts);
             },
-            statusLabel(s) {
-                return {
-                    queued: '排队中', running: '运行中', waiting: '等你继续', paused: '已休眠',
-                    closed: '已结束', done: '完成', failed: '失败',
-                    cancelled: '已取消', interrupted: '已中断',
-                }[s] || s || '-';
-            },
-            modeLabel(m) {
-                return {
-                    auto: '自动批准', default: '逐项批准', plan: '只读规划', yolo: '全部放行',
-                }[m] || m || 'auto';
-            },
             shortArgs(a) {
                 try {
                     const obj = JSON.parse(a || '{}');
@@ -495,6 +455,6 @@
             },
         },
     });
-app.mixin(WPTasksLeads.mixin());
+app.mixin(WPTasksOverview.mixin());
 app.mount('#app');
 })();

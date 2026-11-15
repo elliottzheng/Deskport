@@ -10,12 +10,13 @@
 |---|---|---|
 | `SKILL.md` | 智能体 | 接口速查：快命令、SFTP、持久会话、任务派活、工作线、主管通信 |
 | `COLLABORATION.md` | 主控 | 协作原则（指挥链：用户 → 主管 → 下属）：分工、派活规格、审批边界、验收、省上下文 |
-| `deskport.py` | 两边 | Python 客户端（795 行、零依赖），也能当 CLI |
+| `deskport.py` | 两边 | Python 客户端（832 行、零依赖），也能当 CLI |
 | `driver.py` | 主控 | 驱动模板：别名目录、边界判定、自动放行、409 排队、收件箱模式、暂停续接 |
 | `driver.example.json` | 主控 | `driver.json` 最小样例（必填 root/danger/safe，带 `_说明`） |
 
-**指挥链**：用户只和少数主管说话，主管指挥执行方。令牌可以在设置页绑到一条主管记录上
-（`GET /api/agent/lead` 自查）；用主管令牌建的任务自动记归属，收件箱把下属事件汇总给
+**指挥链**：用户只和少数主管说话，主管指挥执行方。令牌绑到一条主管记录上才进指挥链
+（外部智能体用全权令牌跑 `python deskport.py lead --register "<名字>"` 自助绑定，
+不需要用户操作；`GET /api/agent/lead` 自查）；用主管令牌建的任务自动记归属，收件箱把下属事件汇总给
 主管，主管只用 `report` 向用户汇报。怎么当主管见 `COLLABORATION.md` 第 3、5、6 节，
 托管主管的完整角色说明见 `lead-role.md`（一键创建时注入）。
 
@@ -129,14 +130,15 @@ CLI 全部子命令（`python deskport.py <命令> -h` 看各自动态帮助）�
 | `task <描述> [-n 执行点] [-m 模式] [--model 模型] [--title 标题] [--wait 秒] [--allow/--deny]` | 建任务派活；`--wait` 建完就等这一轮结束并打印最终回复 |
 | `tasks` | 列出任务（id / 状态 / 执行点 / 标题首行） |
 | `wait <任务id> [--timeout 秒] [--allow/--deny]` | 阻塞等某个任务结束并打印最终回复 |
-| `lead` | 我绑定的主管（没绑打印一行提示） |
+| `lead [--register 名字 [--project X]]` | 看绑定的主管；全权令牌 `--register` 自助成为外部主管（没绑打印一行提示） |
 | `inbox [--after N] [--wait 秒]` | 收件箱条目，一行一条，末尾 `lastSeq=` 游标 |
 | `report "<一句话>"` | 向用户汇报（主管唯一的嘴） |
 | `close <任务id>` | 关闭任务（明确结束，回收进程） |
 | `approve <任务id> <requestId> [--deny]` | 审批下属的 escalation（只批 allow_once；拒绝加 `--deny`） |
 
 `lead` / `inbox` / `report` / `approve` 是指挥链上的主管命令：令牌绑了主管才有
-（没绑 `inbox`/`report` 报 400 并提示先去建主管）。派活用 `--title` 给标题
+（没绑 `inbox`/`report` 报 400；全权令牌跑 `lead --register "<名字>"` 自助成为主管，
+不需要用户操作）。派活用 `--title` 给标题
 （≤ 24 字）；不给时服务端从描述首行推导。
 
 已知的服务端边界（客户端已吸收）：exec 无状态、单条 1–600s、输出上限 2 MiB、含 NUL
