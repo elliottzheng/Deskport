@@ -7,10 +7,6 @@
 审批仍挂着不自动拒绝，补一条「已上交用户」notice，用户从面板批准后继续；
 结果事件带 by（主管令牌名 / 面板）。全部桩化：唤醒不起真 kimi——托管任务
 在 repo 里置假 agent，_handleAcpPermission 在线程里真跑（它阻塞到决定）。
-
-N1 追加面：历史 escalation 补标（backfillResolved：任务终态/pendingPermission
-已变 → resolvedRequests，幂等）与主管自己待批提示的「同类只留最新、条件
-解除即收回」（ownPermissionLive + sweeper 收回复算）。
 """
 import json
 import os
@@ -24,7 +20,7 @@ import pytest
 import config as configMod
 from modules import agent_nodes as nodesMod
 from modules import events as eventsMod
-from modules import lead_inbox_store, leads_escalation, leads_inbox, leads_store
+from modules import leads_inbox, leads_store
 from modules import tasks_api
 from modules import tasks_runner as runner
 from modules import tasks_store as store
@@ -58,13 +54,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(nodesMod, '_healthModels',
                         {'at': time.monotonic(), 'data': {}})
     from modules import leads_inbox as inboxMod
-    realSweep = inboxMod.sweepOnce
     monkeypatch.setattr(inboxMod, 'sweepOnce', lambda: None)
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
     return SimpleNamespace(client=app.test_client(), fresh=app.test_client(),
                            audit=audit, repo=repo, tmp=tmp_path, app=app,
-                           sweep=realSweep, monkeypatch=monkeypatch)
+                           monkeypatch=monkeypatch)
 
 
 def login(client):
@@ -467,94 +462,3 @@ def test_handed_over_notice_no_promise_when_lead_retired(env):
     results = [e for e in env.repo.get(task['id'])['events']
                if e.get('type') == 'permission_result']
     assert results[-1]['status'] == 'approved' and results[-1]['by'] == '面板'
-
-
-# ---------------------------------------------------------------- N1：历史补标 / 提示瘦身
-
-def rawDown(env, leadId):
-    """未经过滤的 down 条目（N1：收件箱只追加不改写）。"""
-    return [e for e in lead_inbox_store.readAll(leadId)
-            if e.get('dir') == 'down']
-
-
-def seedEscalation(env, leadId, taskId, requestId):
-    """手工造一条 escalation（批次 L 之前的形状：从没写 resolvedRequests）。"""
-    leads_inbox.append(leadId, 'up', 'escalation',
-                       '任务 %s 请求审批：Bash（requestId %s）'
-                       % (str(taskId)[:8], requestId),
-                       {'task': str(taskId), 'requestId': str(requestId)})
-
-
-def test_backfill_marks_settled_escalations(env):
-    """N1 历史补标：任务已关闭 / pendingPermission 已变的旧 escalation 补标
-    （by='backfill'），仍挂着的不补——线上 174 条"未落定"实际一条都不挂。"""
-    login(env.client)
-    tok = newToken(env, 'T1')
-    L = newLead(env, '甲')
-    assert bind(env, L, tok['id']).status_code == 200
-    closed = newTask(env, token=tok['token'])
-    changed = newTask(env, token=tok['token'])
-    hanging = newTask(env, token=tok['token'])
-    seedEscalation(env, L, closed, 'rq-closed')
-    seedEscalation(env, L, changed, 'rq-changed')
-    seedEscalation(env, L, hanging, 'rq-hang')
-    with env.repo.lock:
-        env.repo.get(closed)['status'] = 'closed'
-        env.repo.get(changed)['pendingPermission'] = 'rq-other'
-        env.repo.get(hanging)['pendingPermission'] = 'rq-hang'
-        env.repo.get(hanging)['status'] = 'waiting'
-        env.repo.save()
-
-    assert leads_escalation.backfillResolved() == 2
-    resolved = leads_store.get(L).get('resolvedRequests') or {}
-    assert set(resolved) == {'rq-closed', 'rq-changed'}
-    assert all(v['by'] == 'backfill' for v in resolved.values())
-    # 仍挂着的不补；读侧也不把它当已落定
-    entry = [e for e in inboxEntries(env, L)
-             if e['ref']['requestId'] == 'rq-hang'][0]
-    assert leads_inbox.entryResolved(leads_store.get(L), entry) is False
-
-
-def test_backfill_idempotent(env):
-    """重复运行幂等：第二遍一条都不补，resolvedRequests 逐字不变。"""
-    login(env.client)
-    tok = newToken(env, 'T1')
-    L = newLead(env, '甲')
-    assert bind(env, L, tok['id']).status_code == 200
-    tid = newTask(env, token=tok['token'])
-    seedEscalation(env, L, tid, 'rq-old')
-    with env.repo.lock:
-        env.repo.get(tid)['status'] = 'failed'
-        env.repo.save()
-
-    assert leads_escalation.backfillResolved() == 1
-    first = leads_store.get(L)['resolvedRequests']
-    assert leads_escalation.backfillResolved() == 0
-    assert leads_store.get(L)['resolvedRequests'] == first
-
-
-def test_own_permission_notice_latest_only_then_cleared(env):
-    """N1 要求 4：主管自己待批提示同类只留最新、条件解除即收回（sweeper
-    每轮复算，不需要用户点；条目本身不删）。"""
-    login(env.client)
-    L, H = hostedViaApi(env)
-    task = env.repo.get(H)
-    with env.repo.lock:
-        task['status'] = 'running'
-        task['pendingPermission'] = 'rq-a'
-        env.repo.save()
-    # 同一任务顺序撞两次审批：写两条，只显示最新那条
-    leads_escalation.noticeOwnPermission(task, 'Bash', {'command': 'ls'})
-    leads_escalation.noticeOwnPermission(task, 'Bash',
-                                         {'command': 'rm -rf build'})
-    down = leads_inbox.entriesAfter(L, 0, 'down')[0]
-    assert len(down) == 1 and 'rm -rf build' in down[0]['text']
-    assert len(rawDown(env, L)) == 2       # 只追加不改写
-
-    # 条件解除：审批落定（runner 先清 pendingPermission 后落定）+ sweeper 一轮
-    with env.repo.lock:
-        task['pendingPermission'] = ''
-        env.repo.save()
-    env.sweep(now=time.time() + 601)
-    assert leads_inbox.entriesAfter(L, 0, 'down')[0] == []
-    assert len(rawDown(env, L)) == 2

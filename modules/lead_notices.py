@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""主管侧的系统提醒（批次 L）：提问直达收件箱（L2）+ 反应超时提醒（L1）。
+"""主管侧的系统提醒（批次 L）：提问直达收件箱（L2）+ 反应超时提醒（L1）
++ 无动静提示（P3-5，N1 拆预算时自 leads_inbox 移入——提醒的写入与读侧
+瘦身都归本模块）。
 
 L2（下属提问直达主管）：下属任务的 permission_request 若是 AskUserQuestion
 （工具名或参数形如 {questions:[…]}），由 tasks_runner 在挂起前调
@@ -20,11 +22,12 @@ escalation（审批出过结果，leads_inbox.entryResolved）不算待处理—
 
 N1（一事一条 / 条件解除即收回）：down 侧用户可见提醒不再堆屏。同一去重族
 （noticeFamily：ref 带 lead = L1 反应超时，ref 带 task = 主管自己待批）只留
-最新一条——读侧 entriesAfter 的 down 过滤按族保留最新，写盘照旧只追加，
-文案里的数字天然是最新那条；条件解除（主管又读了/审批落定了）由 sweeper
-每轮 retractNotices 复算（responseNoticeLive 与写入口同一套判定），不再
-成立的族在主管记录上记 noticeCleared[族]=seq，读侧据此收回，不需要用户点。
-历史 escalation 的落定补标在 leads_escalation.backfillResolved（启动时跑）。
+最新一条——读侧 entriesAfter 的 down 分支调本模块 liveDownEntries 按族保留
+最新，写盘照旧只追加，文案里的数字天然是最新那条；条件解除（主管又读了/
+审批落定了）由 sweeper 每轮 retractNotices 复算（responseNoticeLive 与写入
+口同一套判定），不再成立的族在主管记录上记 noticeCleared[族]=seq，读侧据此
+收回，不需要用户点。历史 escalation 的落定补标在
+leads_escalation.backfillResolved（启动时跑）。
 """
 import re
 import time
@@ -240,8 +243,9 @@ def retractNotices(lead, now=None):
     """条件解除即收回（N1）：sweeper 每轮对每位主管复算各 notice 族。
 
     族里最新那条的条件不再成立 → 主管记录上记 noticeCleared[族]=seq，读侧
-    （leads_inbox.entriesAfter 的 down 过滤）不再返回它——不需要用户点。
-    按 seq 记：同族来了更新的 notice 自动脱标（新事实优先）。返回收回了几条。
+    （leads_inbox.entriesAfter 的 down 分支过 liveDownEntries）不再返回它
+    ——不需要用户点。按 seq 记：同族来了更新的 notice 自动脱标。返回收回了
+    几条。早已收回的族直接跳过（markNoticeCleared 对未变状态也不写盘）。
     """
     leadId = str((lead or {}).get('id') or '')
     if not leadId:
@@ -249,12 +253,16 @@ def retractNotices(lead, now=None):
     latest = _latestDownNotices(leadId)
     if not latest:
         return 0
+    settled = lead.get('noticeCleared')
+    settled = settled if isinstance(settled, dict) else {}
     cleared = 0
     for family, entry in latest.items():
+        seq = _int0(entry.get('seq'))
+        if settled.get(family) == seq:
+            continue          # 早已收回：别每 5s 重写一遍 leads.json
         if _noticeLive(family, entry, lead, now):
             continue
-        _rec, err = leads_store.markNoticeCleared(leadId, family,
-                                                  entry.get('seq'))
+        _rec, err = leads_store.markNoticeCleared(leadId, family, seq)
         if not err:
             cleared += 1
     return cleared
@@ -270,3 +278,71 @@ def _noticeLive(family, entry, lead, now):
         # 放函数内才不成环
         return leads_escalation.ownPermissionLive(entry)
     return True
+
+
+def liveDownEntries(leadId, entries):
+    """读侧 notice 瘦身（N1）：leads_inbox.entriesAfter 的 down 分支调它。
+
+    取代（一事一条）：同一去重族（noticeFamily）只保留最新一条——写新
+    notice 时不必回头改旧条目（收件箱只追加），堆叠自然不再显示，文案里
+    的数字天然是最新那条的。
+    收回（条件解除即收回）：族里最新那条被 sweeper 复算后记了
+    noticeCleared[族]=seq（retractNotices）→ 不再返回。
+    汇报（kind='report'）与没有族的 notice 原样透传。
+    """
+    if not any((e.get('kind') or '') == 'notice' for e in entries):
+        return entries
+    lead = leads_store.get(leadId) or {}
+    cleared = lead.get('noticeCleared')
+    cleared = cleared if isinstance(cleared, dict) else {}
+    newest = {}
+    for e in entries:
+        if (e.get('kind') or '') != 'notice':
+            continue
+        family = noticeFamily(e)
+        if family:
+            newest[family] = _int0(e.get('seq'))   # 后来的覆盖：同族只留最新
+    out = []
+    for e in entries:
+        if (e.get('kind') or '') != 'notice':
+            out.append(e)
+            continue
+        family = noticeFamily(e)
+        if family is not None and _int0(e.get('seq')) != newest.get(family):
+            continue                      # 同族更新的那条已经取代它
+        if family is not None and cleared.get(family) == _int0(e.get('seq')):
+            continue                      # 条件解除：sweeper 已收回
+        out.append(e)
+    return out
+
+
+def idleNotice(lead, now):
+    """无动静提示（P3-5 / 设计 §4 防呆）：主管有下属在跑却老没动静。
+
+    lastSeenAt 由绑定令牌每次鉴权刷新（touch）；从没用过令牌的（lastSeenAt=0）
+    退到 updatedAt——否则新建的托管主管一绑上就刷一条"无动静"。同一主管每
+    leadIdleSec 最多一条（记录里的 idleNoticedAt）。N1 自 leads_inbox 拆入
+    （提醒的写入归本模块，leads_inbox 腾预算）。
+    """
+    idleSec = config.getLeadIdleSec()
+    if idleSec <= 0:
+        return
+    leadId = str(lead.get('id') or '')
+    own = str(lead.get('taskId') or '')   # 托管自己的任务不算"下属在跑"
+    store.repo.load()
+    running = [t for t in store.repo.list()
+               if str(t.get('lead') or '') == leadId and t.get('id') != own
+               and str(t.get('status') or '') in ('running', 'queued')]
+    if not running:
+        return
+    seen = float(lead.get('lastSeenAt') or 0) or float(lead.get('updatedAt') or 0)
+    if now - seen < idleSec:
+        return
+    if now - float(lead.get('idleNoticedAt') or 0) < idleSec:
+        return
+    leads_inbox.append(leadId, 'up', 'notice',
+                       '主管 %s %d 分钟无动静，但有 %d 个下属在跑'
+                       % (lead.get('name') or leadId,
+                          int((now - seen) // 60), len(running)),
+                       {'lead': leadId})
+    leads_store.markIdleNoticed(leadId, now)

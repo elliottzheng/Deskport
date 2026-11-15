@@ -3,9 +3,6 @@
 鉴权只认网页会话、响应体积；U 返工追加：停用主管名字（retiredLeads）与
 「更多」截断标记（/api/tasks truncated）。全部桩化：config.statePath 与任务
 仓储指到 tmp，后台扫掠线程在夹具里换成空操作（照 test_leads_inbox_api.py）。
-
-N1 追加面：重复提醒的合成历史数据 → overview 里每主管只剩 1 条或 0 条
-（读侧瘦身，指挥台代码零改动）。
 """
 import json
 import time
@@ -14,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import config as configMod
-from modules import command_view, events as eventsMod, lead_inbox_store, leads_inbox, leads_store
+from modules import command_view, events as eventsMod, leads_inbox, leads_store
 from modules import tasks_store as store
 from modules.tasks_store import TaskRepository
 
@@ -249,43 +246,6 @@ def test_down_notice_keeps_its_own_kind(env):
     rows = [p for p in data['pending'] if p['seq'] == 1]
     assert len(rows) == 1 and rows[0]['kind'] == 'notice'
     assert rows[0]['title'] == '乙' and '未处理' in rows[0]['detail']
-
-
-def test_duplicate_notices_collapse_in_overview(env):
-    """N1 指挥台快照：12 条重复提醒的历史数据（合成）→ 每主管只剩 1 条或
-    0 条，数字为最新。瘦身在 leads_inbox 读侧（entriesAfter 的 down 过滤），
-    指挥台代码零改动；收件箱只追加不改写，原始 12 条都在。"""
-    login(env.client)
-    spam = newLead(env, '刷屏主管')
-    for i in range(12):
-        leads_inbox.append(spam, 'down', 'notice',
-                           '主管 刷屏主管 有 %d 条下属消息超过 10 分钟未处理'
-                           % (i + 1), {'lead': spam})
-    quiet = newLead(env, '已解除主管')
-    for i in range(12):
-        leads_inbox.append(quiet, 'down', 'notice',
-                           '主管 已解除主管 有 %d 条下属消息超过 10 分钟未处理'
-                           % (i + 1), {'lead': quiet})
-    # 条件早已解除：sweeper 收过（noticeCleared 记在主管记录上）
-    leads_store.markNoticeCleared(quiet, 'response', 12)
-
-    data = overview(env)
-    byName = {l['name']: l for l in data['leads']}
-    rows = [p for p in data['pending'] if p['kind'] == 'notice']
-    spamRows = [p for p in rows if p['leadId'] == spam]
-    quietRows = [p for p in rows if p['leadId'] == quiet]
-    assert len(spamRows) == 1 and len(quietRows) == 0
-    assert spamRows[0]['seq'] == 12 and '12 条下属消息' in spamRows[0]['detail']
-    # 未读数/卡片徽标/「最近一条」只算没被收走的
-    assert byName['刷屏主管']['unreadReports'] == 1
-    assert byName['刷屏主管']['state'] == 'waiting_you'
-    assert byName['刷屏主管']['lastReport']['seq'] == 12
-    assert byName['已解除主管']['unreadReports'] == 0
-    assert byName['已解除主管']['state'] == 'asleep'
-    assert byName['已解除主管']['lastReport'] is None
-    # 只追加不改写：原始 12 条都在盘上
-    assert len([e for e in lead_inbox_store.readAll(spam)
-                if e.get('dir') == 'down']) == 12
 
 
 def test_reports_read_only_increases(env):

@@ -35,6 +35,7 @@ import json
 import logging
 
 from modules import leads_inbox, leads_store
+from modules import lead_inbox_store   # 收件箱存储核心（同 leads_store 一类）
 from modules import tasks_store as store
 
 log = logging.getLogger('leads_escalation')
@@ -220,6 +221,12 @@ def backfillResolved():
     （by='backfill'）。仍挂着的不补。幂等（已在 resolvedRequests 里的跳过，
     不刷新时间）；超 RESOLVED_CAP 时 setResolved 按 at 丢最旧——补标用
     escalation 条目自己的 at，保留的才是最近的那些。返回补标了几条。
+
+    返工（验方建议：CAP 逐出与截头错位的一次性幽灵提醒）：逐出按 at、收件箱
+    截头按 seq，直接播种出 >MAX_ENTRIES 条的文件会让两者错位——被逐出的
+    标记其条目还在盘上，sweeper 报一条幽灵"未处理"，直到下一条 append 截头
+    才自愈。补标前先把超限文件截回保留窗口（append 本就会做的事），窗口外
+    的 requestId 不在收件箱里，自然跳过不标。
     """
     marked = 0
     try:
@@ -232,6 +239,7 @@ def backfillResolved():
         leadId = str(lead.get('id') or '')
         if not leadId:
             continue
+        lead_inbox_store.trimToMax(leadId, leads_inbox.MAX_ENTRIES)
         resolved = lead.get('resolvedRequests')
         resolved = resolved if isinstance(resolved, dict) else {}
         entries, _last = leads_inbox.entriesAfter(leadId, 0, 'up')
