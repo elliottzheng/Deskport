@@ -337,8 +337,13 @@ def test_concurrent_appends_stay_consistent(env):
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(10)]
     for th in threads:
         th.start()
+    # 600 次 append 过半要走「读全量 + fsync 重写」（500 条截头），并行分组
+    # 跑时磁盘争抢下 30s 跑不完：旧写法 join 超时后继续断言，线程还在写，
+    # 少几条就误报成丢条目。放宽到 180s，并用 is_alive 兜底——真卡住给出
+    # 明确失败，不拿猜的条数断言。
     for th in threads:
-        th.join(timeout=30)
+        th.join(timeout=180)
+    assert all(not th.is_alive() for th in threads), 'append 线程 180s 没跑完'
     entries, lastSeq = inboxEntries(env, L)
     assert len(entries) == 500 and lastSeq == 600
     assert [e['seq'] for e in entries] == list(range(101, 601))
