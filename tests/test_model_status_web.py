@@ -30,7 +30,6 @@ class _NullProber:
 @pytest.fixture
 def webEnv(tmp_path, monkeypatch):
     import hashlib
-    import time as _time
     from types import SimpleNamespace
     import modules.agent_nodes as nodesMod
     import modules.model_availability as availMod
@@ -56,15 +55,19 @@ def webEnv(tmp_path, monkeypatch):
     monkeypatch.setattr(configMod, 'getRemotes', lambda: [])
     # stdio 探测托管换测试替身：/api/tasks/nodes 的 local 条目不触发真探测
     monkeypatch.setattr(availMod, '_stdioProber', lambda: _NullProber())
-    # 新鲜缓存：不触发后台刷新线程，杜绝真实网络；MS=已探测结果桩
+    # 新鲜缓存：不触发后台刷新线程，杜绝真实网络；MS=已探测结果桩。
+    # 桩函数而不是 _healthModels 字典：别的测试用过期默认缓存触发的后台
+    # 刷新线程能活两分钟、每轮往模块全局写真实探测结果，只桩字典的话桩会
+    # 被它打脏（并行负载下实测 /api/tasks/nodes?modelStatus=1 的
+    # modelStatus 被写空 → KeyError）。
     MS = {'bad/m1': {'usable': False, 'checkedAt': 1, 'error': '挂'},
           'good/m2': {'usable': True, 'checkedAt': 1, 'error': ''}}
-    monkeypatch.setattr(nodesMod, '_healthModels',
-                        {'at': _time.monotonic(),
-                         'data': {'ai-xmyz': {
-                             'models': ['bad/m1', 'good/m2', 'idle/m3'],
-                             'default': 'good/m2', 'modelStatus': MS,
-                             'usableModels': ['good/m2']}}})
+    _CACHE = {'ai-xmyz': {'models': ['bad/m1', 'good/m2', 'idle/m3'],
+                          'default': 'good/m2', 'modelStatus': MS,
+                          'usableModels': ['good/m2']}}
+    monkeypatch.setattr(nodesMod, '_healthModelsCached',
+                        lambda maxAgeSec=60: {k: dict(v)
+                                              for k, v in _CACHE.items()})
     from app import create_app
     app, _sock = create_app(pluginRoots=[], pluginNavDir=str(tmp_path / 'nav'))
     return SimpleNamespace(client=app.test_client(), app=app,

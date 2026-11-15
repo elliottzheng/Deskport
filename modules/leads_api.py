@@ -6,10 +6,15 @@
                            同一档：设备/智能体令牌打这些管理接口一律 401
                            （authGuard 的 /api/ 分支自动做到，见 auth.py）
     GET /api/agent/lead    任何有效令牌可调：问"我绑了哪个主管"（Q4）
+    POST /api/agent/lead   全权令牌自助成为主管（批次 SR）：给自己建一个
+                           external 主管并绑调用令牌自己，顺手认领它之前
+                           建的无归属任务（claimed: N）；受限/联邦/设备
+                           令牌 403，已绑定 409（同名再调 200）
 
 绑定存在 config.agentTokens[].lead（Q2）：一个令牌最多绑一个主管，一个
 主管可绑多个令牌；吊销令牌自然解绑（条目没了）。审计 lead.created /
-lead.updated / lead.deleted / lead.token.bound / lead.token.unbound。
+lead.updated / lead.deleted / lead.token.bound / lead.token.unbound /
+lead.self_registered。
 
 批次 P3 起本模块还管两件收件箱相关的事（存储/令牌端点/sweeper 在
 modules/leads_inbox.py）：托管任务绑/解（补 1，kind/taskId 两个键的唯一写
@@ -23,6 +28,7 @@ Q 的语义：被停用主管的令牌对已有任务的读/等/续聊/审批/�
 这些调用按 401 处理，这是"停用"与"暂停"的差别所在）。
 """
 import json
+import time
 
 from flask import Blueprint, jsonify, request
 
@@ -33,6 +39,11 @@ blueprint = Blueprint('leads', __name__)
 
 # PATCH 只许改这三个键（status 的合法值在 leads_store.STATUSES）
 PATCH_KEYS = ('name', 'project', 'status')
+# 自助注册认领窗口（批次 SR 追加）：未结束的任务随便认领，已结束的
+# （closed/cancelled）只认最近 7 天内的——更早的改了也没人看，还搅乱
+# 历史计数
+CLAIM_WINDOW_SEC = 7 * 24 * 3600
+ENDED_STATUSES = ('closed', 'cancelled')
 
 
 def _tokenNames(leadId):
@@ -51,6 +62,41 @@ def _taskCounts(leadId):
             'waiting': sum(1 for t in rows if t.get('status') == 'waiting')}
 
 
+def _secs(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _claimOwnTasks(tokenName, leadId):
+    """把这个令牌之前建的、没记归属的任务认领到新主管名下（批次 SR 追加）。
+
+    只认 owner == 令牌名且 lead 为空的任务：未结束的全认，已结束的
+    （closed/cancelled）只认最近 7 天内结束的（认领窗口见 CLAIM_WINDOW_SEC）。
+    返回认领条数；0 条不写盘。
+    """
+    claimed = 0
+    now = time.time()
+    with tasks_store.repo.lock:
+        tasks_store.repo.load()
+        for task in tasks_store.repo.list():
+            if str(task.get('owner') or '') != tokenName \
+                    or str(task.get('lead') or ''):
+                continue
+            if str(task.get('status') or '') in ENDED_STATUSES:
+                ended = max(_secs(task.get('lastActiveAt')),
+                            _secs(task.get('endedAt')),
+                            _secs(task.get('createdAt')))
+                if now - ended > CLAIM_WINDOW_SEC:
+                    continue
+            task['lead'] = leadId
+            claimed += 1
+        if claimed:
+            tasks_store.repo.save()
+    return claimed
+
+
 def _record(lead):
     """管理列表视图：记录 + 绑定的令牌名 + 任务计数。"""
     out = dict(lead)
@@ -64,6 +110,13 @@ def _findToken(tokenId):
     entry = next((t for t in tokens if str(t.get('id') or '') == str(tokenId)),
                  None)
     return tokens, entry
+
+
+def _agentLeadBody(lead):
+    """令牌通道视图：主管六字段（GET 自查与 POST 注册同一形状）。"""
+    return {'id': lead.get('id') or '', 'name': lead.get('name') or '',
+            'project': lead.get('project') or '', 'kind': lead.get('kind') or '',
+            'parent': lead.get('parent') or '', 'status': lead.get('status') or ''}
 
 
 @blueprint.route('/api/settings/leads', methods=['GET'])
@@ -287,9 +340,70 @@ def agentLead():
     lead = leads_store.get(str(agent.get('lead') or ''))
     if lead is None:
         return jsonify({'lead': None})
-    return jsonify({'lead': {'id': lead.get('id') or '',
-                             'name': lead.get('name') or '',
-                             'project': lead.get('project') or '',
-                             'kind': lead.get('kind') or '',
-                             'parent': lead.get('parent') or '',
-                             'status': lead.get('status') or ''}})
+    return jsonify({'lead': _agentLeadBody(lead)})
+
+
+@blueprint.route('/api/agent/lead', methods=['POST'])
+def agentLeadRegister():
+    """令牌通道自助成为主管（批次 SR）：全权令牌给自己建主管并绑自己。
+
+    判断依据：全权令牌本来就等于这台机器的完整控制权（能执行任意命令），
+    让它给**自己**建一个 external 主管不增加任何权限。受限令牌 403
+    {"error", "need": "full"}；联邦/设备令牌同样 403——它们不是 config.
+    agentTokens 里的条目，绑上去只会悬空。调用令牌已绑主管 → 409 并带回
+    已绑的主管（同名再调 200，幂等友好；不同名才 409）；与现有非 retired
+    主管重名 → 409。只绑调用令牌自己：不能绑别的令牌，不能改别的主管。
+    注册成功时顺手认领：该令牌之前建的、lead 为空的任务改记到新主管
+    （未结束的全认，已结束的只认最近 7 天内的），返回体带 claimed: N。
+    审计 lead.self_registered（令牌名、主管 id、名字、认领数）。
+    """
+    agent = agent_api.agentFromRequest()
+    if agent is None:
+        return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401
+    denied = agent_api.scopeDenied(agent, agent_api.SCOPE_FULL)
+    if denied is not None:
+        return denied
+    if str(agent.get('kind') or '') in ('federation', 'device'):
+        return jsonify({'error': '只有设置页签发的智能体令牌能自助成为主管'
+                                 '（联邦/设备令牌不行）'}), 403
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'error': '请求体必须是 JSON 对象'}), 400
+    name, err = leads_store.cleanName(data.get('name'))
+    if err:
+        return jsonify({'error': err}), 400
+    project, err = leads_store.cleanProject(data.get('project'))
+    if err:
+        return jsonify({'error': err}), 400
+    bound = str(agent.get('lead') or '')
+    if bound:
+        lead = leads_store.get(bound)
+        if lead is None:
+            return jsonify({'error': '该令牌绑定的主管 %s 已不存在（悬空绑定）'
+                                     '——请到设置页解绑后再注册' % bound}), 409
+        if str(lead.get('name') or '') != name:
+            return jsonify({'error': '该令牌已绑定主管 %s——一个令牌最多绑一个'
+                                     '主管；同名再调是幂等查询，换名字请先在'
+                                     '设置页解绑' % (lead.get('name') or bound),
+                            'lead': _agentLeadBody(lead)}), 409
+        return jsonify({'lead': _agentLeadBody(lead)}), 200
+    if any(str(l.get('name') or '') == name
+           and (l.get('status') or '') != 'retired' for l in leads_store.list()):
+        return jsonify({'error': '已存在同名主管: %s（换个名字，审计才分得清'
+                                 '是谁）' % name}), 409
+    lead, err = leads_store.create(name, project)
+    if err:   # 并发下抢先建同名：仍按 409 说清，其余是校验失败
+        return jsonify({'error': err}), 409 if '同名' in err else 400
+    tokens = config.getAgentTokens()
+    entry = next((t for t in tokens
+                  if str(t.get('id') or '') == str(agent.get('id') or '')), None)
+    if entry is None:   # 理论不可达：能走到这的必是 agentTokens 里的条目
+        return jsonify({'error': '令牌不存在: %s' % agent.get('id')}), 404
+    entry['lead'] = lead['id']
+    config.setAgentTokens(tokens)
+    claimed = _claimOwnTasks(str(agent.get('name') or ''), lead['id'])
+    events.log('lead.self_registered', lead['name'], 'ok',
+               'token=%s lead=%s name=%s claimed=%d'
+               % (agent.get('name') or '', lead['id'], lead['name'], claimed),
+               request.remote_addr)
+    return jsonify({'lead': _agentLeadBody(lead), 'claimed': claimed}), 201
