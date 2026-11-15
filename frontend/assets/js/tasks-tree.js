@@ -127,6 +127,7 @@
             dotClass: '', statusText: '', sub: '', lastReportText: '',
             lastSeenText: '', unreadReports: 0, taskId: '', paused: false,
             activityText: '', activity: null, activityRecent: [],
+            resultLabel: '',          // 批次 G1：任务行的结构化结果小标签
         };
         if (type === 'lead') {
             view.kindText = kindTextOf(n.kind);
@@ -144,6 +145,8 @@
             view.statusText = row.statusText || '';
             view.sub = row.sub || '';
             view.waitingYou = !!(waitingIds && waitingIds[n.id]);
+            // 批次 G1：任务节点带上最新结构化结果的小标签（verdict · 测试数）
+            view.resultLabel = row.resultLabel || '';
         } else if (type === 'owner') {
             view.badge = '未登记';
             view.hint = REGISTER_HINT;

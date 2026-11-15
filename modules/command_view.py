@@ -72,9 +72,14 @@ def _argsSummary(args):
 
 
 def _brief(task):
-    """列表行数据：tasks_store.summaryBrief + lastActiveAt（行内「最近活跃」）。"""
+    """列表行数据：tasks_store.summaryBrief + lastActiveAt（行内「最近活跃」）。
+
+    批次 G1：带上最新结构化结果的精简版——指挥台任务行的 verdict/测试数
+    小标签用它；没有结果的任务没有这个键，前端按空处理。
+    """
     brief = store.repo.summaryBrief(task)
     brief['lastActiveAt'] = _int(task.get('lastActiveAt'))
+    brief['result'] = task.get('result') or None
     return brief
 
 

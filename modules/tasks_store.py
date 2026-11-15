@@ -573,6 +573,11 @@ def _promptFor(task, manifest, block=''):
     if note:
         lines.append(note)
     lines.append('关键信息不足、需要用户拍板时，先停下来用一句话问，不要猜。')
+    if task.get('expects'):
+        # 批次 G1：有 expects 的任务，交付 = 一次 submit_result 工具调用
+        lines.append('本任务要求结构化交付：完成后必须调用 submit_result 工具提交'
+                     '（字段见工具入参说明，expects=%s）；自由文本报告只作补充，'
+                     '不算交付。' % task.get('expects'))
     lines.append('')
     if block:
         lines.append(block)

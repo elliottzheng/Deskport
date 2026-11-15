@@ -170,6 +170,8 @@
                         status: data.status,
                         lastText: data.lastText || '',
                         resultFiles: data.resultFiles || [],
+                        result: data.result || null,
+                        resultCount: data.resultCount || 0,
                         error: data.error || '',
                         canContinue: data.canContinue,
                         canResume: data.canResume,
@@ -480,13 +482,13 @@
                 return WPCommon.fmtTime(ts);
             },
             downloadUrl(p) {
-                return '/api/tasks/' + encodeURIComponent(this.selectedId)
-                    + '/download?path=' + encodeURIComponent(p);
+                return '/api/tasks/' + encodeURIComponent(this.selectedId) + '/download?path=' + encodeURIComponent(p);
             },
         },
     });
 app.mixin(WPTasksOverview.mixin());
 app.mixin(WPTasksOverview.tree.mixin());   // 批次 U2：指挥树（tasks-tree.js）
 app.mixin(WPTasksOverview.events.mixin());   // 批次 U3：事件流说人话（tasks-events.js）
+app.mixin(WPTasksResult.mixin());   // 批次 G1：结果卡片与行内标签（tasks-result.js）
 app.mount('#app');
 })();

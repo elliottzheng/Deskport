@@ -56,6 +56,9 @@ from modules import agent_nodes as agentNodesModule  # noqa: E402
 from modules import command_view as commandViewModule  # noqa: E402  指挥台聚合视图（批次 U）
 from modules import tasks_federation as tasksFederationModule  # noqa: E402  路由注册
 from modules import tasks_rename as tasksRenameModule  # noqa: E402  路由注册（PATCH 改名，批次 T）
+from modules import task_kimi_sessions as taskKimiSessionsModule  # noqa: E402  路由注册（接手候选，批 G1 拆出）
+from modules import task_result_api as taskResultApiModule  # noqa: E402  路由注册（结构化结果 HTTP，批 G1）
+from modules import task_result_mcp as taskResultMcpModule  # noqa: E402  路由注册（submit_result MCP，批 G1）
 from modules import worklines_api as worklinesModule  # noqa: E402  路由注册
 from modules import external_proxy as externalProxyModule  # noqa: E402
 from modules import federation as federationModule  # noqa: E402
@@ -253,7 +256,9 @@ BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      agentNodesModule,
                      commandViewModule,
                      tasksFederationModule, worklinesModule, feedbackModule,
-                     tasksRenameModule)
+                     tasksRenameModule,
+                     taskKimiSessionsModule, taskResultApiModule,
+                     taskResultMcpModule)
 # agent_sessions / agent_sftp / agent_upload / agent_share / share_web / agent_skill_files 与 agent_api 共用同一蓝图对象：
 # 上面的 import 已把路由挂到该蓝图，随 agentApiModule 一次注册，无需重复登记。
 REGISTER_MODULES = (systemModule, metaModule, tasksModule,

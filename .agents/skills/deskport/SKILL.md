@@ -150,6 +150,10 @@ POST /api/tasks
   或建任务时直接带 `attachments: [{name, contentB64}]`。
 - `title` 可选（≤40 字）：**主管派活建议显式给**（如 `"title": "批次 T：任务标题"`）——不给就按
   提示词首行自动生成（剥【目标】类标记、取第一句、截 24 字）；改名走 `PATCH /api/tasks/<id>`。
+- `expects` 可选（`"impl"` / `"verify"` / 留空）：**要求结构化交付**。给了之后平台会往会话里
+  注入 `submit_result` 工具（MCP），执行方完成时必须调它提交（字段见下节）；没交就结束轮次，
+  平台自动追发一次，再没有就报主管 `result_missing`。CLI 一行版：
+  `python deskport.py task "<描述>" --expects impl`。
 
 **收事件（推荐：阻塞 wait，一次请求等到需要你决策为止）**：
 
@@ -166,7 +170,32 @@ GET /api/tasks/<id>/wait?after=<上次最大seq>&timeout=300   （默认300，�
 - 备用：SSE `events/stream?since=` 与轮询 `events?after=`。
 
 事件类型：`status` / `user` / `assistant`（Kimi 的回答终版）/ `tool` / `tool_result` /
-`plan` / `permission_request`（**带 `callId` 与 `args`**，能对回具体调用）/ `error`。
+`plan` / `permission_request`（**带 `callId` 与 `args`**，能对回具体调用）/ `error` /
+`result`（结构化结果提交，见下节）。
+
+**结构化交付（有 `expects` 的任务；没有该工具时用本节末尾的 CLI 退路）**：
+
+交付 = 一次 `submit_result` 工具调用（平台自动放行，不弹审批）；自由文本报告只作补充。
+入参 schema 按任务的 expects 动态给出（`tools/list` 可见中文说明），校验失败会带逐字段
+错误原样返回，改完可重交（同一任务可交多次，最新为准）：
+
+- `expects=impl`（实施方）：`summary`（≤300 字）、`commit`（7–40 位十六进制）、
+  `tests{passed,failed,skipped}` 必填；`branch`、`gates{structure,frontend}`（pass/fail）、
+  `risks[]`（每条 ≤200 字）、`questions[]`（有内容即表示需要主管判断）按实际填。
+- `expects=verify`（验收方）：`verdict`（pass / rework / needs_judgment）、
+  `target`（被验收的 commit）必填；`mustFix[]`、`suggest[]`、`evidence[]`（每条 ≤300 字）、
+  `unverified[]` 按实际填。
+- 结果落进任务卡顶部的结果卡片与事件流（`result` 事件），并给主管收件箱投一条
+  `task_result`（needs_judgment / questions 非空时为 `task_judgment`，需判断）。
+
+```text
+GET  /api/tasks/<id>          → task.result（最新精简结果）+ task.resultCount
+POST /api/tasks/<id>/result   → 同一份 schema（HTTP 提交面；认会话令牌/属主/主管令牌/网页会话）
+```
+
+- CLI 一行版：`python deskport.py task <任务id> --result`（打印结果 JSON）、
+  `python deskport.py result --task <任务id> --json <文件>`（无 MCP 工具时的退路，
+  `-` 读 stdin）。
 
 **主管通信（令牌绑了主管才有）**：
 
@@ -274,6 +303,9 @@ POST /api/feedback
 15. **审批只批一次性授权**（`deskport.py approve`）；拿不准就拒绝并 `report`。【平台强制】
 16. **返工与复验接回原会话**（`deskport.py task … --session <会话编号>`），不新开执行方。
 17. **只用 `report` 向用户汇报**；目标达成就停下，不自己立项。
+18. **有 expects 的任务：交付 = 调 `submit_result` 提交结构化结果**，一轮结束前必须交；
+    自由文本报告只作补充，不算交付。没交就结束轮次会被平台追发一次，仍不交报主管
+    `result_missing`。【平台强制】
 
 ## 规矩
 

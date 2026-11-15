@@ -51,10 +51,17 @@
 | 外部智能体 ↔ 中枢 | `X-Agent-Token` + JSON / SSE | 同一套任务 API |
 | 中枢 ↔ node | `X-Agent-Token` + JSON / SSE | 直连或 SSH direct-tcpip 隧道 |
 | node ↔ kimi | ACP JSON-RPC over stdio | 进程内管道 |
+| node 的 kimi ↔ 中枢（批 G1） | MCP over HTTP（`X-Deskport-Session-Token`） | `submit_result` 注入时按 `agentMcpUrl`/`lanAddress` 指向中枢 |
 
 原则：**外部世界只看到 REST + SSE；ACP 协议只存在于 node 与 kimi 之间**。
 防火墙不可达时，SSH 只承载字节流（隧道），语义仍是 HTTP + token，
 零防火墙改动。
+
+结构化交付（批次 G1）：kimi ACP 握手声明 `mcpCapabilities={http,sse}`（无 stdio），
+故有 `expects` 的任务建会话时注入 http 形式的 `mcpServers`（URL 指向中枢
+`/api/mcp`，每任务一个随机会话令牌放 header，只许提交本任务结果、关闭即吊销）。
+中枢地址推导：`config.agentMcpUrl` 显式覆盖 > `lanAddress` 推导 > 本机执行点回环；
+远端执行点两者都没配时不注入（落状态事件提示走技能包 `result` 子命令退路）。
 
 ## 三、任务生命周期
 

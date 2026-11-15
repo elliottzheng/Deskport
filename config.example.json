@@ -23,5 +23,6 @@
   "phoneUploadMaxMB": 2048,
   "uploadTargets": [],
   "federationRoots": [],
-  "federationUploadMaxMB": 2048
+  "federationUploadMaxMB": 2048,
+  "agentMcpUrl": ""
 }

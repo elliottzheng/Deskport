@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/tasks.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/tasks-result.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/feedback.css?v=__BUILD__">
 </head>
 <body>
@@ -99,6 +100,8 @@
                                 <span class="cmd-badge" :class="'cmd-badge-' + row.state" v-if="row.stateText">{{ row.stateText }}</span>
                                 <span class="cmd-badge cmd-badge-plain" v-else-if="row.badge">{{ row.badge }}</span>
                                 <span class="cmd-badge cmd-badge-you" v-if="row.waitingYou">等你</span>
+                                <!-- 批次 G1：任务行的结构化结果小标签（verdict · 测试数） -->
+                                <span class="cmd-badge cmd-badge-result" v-if="row.type === 'task' && row.resultLabel" :title="row.resultLabel">{{ row.resultLabel }}</span>
                                 <span class="cmd-node-counts" v-if="row.type !== 'task'">{{ row.countsText }}</span>
                             </div>
                             <div class="cmd-node-line2" v-if="row.sub || row.lastReportText || row.lastSeenText || row.unreadReports">
@@ -187,6 +190,41 @@
                     <button type="button" class="btn btn-ghost" v-if="canEnd" @click="closeSession">结束会话</button>
                 </div>
             </div>
+            <div class="task-result-card" v-if="detail.result">
+                <div class="task-result-head">
+                    <span class="result-verdict" :class="resultVerdictClass(detail.result)">{{ resultVerdictText(detail.result) }}</span>
+                    <code class="task-result-commit" v-if="resultCommit(detail.result)" :title="resultCommit(detail.result)">{{ resultCommit(detail.result).slice(0, 12) }}</code>
+                    <span class="task-result-tests" v-if="resultTestsText(detail.result)">{{ resultTestsText(detail.result) }}</span>
+                    <span class="task-result-count" v-if="detail.resultCount > 1">第 {{ detail.resultCount }} 次提交</span>
+                </div>
+                <p class="task-result-summary" v-if="detail.result.summary">{{ detail.result.summary }}</p>
+                <div class="task-result-gates" v-if="resultGateItems(detail.result).length">
+                    <span class="result-gate" v-for="g in resultGateItems(detail.result)" :key="g.name"
+                          :class="g.value === 'pass' ? 'is-pass' : 'is-fail'">{{ g.name }} {{ g.value === 'pass' ? '✓' : '✗' }}</span>
+                </div>
+                <div class="task-result-lists">
+                    <div class="task-result-list" v-if="(detail.result.mustFix || []).length">
+                        <div class="task-result-list-title">必须修（{{ detail.result.mustFix.length }}）</div>
+                        <ol><li v-for="(m, i) in detail.result.mustFix" :key="i">{{ m }}</li></ol>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.risks || []).length">
+                        <div class="task-result-list-title">风险（{{ detail.result.risks.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.risks" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.questions || []).length">
+                        <div class="task-result-list-title">待主管判断（{{ detail.result.questions.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.questions" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.evidence || []).length">
+                        <div class="task-result-list-title">证据（{{ detail.result.evidence.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.evidence" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.unverified || []).length">
+                        <div class="task-result-list-title">未验到（{{ detail.result.unverified.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.unverified" :key="i">{{ m }}</li></ul>
+                    </div>
+                </div>
+            </div>
             <div class="task-chat" ref="chat">
                 <div class="task-event" v-for="row in eventRows" :key="row.key" :class="'ev-' + row.type">
                     <div v-if="row.type === 'user'" class="ev-user">{{ row.text }}</div>
@@ -244,6 +282,12 @@
                     <!-- 连续 status 合并成一行淡色时间线 -->
                     <div v-else-if="row.type === 'status-run'" class="ev-status-run"
                          :title="row.count + ' 条状态'">{{ row.text }}</div>
+                    <!-- 结构化结果提交（G1）：一行带 verdict 徽标；判定字段在
+                         row.raw（结果事件的 expects/verdict 由服务端落） -->
+                    <div v-else-if="row.type === 'result'" class="ev-result-submit">
+                        <span class="result-verdict" :class="resultVerdictClass(row.raw)">{{ resultVerdictText(row.raw) }}</span>
+                        <span>{{ row.text }}</span>
+                    </div>
                     <div v-else-if="row.type === 'plan'" class="ev-plan">{{ row.text }}</div>
                     <div v-else-if="row.type === 'error'" class="ev-error">{{ row.text }}</div>
                     <div v-else-if="row.type === 'auto_approved' || row.type === 'auto_denied'" class="ev-auto">{{ row.text }}</div>
@@ -465,6 +509,7 @@
 <script src="/assets/js/common.js?v=__BUILD__"></script>
 <script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-result.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-overview.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-tree.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-events.js?v=__BUILD__"></script>

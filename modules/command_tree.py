@@ -18,8 +18,11 @@ Python 模块 ≤400 行，超出先拆），合并 main 后它还要装 L4 的 
 """
 TREE_DEPTH = 3                        # 指挥树最多 3 层，更深折成「更多层级 N」
 PANEL_OWNER = '面板'                  # 面板自己派的活（tasks_api 同一字面量）
+# result（批次 G1 在 U2 树上重放）：任务节点带最新结构化结果的精简版，
+# 指挥台任务行的 verdict/测试数小标签用它；没有结果的任务没有这个键，
+# 前端按空处理。体积约几百字节，不影响一屏的响应预算。
 TASK_NODE_KEYS = ('id', 'title', 'status', 'node', 'model', 'modelEffective',
-                  'lastActiveAt')
+                  'lastActiveAt', 'result')
 
 
 def taskNode(brief):

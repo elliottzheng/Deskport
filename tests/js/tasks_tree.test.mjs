@@ -3,10 +3,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import overview from '../../frontend/assets/js/tasks-overview.js';
 import tree from '../../frontend/assets/js/tasks-tree.js';
+import result from '../../frontend/assets/js/tasks-result.js';
 import { makeVm, fakeTimers, fakeDocument } from './mixin_vm.mjs';
 
 // nodeView 复用 WPTasksOverview 的文案函数（浏览器里它是 window 全局）；这里挂上
 globalThis.WPTasksOverview = overview;
+// 批次 G1 在树上重放：任务行的 verdict/测试数小标签走 WPTasksResult 的纯函数
+// （浏览器里 tasks-result.js 先于 tasks.js 加载，挂 window.WPTasksResult）
+globalThis.WPTasksResult = result;
 // 相对时间/绝对时间走 WPCommon（浏览器里 common.js 先加载）；测试用最小替身，
 // 只为验「调用了共享实现、格式串正确」
 globalThis.WPCommon = {
@@ -164,6 +168,21 @@ test('nodeView: 主管节点带类型/状态徽标与计数，任务节点只带
     assert.equal(tk.statusText, '运行中');
     assert.equal(tk.sub.includes('3 分钟前'), true);
     assert.equal(tk.countsText, '在跑 0 · 等你 0 · 出错 0');
+});
+
+test('nodeView: 任务节点带 G1 结果小标签（U2 树结构上重放），无结果为空', () => {
+    const withResult = nodeView(
+        task('a2', {status: 'waiting', result: {
+            expects: 'impl', summary: '交付了 X', commit: 'abc1234',
+            tests: {passed: 12, failed: 0, skipped: 1}}}), 1, '', {});
+    assert.equal(withResult.resultLabel, '已交付 · 12过/0败/1跳过');
+    // verify 结果：verdict 三态文案
+    const rework = nodeView(
+        task('a3', {result: {
+            expects: 'verify', verdict: 'rework', target: '0badf00d'}}), 1, '', {});
+    assert.equal(rework.resultLabel, '返工 · 0badf00');
+    // 没有 result 的节点（后端 _brief 不带这个键）→ 空，模板不渲染徽标
+    assert.equal(nodeView(SAMPLE[0].children[1], 1, '', {}).resultLabel, '');
 });
 
 test('nodeView: 未登记指挥者给登记提示，已停用主管给停用提示', () => {

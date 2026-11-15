@@ -77,7 +77,7 @@ class SessionManager:
             pass
 
     def create(self, cwd, mode, title, resume_session_id=None, model='',
-               kimi_session_id='', fork=True):
+               kimi_session_id='', fork=True, mcp_servers=None):
         if resume_session_id:
             with self._lock:
                 for session in self._sessions.values():
@@ -116,7 +116,7 @@ class SessionManager:
 
         def _start():
             try:
-                session.start(resume_session_id)
+                session.start(resume_session_id, mcp_servers)
             except Exception as e:
                 err.append(e)
         t = threading.Thread(target=_start, daemon=True)
@@ -338,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 session = _MANAGER.create(cwd, mode, title, resume, model,
                                           kimi_session_id=kimiSessionId,
-                                          fork=fork)
+                                          fork=fork, mcp_servers=data.get('mcpServers') or [])
             except RuntimeError as e:
                 # fork 失败（会话被占用/不存在）按 400 透传原文（R4-7）
                 return self._json(400, {'error': str(e)})
