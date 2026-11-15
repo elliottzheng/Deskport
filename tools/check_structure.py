@@ -41,6 +41,7 @@ LEGACY = {
     'modules/tasks_store.py': 442,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
+    'tests/test_leads_inbox_store.py': 402,       # 收件箱存储回归集；11-15 合并批次 A 与批次 V 后 402，下次改先拆
     'tests/test_tasks_api.py': 1620,              # 任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）
 }
 
