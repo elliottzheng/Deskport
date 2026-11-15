@@ -4,6 +4,10 @@
 未读超时提醒 / 已读不提醒 / 同一主管每阈值最多一条 / 托管主管"已投递但
 没反应"同样提醒。时钟经 sweepOnce(now=...) 注入（sweeper 原用墙上时钟），
 条目年龄由 append 时的真实时间与注入的 now 之差造出。
+
+N1（一事一条 / 条件解除即收回）追加面：连写多条只显示最新（数字为最新）、
+条件解除（ack / escalation 落定）后下一轮 sweeper 收回。写盘节流不变
+（rawDown 看原始条数），瘦身全在读侧（downEntries）。
 """
 import json
 import queue
@@ -15,7 +19,7 @@ import pytest
 import config as configMod
 from modules import agent_nodes as nodesMod
 from modules import events as eventsMod
-from modules import leads_inbox, leads_store
+from modules import lead_inbox_store, leads_escalation, leads_inbox, leads_store
 from modules import tasks_api
 from modules import tasks_store as store
 from modules.tasks_store import TaskRepository
@@ -94,6 +98,13 @@ def downEntries(env, leadId):
     return entries
 
 
+def rawDown(env, leadId):
+    """未经过滤的 down 条目（N1：收件箱只追加不改写——写盘几条是几条，
+    瘦身发生在读侧）。"""
+    return [e for e in lead_inbox_store.readAll(leadId)
+            if e.get('dir') == 'down']
+
+
 def test_unread_entries_notice_after_timeout(env):
     """下属消息超时没投递也没读 → down 一条 notice（指挥台待办可见）。"""
     login(env.client)
@@ -135,7 +146,10 @@ def test_read_entries_no_notice(env):
 
 
 def test_notice_throttled_per_window(env):
-    """同一主管每 leadResponseSec 最多一条。"""
+    """同一主管每 leadResponseSec 最多一条（写盘节流不变）。
+
+    N1：堆叠不再占「等你处理」——读侧同族只留最新一条，数字为最新。
+    """
     login(env.client)
     tok = newToken(env, 'T1')
     L = newLead(env, '甲')
@@ -148,9 +162,87 @@ def test_notice_throttled_per_window(env):
     env.sweep(now=base + 601)
     assert len(downEntries(env, L)) == 1
     env.sweep(now=base + 900)             # 窗口内：不重复
-    assert len(downEntries(env, L)) == 1
+    assert len(rawDown(env, L)) == 1
     env.sweep(now=base + 1300)            # 过了一个阈值：可以再来
-    assert len(downEntries(env, L)) == 2
+    assert len(rawDown(env, L)) == 2       # 写盘两条（节流未改）
+    shown = downEntries(env, L)
+    assert len(shown) == 1                # 读侧只留最新
+    assert shown[0]['seq'] == rawDown(env, L)[-1]['seq']
+
+
+def test_three_timeouts_show_only_latest(env):
+    """N1 一事一条：连续三次超时 → 「等你处理」只剩 1 条，数字为最新。"""
+    login(env.client)
+    tok = newToken(env, 'T1')
+    L = newLead(env, '甲')
+    assert call(env, 'post', '/api/settings/leads/%s/tokens' % L,
+                {'tokenId': tok['id']}).status_code == 200
+    newTask(env, token=tok['token'])
+    base = time.time()
+    for i in range(3):                    # 每轮多一条超时的下属消息
+        leads_inbox.append(L, 'up', 'report', '第 %d 条结束' % (i + 1))
+        env.sweep(now=base + 601 + i * 700)   # 每轮都过了一个阈值：各写一条
+
+    raw = rawDown(env, L)
+    assert len(raw) == 3                  # 节流照旧：写盘三条
+    shown = downEntries(env, L)
+    assert len(shown) == 1                # 读侧只留最新
+    assert shown[0]['seq'] == raw[-1]['seq']
+    assert '3 条下属消息' in shown[0]['text']   # 数字为最新
+
+
+def test_notice_cleared_after_ack(env):
+    """N1 条件解除即收回：主管读了收件箱 → 下一轮 sweeper 后 notice 从
+    「等你处理」消失（不需要用户点；条目本身不删，只追加纪律不动）。"""
+    login(env.client)
+    tok = newToken(env, 'T1')
+    L = newLead(env, '甲')
+    assert call(env, 'post', '/api/settings/leads/%s/tokens' % L,
+                {'tokenId': tok['id']}).status_code == 200
+    newTask(env, token=tok['token'])
+    base = time.time()
+    leads_inbox.append(L, 'up', 'report', '甲任务结束')
+
+    env.sweep(now=base + 601)
+    assert len(downEntries(env, L)) == 1
+    assert leads_store.setCursor(L, readSeq=1)[1] == ''     # 主管读过了
+    env.sweep(now=base + 700)
+    assert downEntries(env, L) == []                        # 收回
+    assert len(rawDown(env, L)) == 1        # 原始条目还在（只追加不改写）
+
+
+def test_notice_cleared_after_escalation_backfilled(env):
+    """N1：超时的其实全是早已批掉的 escalation（主控实测形状）——历史补标
+    把它们标成已落定后，下一轮 sweeper 收回 notice。"""
+    login(env.client)
+    tok = newToken(env, 'T1')
+    L = newLead(env, '甲')
+    assert call(env, 'post', '/api/settings/leads/%s/tokens' % L,
+                {'tokenId': tok['id']}).status_code == 200
+    tid = newTask(env, token=tok['token'])
+    task = env.repo.get(tid)
+    with env.repo.lock:
+        task['status'] = 'running'
+        env.repo.save()
+    # 手工造一条「当时没落定」的 escalation：审批其实早已批掉，任务上现在
+    # 挂着的是另一个 requestId（批次 L 之前从没写 resolvedRequests）
+    leads_inbox.append(L, 'up', 'escalation',
+                       '任务 %s 请求审批：Bash（requestId req-old）' % tid[:8],
+                       {'task': tid, 'requestId': 'req-old'})
+    with env.repo.lock:
+        task['pendingPermission'] = 'req-new'
+        env.repo.save()
+    base = time.time()
+
+    env.sweep(now=base + 601)
+    shown = downEntries(env, L)
+    assert len(shown) == 1 and '1 条下属消息' in shown[0]['text']
+
+    assert leads_escalation.backfillResolved() == 1      # 补标（by='backfill'）
+    assert 'req-old' in (leads_store.get(L).get('resolvedRequests') or {})
+    env.sweep(now=base + 700)                            # 下一轮：收回
+    assert downEntries(env, L) == []
+    assert len(rawDown(env, L)) == 1
 
 
 def test_hosted_delivered_but_unreacted_notices(env):

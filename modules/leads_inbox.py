@@ -29,8 +29,12 @@ federation._refreshLoop）。有未投递条目且最老条目过了合并窗口
 （leadWakeMergeSec 默认 20s，0=立即；human / escalation / question 立即旁路）→ 合并成一条摘要经
 deliverMessage 投递（by='收件箱'，补 4），成功后 inboxSeq 推进（先投递后落游
 标：崩溃重放最多重复一条摘要；先落游标会在投递失败时丢条目）。另做无动静提示
-（leadIdleSec 默认 900s）与主管反应超时提醒（leadResponseSec 默认 600s，
-实现在 modules/lead_notices.py——L1，本文件只在扫掠时调它）。
+（leadIdleSec 默认 900s）与主管反应超时提醒（leadResponseSec 默认 600s）——
+两者的写入与 N1 的读侧瘦身都在 modules/lead_notices.py，本文件只在扫掠时调。
+
+N1（一事一条 / 条件解除即收回）：读接口 entriesAfter 的 down 分支做 notice
+瘦身（lead_notices.liveDownEntries：同族只留最新、条件解除即收回）；bindApp
+时跑一次历史 escalation 补标（leads_escalation.backfillResolved）。
 """
 import json
 import logging
@@ -105,12 +109,21 @@ def append(leadId, direction, kind, text, ref='', maxLen=MAX_TEXT):
     return seq
 
 def entriesAfter(leadId, after=0, direction='up'):
-    """按 seq > after 且方向过滤；返回 (entries, lastSeq)。没文件 = 空。"""
+    """按 seq > after 且方向过滤；返回 (entries, lastSeq)。没文件 = 空。
+
+    N1：down 侧（指挥台「等你处理」的数据通道）在本读接口做 notice 瘦身
+    （lead_notices.liveDownEntries——同族只留最新、条件解除即收回，指挥台
+    代码零改动即生效）；up 侧（下属→主管）原样返回。
+    """
     allEntries = readAll(leadId)
     lastSeq = max((int(e.get('seq') or 0) for e in allEntries), default=0)
     after = _int0(after)
-    return [e for e in allEntries
-            if int(e.get('seq') or 0) > after and e.get('dir') == direction], lastSeq
+    entries = [e for e in allEntries
+               if int(e.get('seq') or 0) > after and e.get('dir') == direction]
+    if direction == 'down':
+        from modules import lead_notices   # 延迟导入：反向依赖（已登记）
+        entries = lead_notices.liveDownEntries(leadId, entries)
+    return entries, lastSeq
 
 
 def entryResolved(lead, entry):
@@ -187,12 +200,19 @@ def bindApp(app):
     """create_app 注入 Flask 实例并拉起扫掠线程（照 federation.bindApp）。
 
     无条件启动（没有主管时空转，5s 一跳）：唤醒要先于请求就绪，否则人类的话
-    要白等一个跳间隔。
+    要白等一个跳间隔。N1：启动先跑一次历史补标（leads_escalation.backfill
+    Resolved——批次 L 前的 escalation 从未进 resolvedRequests），扫掠第一跳
+    就看见补过的状态；失败只记日志（修缮不拦启动），只读进程（L6）同样不拦。
     """
     global _appRef, _started
     _appRef = app
     if not _started:
         _started = True
+        try:
+            from modules import leads_escalation   # 延迟导入：反向依赖
+            leads_escalation.backfillResolved()
+        except Exception as e:
+            log.warning('lead escalation backfill at startup failed: %s', e)
         threading.Thread(target=_sweepLoop, daemon=True,
                          name='leads-inbox-sweep').start()
 
@@ -205,8 +225,8 @@ def _sweepLoop():
         time.sleep(SWEEP_SEC)
 
 def sweepOnce(now=None):
-    """扫一跳：托管唤醒 + 无动静提示 + 主管反应超时提醒（测试可直接调，
-    不起真 kimi）。now 可注入（L1 的时钟）；缺省取墙上时钟。
+    """扫一跳：托管唤醒 + 无动静提示 + 主管反应超时提醒（+ N1 收回复算）
+    （测试可直接调，不起真 kimi）。now 可注入（L1 的时钟）；缺省取墙上时钟。
 
     推 app_context：deliverMessage 经 _enqueueMessage 读 flask.g，后台线程里
     直接调会抛 RuntimeError。
@@ -225,8 +245,10 @@ def sweepOnce(now=None):
             try:
                 if str(lead.get('kind') or '') == 'hosted' and lead.get('taskId'):
                     _wakeHosted(lead, now)
-                _idleNotice(lead, now)
+                lead_notices.idleNotice(lead, now)   # P3-5 无动静提示（N1 拆入）
                 lead_notices.responseNotice(lead, now)
+                # N1：条件解除即收回——每轮复算，不再成立的 notice 族收回
+                lead_notices.retractNotices(lead, now)
             except Exception as e:
                 log.warning('lead inbox sweep lead=%s failed: %s', leadId, e)
 
@@ -277,35 +299,6 @@ def _summaryText(entries, prevCursor):
     lines.append('要全文：GET /api/agent/leads/inbox?after=%d。%s。'
                  % (prevCursor, QUOTE_NOTE))
     return '\n'.join(lines)
-
-def _idleNotice(lead, now):
-    """无动静提示（P3-5 / 设计 §4 防呆）：主管有下属在跑却老没动静。
-
-    lastSeenAt 由绑定令牌每次鉴权刷新（touch）；从没用过令牌的（lastSeenAt=0）
-    退到 updatedAt——否则新建的托管主管一绑上就刷一条"无动静"。同一主管每
-    leadIdleSec 最多一条（记录里的 idleNoticedAt）。
-    """
-    idleSec = config.getLeadIdleSec()
-    if idleSec <= 0:
-        return
-    leadId = str(lead.get('id') or '')
-    own = str(lead.get('taskId') or '')   # 托管自己的任务不算"下属在跑"
-    store.repo.load()
-    running = [t for t in store.repo.list()
-               if str(t.get('lead') or '') == leadId and t.get('id') != own
-               and str(t.get('status') or '') in ('running', 'queued')]
-    if not running:
-        return
-    seen = float(lead.get('lastSeenAt') or 0) or float(lead.get('updatedAt') or 0)
-    if now - seen < idleSec:
-        return
-    if now - float(lead.get('idleNoticedAt') or 0) < idleSec:
-        return
-    append(leadId, 'up', 'notice',
-           '主管 %s %d 分钟无动静，但有 %d 个下属在跑'
-           % (lead.get('name') or leadId, int((now - seen) // 60), len(running)),
-           {'lead': leadId})
-    leads_store.markIdleNoticed(leadId, now)
 
 def wakeNow(leadId):
     """human / escalation / question 条目的立即唤醒旁路（P3-6 + 批次 A + L2）：

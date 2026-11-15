@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""代码结构门禁：文件预算、存量例外、重复工具、横向 import、window 全局、
-跨模块私有接缝、执行点字段（对外只认 node/cwd）。
+"""代码结构门禁：文件预算、存量例外、重复工具、横向 import、window 全局、跨模块私有接缝、执行点字段（对外只认 node/cwd）。
 
 用法: python tools/check_structure.py [--strict]；退出码: 预算/存量增长/未定义名/横向 import/跨模块私有名违规 → 1，其它为 warning。
 """
@@ -33,7 +32,7 @@ LEGACY = {
                                                   # onBehalfOfKwargs，批次 J 加 nodeArg）——只减不增，
                                                   # 下一步把主机解析与入参归一拆成独立小模块
     'modules/agent_nodes.py': 592,                # 节点注册+隧道+引擎注册一体；2026-11-15 +12=RemoteAcpClient.cancel 发完再读一次节点实况、如实回报回合是否还在跑（L4）
-    'modules/agent_sessions.py': 443, 'modules/leads_inbox.py': 405, 'modules/leads_api.py': 409,  # leads_inbox：主管收件箱（存储+触发点+sweeper+端点一体），11-15 +20=escalation 落定（entryResolved + inbox resolved 字段），下次改先拆；sessions：持久会话（bash 常驻通道）管理｜leads_api：主管管理面 + 令牌通道自查/自助注册，2026-11-15 合并批次 A（+16=托管主管停用/删除即吊销专属令牌）与批次 SR（+114=POST /api/agent/lead 自助成为主管 + 认领历史任务）后 409，下次改先拆
+    'modules/agent_sessions.py': 443, 'modules/leads_inbox.py': 405, 'modules/leads_api.py': 409,  # leads_inbox：主管收件箱（存储+触发点+sweeper+端点一体），11-15 +20=escalation 落定（entryResolved + inbox resolved 字段）；11-15 N1 拆回预算内（down notice 瘦身 liveDownEntries 与无动静提示 idleNotice 移归 lead_notices，启动补标内联进 bindApp），下次改先拆；sessions：持久会话（bash 常驻通道）管理｜leads_api：主管管理面 + 令牌通道自查/自助注册，2026-11-15 合并批次 A（+16=托管主管停用/删除即吊销专属令牌）与批次 SR（+114=POST /api/agent/lead 自助成为主管 + 认领历史任务）后 409，下次改先拆
     'modules/tasks_api.py': 1044,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）；+21=answer 端点（L2）+ cancel 响应 nodeStillRunning（L4）；+14=批次 DR：排空期间消息只排队不开轮（deliverMessage）+ 远端 fork:false 接管未关闭占用 409 + close 终态后统一释放节点会话（原仅强杀分支）
     'modules/tasks_runner.py': 944,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）；+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）；+80=批次 L：L2 提问路径（_isAskUserQuestion/perm.question/队首当答复/answerPermission）+ L4 清 _toolStall；+10=批 PS2 削峰：chunk 路径去 save（lastText 轮末随关键变迁落盘）+ 五处非关键 save 改 touch（commands/contextHigh×2/lastTurn/liveFrom/resuming）；+11=批次 DR（合并 PS2 后净增，按合并后实际行数核对）：_promptOnce 排空闸门（关闭则跳过本轮）与四个调用点守卫、_drainQueuedMessages 排空即留队、startSession 接回重试包装、resume 看门狗排空不计时
     'modules/tasks_store.py': 602, 'modules/task_events.py': 420,  # tasks_store：任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +143=批 PS2 削峰：touch/flush/_writeNow/shutdown/_closeIdleJsonl + 共享 flush 线程（弱引用登记，每进程一条）与 atexit 退出 flush + JsonlWriter 句柄管理（append_event 不再每事件 save，log_write 长开句柄）；+10=批次 L：L3 pausedBy='restart'/清 resuming 唤醒标记 + L6 只读闸门（save/log_write 两个漏斗入口）｜task_events：批 PS1 新建（357 行，原在 400 预算内）；2026-11-15 +63=批 PS2：JsonlWriter 每任务长开句柄（方案 §6 风险 6，替代 appendJsonl 每条 open/close）+ _applyPatch 补丁应用单一来源（回填与 eventBySeq 共用）+ readLogTailWithPatches 的 'tool_args_patch' 廉价预筛
@@ -50,9 +49,8 @@ FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp'
             'screen', 'ssh', 'task_cwd', 'task_health', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
             'terminal', 'worklines_api', 'worklines_store', 'feedback_envelope', 'feedback_status', 'feedback_rate', 'feedback_views', 'feedback_ops'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
-ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
-                           ('tasks_api', 'tasks_runner'), ('tasks_api', 'tasks_store'),
-                           ('tasks_runner', 'tasks_store')}
+ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'), ('tasks_api', 'tasks_runner'),
+                           ('tasks_api', 'tasks_store'), ('tasks_runner', 'tasks_store')}
 # 批次 C（2026-11-13）扩面登记：按 modules/ 现名核实的特性模块全部纳入后，
 # 逐条认定现有依赖方向。约定: agent_api/files_base/feedback_store/tasks_store 等
 # 是各自家族的「底座」（蓝图/守卫/仓库），家族成员 → 底座是设计方向；
@@ -94,6 +92,7 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
     ('lead_notices', 'leads_inbox'), ('lead_notices', 'leads_store'), ('lead_notices', 'tasks_store'), ('leads_inbox', 'lead_notices'), ('tasks_runner', 'lead_notices'), ('task_health', 'tasks_store'), ('task_health', 'leads_inbox'), ('task_health', 'tasks_runner'), ('tasks_runner', 'tasks_api'),  # 批次 L：lead_notices=L1 超时提醒+L2 提问条目，task_health=L3 续接+L4 巡检（state_owner 归 INFRA）；tasks_runner→tasks_api 仅函数内延迟导入（answerPermission 复用 deliverMessage）
     ('leads_hosted', 'tasks_api'), ('leads_hosted', 'tasks_store'), ('leads_hosted', 'agent_skill_files'), ('leads_hosted', 'agent_tokens'), ('leads_hosted', 'agent_api'), ('leads_hosted', 'leads_store'), ('leads_api', 'leads_hosted'), ('leads_escalation', 'leads_inbox'), ('leads_escalation', 'leads_store'), ('tasks_runner', 'leads_escalation'),  # leads_hosted（批次 A 一键托管主管，编排层：建任务核心/技能包/令牌名额/吊销入口）+ leads_escalation（A4 审批上交的条目写入，判定与投递走 leads_inbox 公开面；tasks_runner 审批处一行调它；读 leads_store 判主管是否已停用）
+    ('leads_escalation', 'tasks_store'), ('leads_inbox', 'leads_escalation'), ('lead_notices', 'leads_escalation'),  # N1：leads_escalation→tasks_store 读任务终态与 pendingPermission（补标判据与"主管自己待批"提示存续条件，只读）；leads_inbox→leads_escalation 反向仅启动期（bindApp 里跑一次历史补标）、lead_notices→leads_escalation 反向仅扫掠期（ownPermissionLive），均为函数内延迟导入不成环
     # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
     ('tasks_api', 'agent_nodes'),     # 执行点存在性校验/寻址/模型声明
     ('tasks_api', 'task_cwd'),        # cwd 前置校验（远端 cwdRoots, 批次 B3）
