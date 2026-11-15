@@ -341,6 +341,8 @@ def createTaskResponse(data, start=True):
         'sources': manifest,
         # 批次 G1：结构化结果要求（'' = 不要求；提交面见 task_result_api/mcp）
         'expects': expects,
+        # 批次 G2：所属工作项（平台流水线建的任务带它；'' = 普通任务）
+        'workItemId': str(data.get('workItemId') or '').strip(),
     }
     injected = ''
     if workline:

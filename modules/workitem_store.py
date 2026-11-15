@@ -64,9 +64,13 @@ def blank():
         # §2b 防冲突：创建时声明，实施结束后用实际 diff 校正
         'footprint': [], 'footprintActual': [], 'forceParallel': False,
         'queuedFor': '', 'queuedShare': [],
-        # 异常处理计数（§2 提前收工/上下文换手/任务起不来）
-        'earlyFinish': 0, 'stalls': 0, 'startFails': 0, 'handoffs': 0,
-        'resultSeen': {}, 'tmpDir': '',
+        # 异常处理计数（§2 提前收工/上下文换手/任务起不来）与恢复指针
+        'earlyFinish': 0, 'earlyStreak': 0, 'earlyCheckedAt': {},
+        'stalls': 0, 'startFails': 0, 'startFailAt': 0.0, 'handoffs': 0,
+        'syncRetries': 0, 'resultSeen': {}, 'tmpDir': '',
+        # 验收与判断的恢复指针（重启后据此接续，不重复建任务）
+        'verifyWorktree': '', 'verifyMeta': {}, 'lastImplCommit': '',
+        'judgmentFrom': '', 'judgmentReason': '',
         'createdAt': _now(), 'updatedAt': _now(),
     }
 
@@ -147,7 +151,7 @@ class WorkitemRepository:
         wi = self.get(wid)
         if wi is None:
             raise KeyError(wid)
-        allowed = set(blank()) | {'workItemId'}
+        allowed = set(blank())
         with self.lock:
             for key, value in (patch or {}).items():
                 if key in allowed and key not in ('id', 'createdAt'):

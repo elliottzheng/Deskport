@@ -28,7 +28,7 @@ LEGACY = {
     'modules/agent_sessions.py': 443, 'modules/leads_inbox.py': 405, 'modules/leads_api.py': 409,  # leads_inbox：主管收件箱（存储+触发点+sweeper+端点一体），11-15 +20=escalation 落定（entryResolved + inbox resolved 字段）；11-15 N1 拆回预算内（down notice 瘦身 liveDownEntries 与无动静提示 idleNotice 移归 lead_notices，启动补标内联进 bindApp），下次改先拆；2026-11-15 批 G1：+2=URGENT_KINDS 增加 task_judgment/result_missing（需判断的结果与缺结果立即唤醒）；sessions：持久会话（bash 常驻通道）管理｜leads_api：主管管理面 + 令牌通道自查/自助注册，2026-11-15 合并批次 A（+16=托管主管停用/删除即吊销专属令牌）与批次 SR（+114=POST /api/agent/lead 自助成为主管 + 认领历史任务）后 409，下次改先拆
     'modules/tasks_api.py': 1044,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）；+21=answer 端点（L2）+ cancel 响应 nodeStillRunning（L4）；+14=批次 DR：排空期间消息只排队不开轮（deliverMessage）+ 远端 fork:false 接管未关闭占用 409 + close 终态后统一释放节点会话（原仅强杀分支）
     'modules/tasks_runner.py': 944,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）；+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）；+80=批次 L：L2 提问路径（_isAskUserQuestion/perm.question/队首当答复/answerPermission）+ L4 清 _toolStall；+10=批 PS2 削峰：chunk 路径去 save（lastText 轮末随关键变迁落盘）+ 五处非关键 save 改 touch（commands/contextHigh×2/lastTurn/liveFrom/resuming）；+11=批次 DR（合并 PS2 后净增，按合并后实际行数核对）：_promptOnce 排空闸门（关闭则跳过本轮）与四个调用点守卫、_drainQueuedMessages 排空即留队、startSession 接回重试包装、resume 看门狗排空不计时
-    'modules/tasks_store.py': 607, 'modules/task_events.py': 420,  # tasks_store：任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +143=批 PS2 削峰：touch/flush/_writeNow/shutdown/_closeIdleJsonl + 共享 flush 线程（弱引用登记，每进程一条）与 atexit 退出 flush + JsonlWriter 句柄管理（append_event 不再每事件 save，log_write 长开句柄）；+10=批次 L：L3 pausedBy='restart'/清 resuming 唤醒标记 + L6 只读闸门（save/log_write 两个漏斗入口）；2026-11-15 批 G1：+4=首条消息按 expects 提示 submit_result（结构化交付要求）｜task_events：批 PS1 新建（357 行，原在 400 预算内）；2026-11-15 +63=批 PS2：JsonlWriter 每任务长开句柄（方案 §6 风险 6，替代 appendJsonl 每条 open/close）+ _applyPatch 补丁应用单一来源（回填与 eventBySeq 共用）+ readLogTailWithPatches 的 'tool_args_patch' 廉价预筛
+    'modules/tasks_store.py': 608, 'modules/task_events.py': 420,  # tasks_store：任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）；2026-11-15 +143=批 PS2 削峰：touch/flush/_writeNow/shutdown/_closeIdleJsonl + 共享 flush 线程（弱引用登记，每进程一条）与 atexit 退出 flush + JsonlWriter 句柄管理（append_event 不再每事件 save，log_write 长开句柄）；+10=批次 L：L3 pausedBy='restart'/清 resuming 唤醒标记 + L6 只读闸门（save/log_write 两个漏斗入口）；2026-11-15 批 G1：+4=首条消息按 expects 提示 submit_result（结构化交付要求）；2026-11-15 批 G2：+1=summaryBrief 带 workItemId（指挥台工作项展开）｜task_events：批 PS1 新建（357 行，原在 400 预算内）；2026-11-15 +63=批 PS2：JsonlWriter 每任务长开句柄（方案 §6 风险 6，替代 appendJsonl 每条 open/close）+ _applyPatch 补丁应用单一来源（回填与 eventBySeq 共用）+ readLogTailWithPatches 的 'tool_args_patch' 廉价预筛
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
     'tests/test_leads_inbox_store.py': 402, 'tests/test_tasks_api.py': 1620, 'tests/test_leads_escalation.py': 475, 'tests/test_task_policy.py': 506, 'tests/test_task_persist_restart.py': 450,  # inbox_store：11-15 合并 A 与 V 后 402，下次改先拆｜tasks_api：任务 API 回归集（面最大）；11-14 +15=P0-1 闸门、+12=wait 超时 leapfrog 修复回归（含三个存量测试改新契约）；+39=wait timeout 0/负数老契约回归（P3b 退回整改）｜leads_escalation：审批上交主管回归集，11-15 +58=escalation 落定（resolved 不计未读/L1 不提醒/grace 不上交 + inbox resolved 字段）｜task_policy：审批边界回归集，11-15 合并 main（拆出 task_policy_pipe/readonly）后 506：L5 按名字杀进程正反例（含 //IM 双斜杠与 Get-Process 管道返工用例）｜persist_restart：批 PS1 新建（378 行）；2026-11-15 +72=批 PS2：开句柄失败两例先关句柄再注入（长开句柄后 open 只在首写/句柄作废后发生）+ 新增 6c 写中途失败作废句柄、重试与恢复
@@ -41,7 +41,10 @@ FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp'
             'files_federation', 'files_pins', 'files_transfer', 'lead_notices', 'leads_api', 'leads_escalation', 'leads_hosted', 'leads_inbox', 'leads_store',
             'screen', 'ssh', 'task_cwd', 'task_health', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
             'terminal', 'worklines_api', 'worklines_store', 'feedback_envelope', 'feedback_status', 'feedback_rate', 'feedback_views', 'feedback_ops',
-            'workitem_store', 'workitem_state', 'workitem_projects'}
+            'workitem_store', 'workitem_state', 'workitem_projects', 'workitem_core',
+            'workitem_git', 'workitem_prompts', 'workitem_view', 'workitem_setup',
+            'workitem_actions', 'workitem_flow', 'workitem_pipeline', 'workitem_watch',
+            'workitem_recover', 'workitem_integrate'}
 # 允许的“上游 → 下游”依赖；其余同层 import 视为违规
 ALLOWED_FEATURE_IMPORTS = {('aihandoff', 'files'), ('tasks', 'tasks_api'),
                            ('tasks_api', 'tasks_runner'), ('tasks_api', 'tasks_store'),
@@ -121,6 +124,52 @@ ALLOWED_FEATURE_IMPORTS.update({
     # 方向：存储 → 状态机（history/迁移唯一出处）；配置 → 审批边界校验
     ('workitem_store', 'workitem_state'),
     ('workitem_projects', 'task_policy'),
+    # 引擎家族（core=共用内核/建任务原语；setup=创建调度与验收任务；
+    # actions=发消息/接回/换手/决策；flow=结果流转；pipeline=tick 与集成
+    # 回调；watch=异常巡检；recover=重启恢复；view=展示口径）。方向自上而下
+    # 单向（core 是底座）；actions→setup、flow→pipeline 的反向只在函数内
+    # 延迟导入（同 agent_api↔agent_local 的既有做法）
+    ('workitem_core', 'tasks_store'), ('workitem_core', 'tasks_api'),
+    ('workitem_core', 'leads_inbox'), ('workitem_core', 'worklines_store'),
+    ('workitem_core', 'task_result'),
+    ('workitem_view', 'tasks_store'), ('workitem_view', 'workitem_core'),
+    ('workitem_integrate', 'workitem_git'), ('workitem_integrate', 'workitem_store'),
+    ('workitem_setup', 'tasks_api'), ('workitem_setup', 'workitem_view'),
+    ('workitem_setup', 'workitem_core'), ('workitem_setup', 'workitem_actions'),
+    ('workitem_actions', 'tasks_api'), ('workitem_actions', 'tasks_store'),
+    ('workitem_actions', 'workitem_view'), ('workitem_actions', 'workitem_integrate'),
+    ('workitem_actions', 'workitem_core'), ('workitem_actions', 'workitem_setup'),
+    ('workitem_flow', 'workitem_core'), ('workitem_flow', 'workitem_setup'),
+    ('workitem_flow', 'workitem_actions'), ('workitem_flow', 'workitem_integrate'),
+    ('workitem_pipeline', 'tasks_api'), ('workitem_pipeline', 'workitem_core'),
+    ('workitem_pipeline', 'workitem_setup'), ('workitem_pipeline', 'workitem_actions'),
+    ('workitem_pipeline', 'workitem_flow'), ('workitem_pipeline', 'workitem_integrate'),
+    ('workitem_watch', 'tasks_store'), ('workitem_watch', 'tasks_api'),
+    ('workitem_watch', 'workitem_store'),
+    ('workitem_watch', 'workitem_core'),
+    ('workitem_watch', 'workitem_pipeline'), ('workitem_watch', 'workitem_actions'),
+    ('workitem_recover', 'tasks_store'), ('workitem_recover', 'workitem_core'),
+    # 家族内部：底座（store/state/projects/git/prompts/view）可被上层自由消费
+    ('workitem_core', 'workitem_git'), ('workitem_core', 'workitem_prompts'),
+    ('workitem_core', 'workitem_state'), ('workitem_core', 'workitem_store'),
+    ('workitem_core', 'workitem_projects'), ('workitem_core', 'leads_store'),
+    ('workitem_view', 'workitem_state'), ('workitem_view', 'workitem_store'),
+    ('workitem_setup', 'workitem_git'), ('workitem_setup', 'workitem_prompts'),
+    ('workitem_setup', 'workitem_state'), ('workitem_setup', 'workitem_store'),
+    ('workitem_setup', 'workitem_projects'),
+    ('workitem_actions', 'workitem_git'), ('workitem_actions', 'workitem_prompts'),
+    ('workitem_actions', 'workitem_state'), ('workitem_actions', 'workitem_store'),
+    ('workitem_flow', 'workitem_git'), ('workitem_flow', 'workitem_prompts'),
+    ('workitem_flow', 'workitem_state'), ('workitem_flow', 'workitem_store'),
+    ('workitem_pipeline', 'workitem_git'), ('workitem_pipeline', 'workitem_prompts'),
+    ('workitem_pipeline', 'workitem_state'), ('workitem_pipeline', 'workitem_store'),
+    ('workitem_watch', 'workitem_store'), ('workitem_watch', 'workitem_state'),
+    ('workitem_watch', 'workitem_prompts'),
+    ('workitem_setup', 'workitem_integrate'), ('workitem_setup', 'leads_store'),
+    ('workitem_recover', 'workitem_state'), ('workitem_recover', 'workitem_store'),
+    # 函数内延迟导入的反向边（作业/巡检线程回调单一写者）
+    ('workitem_actions', 'workitem_pipeline'),
+    ('workitem_flow', 'workitem_pipeline'),
 })
 # 基础设施层: 可被任何层依赖, 但自己不得 import 特性层 (依赖只能向上)
 # termcore 是 terminal/ssh 共用的共享内核, 归基础设施而非特性;

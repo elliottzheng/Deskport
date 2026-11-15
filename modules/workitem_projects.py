@@ -53,7 +53,9 @@ DEFAULT_SETUP_NOTES = (
 
 DEFAULT_POLICY = {'allowPaths': [DESKPORT_WORKTREE_ROOT, DESKPORT_REPO],
                   'allowCommands': ['^git\\b', '^python\\b', '^py\\b',
-                                    '^pytest\\b'],
+                                    '^pytest\\b', '^cat\\b', '^head\\b',
+                                    '^tail\\b', '^ls\\b', '^rg\\b',
+                                    '^grep\\b', '^find\\b'],
                   'denyCommands': [], 'default': 'ask',
                   'allowBackground': False}
 

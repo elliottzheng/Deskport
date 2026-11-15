@@ -58,6 +58,8 @@ from modules import tasks_federation as tasksFederationModule  # noqa: E402  路
 from modules import tasks_rename as tasksRenameModule  # noqa: E402  路由注册（PATCH 改名，批次 T）
 from modules import task_kimi_sessions as taskKimiSessionsModule  # noqa: E402  路由注册（接手候选，批 G1 拆出）
 from modules import task_result_api as taskResultApiModule  # noqa: E402  路由注册（结构化结果 HTTP，批 G1）
+from modules import workitem_recover as workitemRecoverModule  # noqa: E402  批次 G2：重启恢复
+from modules import workitem_watch as workitemWatchModule  # noqa: E402  批次 G2：流水线巡检（起不来/卡死/提前收工）
 from modules import task_result_mcp as taskResultMcpModule  # noqa: E402  路由注册（submit_result MCP，批 G1）
 from modules import worklines_api as worklinesModule  # noqa: E402  路由注册
 from modules import external_proxy as externalProxyModule  # noqa: E402
@@ -298,6 +300,10 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
 
     # 批次 L 任务巡检: 重启 60s 后自动续接（L3）+ 工具卡住报警（L4）
     taskHealthModule.bindApp(app)
+
+    # 批次 G2 流水线: 重启恢复（幂等重建指针）+ 巡检循环
+    workitemRecoverModule.recover()
+    workitemWatchModule.bindApp(app)
 
 
 def _installApiJsonErrors(app):
