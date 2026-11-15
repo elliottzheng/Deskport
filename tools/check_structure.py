@@ -36,8 +36,8 @@ LEGACY = {
                                                   # 下一步把主机解析与入参归一拆成独立小模块
     'modules/agent_nodes.py': 580,                # 节点注册+隧道+引擎注册一体
     'modules/agent_sessions.py': 443,             # 持久会话（bash 常驻通道）管理
-    'modules/tasks_api.py': 997,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）
-    'modules/tasks_runner.py': 773,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（P0-3）；+39=收件箱四个触发点+finalLen+by（批次 P3）；+2=drain 转发 by（P3b）；2026-11-15 +15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）；+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）
+    'modules/tasks_api.py': 997,                  # 任务 API 面最大，拆分需配回归；2026-11-14 +12=收件箱关闭触发点 + by 记名（补 4，批次 P3）；+18=wait timeout 契约整改（P3b 退回：0/负数显式回 1s，helper+两条回归）；2026-11-15 +16=建卡与启动分步（start 参数 + startTask，批次 A）+ 审批决定者 by（A4-4）
+    'modules/tasks_runner.py': 802,               # 任务执行编排；+17=lastTurn 空转标记（11-13）；+5=清死审批标记（11-14，P0-3）；+39=收件箱四个触发点+finalLen+by 记名（11-14，批次 P3）；+2=drain 转发 by（11-14，批次 P3b）；2026-11-15 +12=流式参数后到补丁行（tool_args_patch 落 jsonl，删空转 save）+18=残片首帧也回填（_needsBackfill(args, argsText)：已落卡空/非法 JSON 且后到合法 JSON 才补，含 U 批实测 "{\"command\": " 半截形状）（批次 PS1）；+15=审批先上交主管（A4：notice→escalation 调用 + grace 限期 + 结果事件 by）+6=流式残片参数让位完整快照（例 11 实测：byCall 首帧 "{" 挡住 streamed，边界内命令被误挂起）（批次 A）
     'modules/tasks_store.py': 442,                # 任务存储；2026-11-14 +7=启动清死审批标记（P0-3）；+2=summaryBrief/summary 带 task.lead（批次 Q）
     'tests/test_agent_api.py': 611,               # 智能体 API 回归集
     'tests/test_r47_remote_adopt.py': 481,        # R47 远端 adopt 回归集
@@ -46,7 +46,7 @@ LEGACY = {
 
 SKIP_DIRS = {'.git', '.venv', '__pycache__', 'vendor', 'node_modules', '.deploy-backup', '.run', '.pytest-tmp'}  # pytest basetemp：测试现造文件，非源码
 FEATURES = {'aihandoff', 'agent_api', 'agent_local', 'agent_nodes', 'agent_sftp', 'agent_sftp_write',
-            'agent_sessions', 'agent_share', 'agent_skill_files', 'agent_tunnel', 'command', 'control',
+            'agent_sessions', 'agent_share', 'agent_skill_files', 'agent_tunnel', 'command', 'command_view', 'control',
             'feedback', 'feedback_store', 'files', 'files_archive', 'files_base', 'files_browse',
             'files_federation', 'files_pins', 'files_transfer', 'leads_api', 'leads_escalation', 'leads_hosted', 'leads_inbox', 'leads_store',
             'screen', 'ssh', 'task_cwd', 'task_node', 'tasks', 'tasks_api', 'tasks_runner', 'tasks_store',
@@ -93,8 +93,8 @@ ALLOWED_FEATURE_IMPORTS.update({
     ('feedback', 'feedback_store'),
     # leads（批次 Q）主管家族 + leads_inbox（批次 P3 收件箱一体模块）: Q=leads_api→leads_store/agent_api/tasks_store、tasks_api→leads_store（建任务读主管记录）; P3=触发点在 runner/api 各一行（任务主链路→收件箱，方向单向），sweeper 唤醒调 deliverMessage（函数内延迟导入不成环），扫任务读 tasks_store、游标/记录读 leads_store，human 端点与绑任务在 leads_api 反向调 append/wakeNow
     ('leads_api', 'leads_store'), ('leads_api', 'agent_api'), ('leads_api', 'tasks_store'), ('tasks_api', 'leads_store'), ('leads_inbox', 'tasks_api'), ('leads_inbox', 'tasks_store'), ('leads_inbox', 'leads_store'), ('tasks_runner', 'leads_inbox'), ('tasks_api', 'leads_inbox'), ('leads_api', 'leads_inbox'),
-    # leads_hosted（批次 A 一键托管主管，编排层：建任务核心/技能包/令牌名额/吊销入口）+ leads_escalation（A4 审批上交的条目写入，判定与投递走 leads_inbox 公开面；tasks_runner 审批处一行调它；返工：读 leads_store 判主管是否已停用——令牌吊销后"仍可补批"不成立，notice 文案改请用户直接处理）
-    ('leads_hosted', 'tasks_api'), ('leads_hosted', 'tasks_store'), ('leads_hosted', 'agent_skill_files'), ('leads_hosted', 'agent_tokens'), ('leads_hosted', 'agent_api'), ('leads_hosted', 'leads_store'), ('leads_api', 'leads_hosted'), ('leads_escalation', 'leads_inbox'), ('leads_escalation', 'leads_store'), ('tasks_runner', 'leads_escalation'),    # —— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
+    ('command_view', 'tasks_store'), ('command_view', 'leads_store'), ('command_view', 'leads_inbox'),  # 批次 U 指挥台：只读聚合三处现有存储，不改它们
+    ('leads_hosted', 'tasks_api'), ('leads_hosted', 'tasks_store'), ('leads_hosted', 'agent_skill_files'), ('leads_hosted', 'agent_tokens'), ('leads_hosted', 'agent_api'), ('leads_hosted', 'leads_store'), ('leads_api', 'leads_hosted'), ('leads_escalation', 'leads_inbox'), ('leads_escalation', 'leads_store'), ('tasks_runner', 'leads_escalation'),  # leads_hosted（批次 A 一键托管主管，编排层：建任务核心/技能包/令牌名额/吊销入口）+ leads_escalation（A4 审批上交的条目写入，判定与投递走 leads_inbox 公开面；tasks_runner 审批处一行调它；读 leads_store 判主管是否已停用）；—— tasks/worklines 家族消费执行点语义与节点注册表（批次 B3/C 后公开的方向）——
     ('tasks_api', 'agent_nodes'),     # 执行点存在性校验/寻址/模型声明
     ('tasks_api', 'task_cwd'),        # cwd 前置校验（远端 cwdRoots, 批次 B3）
     ('tasks_api', 'task_node'),       # 执行点语义
@@ -127,7 +127,7 @@ ALLOWED_WINDOW = {'WPFeedback', 'WPFeedbackCapture', 'WPFeedbackPanel',   # 反�
                   'SSHUiCtx', 'SSHSftpUI', 'WP_MSG', 'SSHHostStore', 'WP_BRAND',
                   'TermEnv', 'TermSessionUI', 'TermControls',
                   # 分享表单提交体构造（share-form.js，纯函数，tests/js/ 有 node 单测）
-                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads',  # 批次 S：主管卡片/任务页筛选（纯函数有 node 单测）
+                  'WPShareForm', 'WPSettingsLeads', 'WPTasksLeads', 'WPTasksOverview',  # 批次 S 主管卡片/任务页筛选 + 批次 U 指挥台一屏（纯函数有 node 单测）
                   # 设置页「我的权限」卡片（settings-capability.js，view/kindText 有 node 单测；mixin 把三态和 loadCapability 挂进 settings.js）
                   'WPSettingsCapability'}
 # 跨模块私有接缝存量白名单（批次 C, C2/C4）: (使用方, 提供方) → 私有名集合。

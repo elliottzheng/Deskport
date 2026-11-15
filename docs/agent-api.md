@@ -390,8 +390,8 @@ DELETE /api/agent/ssh/sessions/<sid>
 | POST | /api/tasks/nodes/<node>/probe | 手动触发模型可用性探测 `{models?: [...]}`（缺省=全部声明模型），立即入队后台探测 |
 | POST | /api/tasks/files | 上传文件 → 返回本机路径（塞进 paths 用） |
 | GET | /api/tasks/kimi-sessions?cwd= | 已存在的 Kimi CLI 会话（接手候选，按最近更新排序） |
-| GET | /api/tasks/<id>/event/<seq> | 单条事件（按 seq 从流水里取，`assistant_chunk` 不返回） |
-| GET | /api/tasks/<id>/log | 全量流水 jsonl（`application/x-ndjson`；`?download=1` 作为附件下载；无日志 404） |
+| GET | /api/tasks/<id>/event/<seq> | 单条事件（按 seq 从流水里取，`assistant_chunk` 不返回；流式参数后到的 `tool.args` 按补丁行还原） |
+| GET | /api/tasks/<id>/log | 全量流水 jsonl（`application/x-ndjson`；`?download=1` 作为附件下载；无日志 404）。流式参数后到（真实 Kimi 形状）时会混入**不带 `seq`** 的 `tool_args_patch` 补丁行：`{"type":"tool_args_patch","targetSeq":<被补事件的 seq>,"args":...,"truncated":...,"at":...}`——它不是事件、不占序号，按 `targetSeq` 应用到对应 `tool` 事件（同目标多次补丁以最后一次为准）；`/events` 与 `/event/<seq>` 返回的已是应用后的形状，`/log` 原样透出，自建解析方按 `type` 跳过即可 |
 | GET | /api/tasks/<id>/download?path= | 取工作区里的结果文件（相对 `workspace` 解析；越界 403、不存在 404） |
 | POST | /api/tasks/<id>/policy | 更新审批边界（整份替换 `policy`；本轮 `running` 时 409，挂起中的审批不重判） |
 | GET | /api/tasks/nodes/<node>/health | 执行点健康探测：本机/远端 node 直连 `/health`，联邦成员转发 `/health` |
@@ -848,7 +848,15 @@ policy 判定为「需要询问」时：
   `message` 接手（`canResume`）；仅 web 内 stdio 回退（未启用 node）时任务
   中断（`interrupted`），重发 message 会明确 409，请重新建任务；
 - 重启进行中事件轮询会拿到 frp 的 502 原文——服务不可用期间任何服务端都
-  无法返回 JSON，恢复后一切照旧。
+  无法返回 JSON，恢复后一切照旧；
+- **进行中工具调用的审批可能从自动放行退回询问**（批次 PS1）：policy 判定
+  要回查流式参数（`_toolArgs` / `_toolArgText` 这些运行时缓存不落盘），
+  web 重启后查不到，只能按缺省 `ask` 挂起等人工。方向上更保守（不会更不
+  安全）；事件窗口本身不丢（`agent_logs/<id>.jsonl` 是唯一真相，重启后惰性
+  回填，与重启前逐字段一致），`/event/<seq>` 全文照旧可取。流式参数后到
+  补进 tool 事件的 args 也不丢：回填时往 jsonl 追加不带 `seq` 的
+  `tool_args_patch` 补丁行，重启后按 `targetSeq` 还原（补丁行本身不是
+  事件，`/log` 原样透出）。
 
 ## 技能分发（URL 自举）
 

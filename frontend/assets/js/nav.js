@@ -12,7 +12,7 @@
 window.WP_NAV = {
     views: {
         home: { href: '/', label: '控制台', icon: 'grid' },
-        tasks: { href: '/tasks', label: '任务', icon: 'task' },
+        tasks: { href: '/tasks', label: '指挥台', icon: 'task' },
         files: { href: '/files', label: '文件', icon: 'folder' },
         session: { label: '会话', icon: 'terminal' },
         screen: { href: '/screen', label: '屏幕', icon: 'screen' },

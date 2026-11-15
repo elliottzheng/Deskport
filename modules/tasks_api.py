@@ -16,6 +16,7 @@ from flask import (Blueprint, Response, g, jsonify, request, send_file,
 
 from modules.kimi_acp import KimiAcp
 from modules import kimi_acp
+from modules import task_events
 from modules import task_policy
 from modules import tasks_runner as runner
 from modules import task_state
@@ -68,12 +69,12 @@ def listTasks():
     running = sum(1 for t in items if t.get('status') == 'running')
     queued = sum(1 for t in items if t.get('status') == 'queued')
     if leadArg:
-        # 先筛再截前 50 条；running/queued 仍是全局口径（与不带 lead 一致）
+        # 先筛再截前 50 条（truncated 告知截断了、还有更多）；running/queued 仍是全局口径（与不带 lead 一致）
         items = [t for t in items if (t.get('lead') or '') == leadArg]
     tasks = [store.repo.summary(t) if full else store.repo.summaryBrief(t)
              for t in items[:50]]
     return jsonify({'tasks': tasks, 'running': running, 'queued': queued,
-                    'limit': runner.maxRunning(),
+                    'limit': runner.maxRunning(), 'truncated': len(items) > 50,
                     'countScope': 'all callers (全局)'})
 
 
@@ -693,23 +694,10 @@ def taskQueuedMessageDelete(task, taskId, mid):
 @blueprint.route('/api/tasks/<taskId>/event/<int:seq>')
 @taskRoute
 def taskEvent(task, taskId, seq):
-    path = store.repo.log_path(task)
-    if os.path.isfile(path):
-        try:
-            with open(path, encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except ValueError:
-                        continue
-                    if obj.get('seq') != seq or obj.get('type') == 'assistant_chunk':
-                        continue
-                    return jsonify({'event': obj})
-        except OSError:
-            pass
+    # 补丁行（tool_args_patch）由 eventBySeq 按 targetSeq 应用、不当事件返回
+    event = task_events.eventBySeq(store.repo.log_path(task), seq)
+    if event is not None:
+        return jsonify({'event': event})
     for e in task.get('events', []):
         if e.get('seq') == seq:
             return jsonify({'event': e})

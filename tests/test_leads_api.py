@@ -369,7 +369,8 @@ def test_list_tasks_filtered_by_lead(env):
         assert task(env, t1['token']).status_code == 202
     assert task(env, t2['token']).status_code == 202
     plain = call(env, 'get', '/api/tasks', token=t1['token']).get_json()
-    assert set(plain) == {'tasks', 'running', 'queued', 'limit', 'countScope'}
+    assert set(plain) == {'tasks', 'running', 'queued', 'limit', 'truncated',
+                          'countScope'}
     assert plain['queued'] == 3 and plain['running'] == 0
     mine = call(env, 'get', '/api/tasks?lead=' + leadId, token=t1['token']).get_json()
     assert [t['id'] for t in mine['tasks']] == [t['id'] for t in plain['tasks'] if t['lead'] == leadId]
