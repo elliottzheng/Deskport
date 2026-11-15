@@ -26,6 +26,8 @@
     responseNoticedAt：主管反应超时提醒的单次标记（L1，节流同款）。
     resolvedRequests：已落定的审批请求（requestId→{at, by}，setResolved 写，
     上限 RESOLVED_CAP）——escalation 审批出结果后不再算未处理（主控追加）。
+    noticeCleared：已收回的 notice 族（N1「条件解除即收回」，族名→该条 seq，
+    markNoticeCleared 写）——指挥台读侧据此不再返回它，不需要用户点。
 绑定托管任务（补 1）改 kind/taskId 两个键，走 bindTask/unbindTask——
 不进 update() 的 PATCH_KEYS（避免出现 hosted 却没有 taskId 的状态）。
 """
@@ -298,10 +300,39 @@ def markResponseNoticed(leadId, at=None):
         return lead, ''
 
 
+def markNoticeCleared(leadId, family, seq):
+    """记某族 notice 已收回（批次 N1「条件解除即收回」）。
+
+    sweeper 每轮复算各 notice 族的存续条件（lead_notices.retractNotices）；
+    不再成立的族记 noticeCleared[族]=该条 seq，读侧（leads_inbox.entriesAfter
+    的 down 过滤）据此不再返回它——条件解除即收回，不需要用户点「已处理」。
+    按 seq 记：同族来了更新的 notice 自动脱标（新事实优先）。返回 (record, error)。
+    """
+    leadId = str(leadId or '')
+    family = str(family or '')[:40]
+    try:
+        seqVal = int(seq or 0)
+    except (TypeError, ValueError):
+        seqVal = 0
+    with _LOCK:
+        data = _load()
+        lead = data.get(leadId)
+        if not isinstance(lead, dict):
+            return None, NOT_FOUND
+        cleared = lead.get('noticeCleared')
+        if not isinstance(cleared, dict):
+            cleared = {}
+            lead['noticeCleared'] = cleared
+        cleared[family] = seqVal
+        lead['updatedAt'] = _now()
+        _save(data)
+        return lead, ''
+
+
 RESOLVED_CAP = 500        # resolvedRequests 上限：只留最近这么多（按 at 丢最旧）
 
 
-def setResolved(leadId, requestId, by=''):
+def setResolved(leadId, requestId, by='', at=None):
     """标记一个审批请求已落定（主控追加：escalation 落定后不再算未处理）。
 
     线上实测：驱动几秒内批掉审批，收件箱却堆着几十条未读 escalation，
@@ -309,11 +340,18 @@ def setResolved(leadId, requestId, by=''):
     主管记录里（requestId → {at, by}），收件箱 JSONL 保持只追加不改写；
     读侧（L1 / 指挥台 / inbox 接口）只把未落定的 escalation 当待处理。
     重复标记同一条只刷新时间（幂等）。返回 (record, error)。
+
+    at 可显式给（批次 N1 历史补标传 escalation 条目自己的 at）：超
+    RESOLVED_CAP 时按 at 丢最旧，补标才能准确地"保留最近的"。
     """
     leadId = str(leadId or '')
     requestId = str(requestId or '')
     if not leadId or not requestId:
         return None, 'leadId 与 requestId 都不能为空'
+    try:
+        atVal = float(at) if at is not None else _now()
+    except (TypeError, ValueError):
+        atVal = _now()
     with _LOCK:
         data = _load()
         lead = data.get(leadId)
@@ -323,7 +361,7 @@ def setResolved(leadId, requestId, by=''):
         if not isinstance(resolved, dict):
             resolved = {}
             lead['resolvedRequests'] = resolved
-        resolved[requestId] = {'at': _now(), 'by': str(by or '')[:40]}
+        resolved[requestId] = {'at': atVal, 'by': str(by or '')[:40]}
         while len(resolved) > RESOLVED_CAP:
             oldest = min(resolved,
                          key=lambda k: float((resolved[k] or {}).get('at') or 0))

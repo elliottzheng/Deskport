@@ -17,6 +17,14 @@ escalation（审批出过结果，leads_inbox.entryResolved）不算待处理—
 
 时钟可注入：responseNotice(lead, now) 的 now 由 sweeper 传入（测试据此造
 超时），缺省走墙上时钟。
+
+N1（一事一条 / 条件解除即收回）：down 侧用户可见提醒不再堆屏。同一去重族
+（noticeFamily：ref 带 lead = L1 反应超时，ref 带 task = 主管自己待批）只留
+最新一条——读侧 entriesAfter 的 down 过滤按族保留最新，写盘照旧只追加，
+文案里的数字天然是最新那条；条件解除（主管又读了/审批落定了）由 sweeper
+每轮 retractNotices 复算（responseNoticeLive 与写入口同一套判定），不再
+成立的族在主管记录上记 noticeCleared[族]=seq，读侧据此收回，不需要用户点。
+历史 escalation 的落定补标在 leads_escalation.backfillResolved（启动时跑）。
 """
 import re
 import time
@@ -24,6 +32,7 @@ import time
 import config
 from modules import leads_inbox, leads_store
 from modules import tasks_store as store
+from modules.lead_inbox_store import readAll
 
 # 算「下属消息」的条目类型。notice 是系统提示（无动静提示等），不算——
 # 否则会和 P3 的 idle 提示互相刷屏。question 是 L2 新增：提问正是最等不得
@@ -142,7 +151,9 @@ def _hostedUnreacted(lead, now, sec):
 def responseNotice(lead, now=None):
     """L1：主管超时未处理收件箱 → down 一条 notice（指挥台「等你处理」可见）。
 
-    同一主管每 leadResponseSec 最多一条。返回写下的 seq（0 = 没写）。
+    同一主管每 leadResponseSec 最多一条（节流照旧）。N1：连写多条时读侧
+    （entriesAfter 的 down 过滤）只显示最新那条——堆叠不再占屏。返回写下的
+    seq（0 = 没写）。
     """
     now = now if now is not None else time.time()
     sec = config.getLeadResponseSec()
@@ -165,3 +176,97 @@ def responseNotice(lead, now=None):
     if seq:
         leads_store.markResponseNoticed(leadId, now)
     return seq
+
+
+# ---------------------------------------------------------------- N1：一事一条 / 条件解除即收回
+
+# notice 去重族（down 侧用户可见提醒的单位）：同一族同一主管只留最新一条。
+# 族按 ref 形状判——responseNotice 写 {'lead': …}（L1 反应超时提醒），
+# leads_escalation.noticeOwnPermission 写 {'task': …}（主管自己命令待批
+# 提示）。ref 不带这两种指针的 notice（合成数据/未来新提醒）没有族：不被
+# 取代也不被收回，原样透传（test_command_view 的 kind 用例即此形状）。
+FAMILY_RESPONSE = 'response'
+FAMILY_OWN_PERM = 'ownPerm'
+
+
+def noticeFamily(entry):
+    """down 侧 notice 的去重族；不是 notice 或没有族返回 None。"""
+    if (entry or {}).get('kind') != 'notice':
+        return None
+    ref = entry.get('ref')
+    if not isinstance(ref, dict):
+        return None
+    if ref.get('lead'):
+        return FAMILY_RESPONSE
+    if ref.get('task'):
+        return FAMILY_OWN_PERM
+    return None
+
+
+def responseNoticeLive(lead, now=None):
+    """L1 提醒的存续条件现在还成立吗（N1 条件解除即收回的复算面）。
+
+    与 responseNotice 写入口同一套判定（_staleEntries / _hostedUnreacted），
+    不另造逻辑：超时条目没了（主管读了/审批落定了/任务结束了）→ False，
+    sweeper 据此收回。leadResponseSec<=0（功能关停）时同样 False——老提醒
+    不该继续挂在用户面前。
+    """
+    sec = config.getLeadResponseSec()
+    if sec <= 0:
+        return False
+    if not str((lead or {}).get('id') or ''):
+        return False
+    now = now if now is not None else time.time()
+    return bool(_staleEntries(lead, now, sec) or _hostedUnreacted(lead, now, sec))
+
+
+def _latestDownNotices(leadId):
+    """每族最新的一条 down notice（原始视图）：{family: entry}。
+
+    读侧的 entriesAfter 已把收走的过滤掉，retract 要看真现场，直接读文件
+    （lead_inbox_store.readAll；只追加顺序即 seq 顺序，后者覆盖前者）。
+    """
+    rows = {}
+    for entry in readAll(leadId):
+        if entry.get('dir') != 'down' or (entry.get('kind') or '') != 'notice':
+            continue
+        family = noticeFamily(entry)
+        if family:
+            rows[family] = entry
+    return rows
+
+
+def retractNotices(lead, now=None):
+    """条件解除即收回（N1）：sweeper 每轮对每位主管复算各 notice 族。
+
+    族里最新那条的条件不再成立 → 主管记录上记 noticeCleared[族]=seq，读侧
+    （leads_inbox.entriesAfter 的 down 过滤）不再返回它——不需要用户点。
+    按 seq 记：同族来了更新的 notice 自动脱标（新事实优先）。返回收回了几条。
+    """
+    leadId = str((lead or {}).get('id') or '')
+    if not leadId:
+        return 0
+    latest = _latestDownNotices(leadId)
+    if not latest:
+        return 0
+    cleared = 0
+    for family, entry in latest.items():
+        if _noticeLive(family, entry, lead, now):
+            continue
+        _rec, err = leads_store.markNoticeCleared(leadId, family,
+                                                  entry.get('seq'))
+        if not err:
+            cleared += 1
+    return cleared
+
+
+def _noticeLive(family, entry, lead, now):
+    """族存续条件的分派：L1 反应超时 / 主管自己待批（条件跟在各自写入方）。"""
+    if family == FAMILY_RESPONSE:
+        return responseNoticeLive(lead, now)
+    if family == FAMILY_OWN_PERM:
+        from modules import leads_escalation   # 延迟导入：leads_escalation
+        # 模块级 import leads_inbox，而本模块被 leads_inbox 延迟导入——
+        # 放函数内才不成环
+        return leads_escalation.ownPermissionLive(entry)
+    return True
