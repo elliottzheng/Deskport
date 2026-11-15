@@ -133,6 +133,9 @@ def test_interleaved_old_save_cannot_clobber_newer_snapshot(tmp_path,
 
 
 # ---- replace 退避重试（批 PS2 追件：WinError 5/32 不是状态损坏） ----
+# 助手是 state.replaceWithRetry（store_io.saveSnapshot 与 state.atomicWriteJson
+# 共用）；这里穿 store_io 验产品侧语义，state.atomicWriteJson 侧的用例在
+# tests/test_state_lock.py
 
 def test_replace_retries_permission_error_then_succeeds(tmp_path, monkeypatch,
                                                          caplog):
