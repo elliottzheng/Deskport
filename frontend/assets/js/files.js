@@ -45,6 +45,8 @@ createApp({
             addressPressTimer: null,
             addressPressXY: null,
             isMobile: window.matchMedia('(hover: none) and (pointer: coarse)').matches,
+            narrow: window.matchMedia('(max-width: 640px)').matches,   // M2: 窄屏面包屑折叠
+            crumbJumpOpen: false,      // M2: 「…」上级跳转弹层
 
             nameModal: false,
             nameMode: 'new-folder',   // new-folder | rename
@@ -235,6 +237,8 @@ createApp({
         aiTask() {
             if (this.aiOpen && !this.aiDirect) { this.scheduleAIPlan(); }
         },
+        // 路径一变就收起「…」跳转弹层, 避免留着指向旧层级
+        currentPath() { this.crumbJumpOpen = false; },
     },
     methods: Object.assign({},
         window.FilesMethodsCore,
@@ -274,6 +278,8 @@ createApp({
         document.addEventListener('click', () => { this.ctxMenu = null; });
         window.addEventListener('resize', () => {
             this.isMobile = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+            this.narrow = window.matchMedia('(max-width: 640px)').matches;
+            if (!this.narrow) { this.crumbJumpOpen = false; }
         });
     },
 }).mount('#app');
