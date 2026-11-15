@@ -306,6 +306,31 @@ task-back { display: none; }
 .cmd-node-report { flex: 1; }
 .cmd-node-unread { color: var(--brand); }
 .cmd-node-hint { font-size: 11px; color: var(--text-3); margin: 0; }
+/* 直接操作（U2 追加）：节点第二行那行字，点开看最近 10 条 */
+.cmd-activity {
+    display: inline-flex; align-items: center; gap: 4px;
+    min-height: 44px; padding: 0 4px; border: 0; border-radius: var(--radius-s);
+    background: transparent; color: var(--text-3);
+    font-family: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.cmd-activity:hover { background: var(--bg-2); color: var(--text-2); }
+.cmd-activity-caret { font-size: 10px; transition: transform .15s ease; }
+.cmd-activity-caret.open { transform: rotate(180deg); }
+.cmd-activity-list {
+    display: flex; flex-direction: column; gap: 2px;
+    margin: 4px 0 2px; padding: var(--sp-2);
+    background: var(--bg-2); border-radius: var(--radius-s);
+}
+.cmd-activity-item {
+    display: flex; align-items: baseline; gap: 8px; min-width: 0;
+    font-size: 11px; color: var(--text-3);
+}
+.cmd-activity-time { flex-shrink: 0; font-family: var(--mono); }
+.cmd-activity-action { flex-shrink: 0; color: var(--brand); }
+.cmd-activity-summary {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-2);
+}
 .cmd-node-actions { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; align-items: center; }
 .cmd-node-actions .btn { min-height: 44px; }
 .cmd-more { align-self: flex-start; min-height: 44px; }

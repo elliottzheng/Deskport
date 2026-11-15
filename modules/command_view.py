@@ -1,29 +1,26 @@
 # -*- coding: utf-8 -*-
-"""指挥台聚合视图（批次 U）：一个 overview 接口 + 汇报已读；批次 U2：指挥树。
+"""指挥台聚合视图（批次 U）：一个 overview 接口 + 汇报已读；批次 U2：指挥树，
+外加指挥者的直接活动（读审计日志，汇总在 modules/command_activity.py）。
 
-设计（docs/plan/agent-chain-of-command.md §8，规格 .drive/批次U-指挥台.md、
-.drive/批次U2-指挥台树.md）：用户只和少数主管说话，待办只来自主管上交的事。
-本模块把散在三处的数据聚成指挥台的一屏——等你处理（审批/汇报/出问题的下属）、
-一棵指挥树。数据全部来自现有存储（tasks_store / leads_store / leads_inbox），
-不新建存储；只读调用现有函数，不改它们。鉴权：/api/command/* 只认网页会话
-（不在 authGuard 的令牌通道前缀表里，令牌与未登录一律落到 /api/ 统一 401）。
+设计见 docs/plan/agent-chain-of-command.md §8 与规格 .drive/批次U-指挥台.md、
+.drive/批次U2-指挥台树.md：用户只和少数主管说话，待办只来自主管上交的事。本模块
+把散在各处的数据聚成指挥台的一屏——等你处理 + 一棵指挥树；数据全部来自现有存储
+（tasks_store / leads_store / leads_inbox / 审计日志），只读、不改它们。鉴权：
+/api/command/* 只认网页会话（不在 authGuard 的令牌通道前缀表里）。
 
-U2 起前端改用 tree 字段（旧字段 pending/leads/unassigned/retiredLeads 原样
-保留，供回滚与对账）；节点形状、key 规则、计数口径见 docs/api.md 的 overview
-一节。一级节点五形：lead（非 retired 主管，节点本身即其托管任务，ownTask 从
-子项剔除但计入计数）/ owner（无主管记录却派过任务的令牌，按 owner 分组）/
-direct（面板自己派的，owner='面板'）/ orphan（主管记录已停用或已删、任务还
-挂着）/ more（超过 TREE_DEPTH 层的主管折成一个汇总节点）。任务节点只带
-TASK_NODE_KEYS 里的字段、不带 counts；其它节点带逐级汇总的 counts（等待同时
-给 waiting/waiting_you 两个同值键，旧字段读前者、树读后者）。响应体积：300
-个任务 < 200KB——树与旧字段承载同一批任务，等于把摘要写了两遍。
+U2 起前端改用 tree 字段（旧字段 pending/leads/unassigned/retiredLeads 原样保留，
+供回滚与对账）；节点形状、key、计数口径与 activity 见 docs/api.md 的 overview
+一节。一级节点五形 lead/owner/direct/orphan/more：lead 节点本身即它的托管任务
+（ownTask 从子项剔除但计入计数）；任务节点只带 TASK_NODE_KEYS、不带 counts；
+其它节点带逐级汇总的 counts（等待同时给 waiting/waiting_you 两个同值键）。
+响应体积：300 个任务 < 200KB（树与旧字段承载同一批任务，摘要写了两遍）。
 """
 import json
 import time
 
 from flask import Blueprint, jsonify, request
 
-from modules import leads_inbox, leads_store, task_title
+from modules import command_activity, leads_inbox, leads_store, task_title
 from modules import tasks_store as store
 
 blueprint = Blueprint('command_view', __name__)
@@ -362,6 +359,7 @@ def overview():
 
     unassigned = byLead.get('', [])
     briefs, closedHidden = _splitTasks(unassigned)
+    tree = _buildTree(liveLeads, leadNodes, byLead, tasks, retiredLeads)
     return {'pending': pending, 'leads': leadRows,
             'retiredLeads': retiredLeads,
             'unassigned': {'count': len(unassigned),
@@ -369,7 +367,9 @@ def overview():
                                           if (t.get('status') or '')
                                           in ACTIVE_STATUSES),
                            'closedHidden': closedHidden, 'tasks': briefs},
-            'tree': _buildTree(liveLeads, leadNodes, byLead, tasks, retiredLeads)}
+            # 指挥者的直接活动（读审计日志，modules/command_activity.py）
+            'tree': command_activity.decorate(
+                tree, command_activity.nodeIndex(liveLeads, now))}
 
 
 @blueprint.route('/api/command/overview')

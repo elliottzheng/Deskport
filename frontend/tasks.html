@@ -107,6 +107,22 @@
                                 <p class="cmd-node-hint" v-if="row.hint">{{ row.hint }}</p>
                                 <p class="cmd-more-hint" v-if="row.moreHint">已关闭的仅显示最近 5 条（还有 {{ row.closedHidden }} 条）</p>
                             </div>
+                            <div class="cmd-node-line2" v-if="row.activityText">
+                                <button type="button" class="cmd-activity"
+                                        :class="{open: row.activityOpen}"
+                                        :title="row.activityOpen ? '收起直接操作明细' : '看最近 10 条直接操作'"
+                                        @click.stop="toggleActivity(row)">
+                                    {{ row.activityText }}
+                                    <span class="cmd-activity-caret" :class="{open: row.activityOpen}">▾</span>
+                                </button>
+                            </div>
+                            <div class="cmd-activity-list" v-if="row.activityOpen && row.activityRecent.length">
+                                <div class="cmd-activity-item" v-for="(r, i) in row.activityRecent" :key="row.key + ':act' + i">
+                                    <span class="cmd-activity-time">{{ r.time }}</span>
+                                    <span class="cmd-activity-action">{{ r.action }}</span>
+                                    <span class="cmd-activity-summary">{{ r.summary }}</span>
+                                </div>
+                            </div>
                             <div class="cmd-node-line2" v-if="row.closedHidden > 0 && row.canMore">
                                 <button type="button" class="btn btn-ghost cmd-more"
                                         v-if="!moreTasks[row.key]" @click.stop="loadMoreTasks(row)">

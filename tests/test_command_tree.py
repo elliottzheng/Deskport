@@ -98,10 +98,6 @@ def flat(nodes, depth=0, out=None):
     return out
 
 
-def top(treeNodes):
-    return [n['name'] for n in treeNodes]
-
-
 # ---------------------------------------------------------------- 例 1 / 一级分组
 
 def test_example1_four_top_level_groups(env):

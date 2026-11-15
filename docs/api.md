@@ -192,3 +192,31 @@ MJPEG 长响应，`Content-Type: multipart/x-mixed-replace; boundary=frame`。�
 
 把该主管的 `reportSeq` 推到 `seq`（用户已读汇报；只增不减）。请求体 `{"seq": <int>}`；
 主管不存在 404，缺 `seq` 或非整数 400。响应 `{"ok": true, "reportSeq": <int>}`。
+
+#### `activity`（指挥者的直接活动，批次 U2 追加）
+
+主管与未登记的派活令牌不派任务也会自己动手（exec、传文件、建任务）。`lead` /
+`owner` 节点带 `activity`（其它节点类型没有这个键）：
+
+| 键 | 说明 |
+|---|---|
+| `exec` / `sftp` / `task` / `session` | 最近 60 分钟内四类直接操作的次数（`agent.exec` 含 `agent.exec.session`） |
+| `writes` | 最近 60 分钟内 `agent.sftp.put`（写文件）次数 |
+| `lastAt` | 最后一次直接操作的 epoch 秒；0 = 没有 |
+| `lastExec` | 最后一次 exec 的命令前 60 字符 |
+| `recent` | 最近 10 条明细 `[{at, action, summary}]`，按时间正序，不受 60 分钟窗口限制 |
+| `fresh` | 最近 24 小时内有过直接操作 |
+
+规则：
+
+- 数据源是审计日志 `control_audit.jsonl`，**按令牌名匹配**：`agent.exec` /
+  `agent.sftp.*` 取 detail 前缀 `[令牌名] `，`agent.task.*` 取 `target`。只读，
+  从文件尾倒序扫最近 5000 行，汇总结果按 10 秒缓存（指挥台 5 秒一刷）。
+- 汇总逻辑在 `modules/command_activity.py`（`command_view.py` 已贴 400 行预算），
+  纯数据、不 import Flask。
+- 只要最近 24 小时有直接操作，**没有任务也上线成一级节点**（插在「你直接派的」
+  前面）；超 24 小时不上线。
+- 令牌按 `config.agentTokens[].lead` 绑定归到主管节点；主管停用时树上同 key 是
+  orphan 组，照样挂得上。
+- 已知缺口：`agent.session.open` 的审计条目不带令牌名（只有 `on_behalf_of`），
+  归不到具体指挥者，只能跳过——要补得在写入侧加令牌名。

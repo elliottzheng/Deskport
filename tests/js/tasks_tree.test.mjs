@@ -6,6 +6,12 @@ import tree from '../../frontend/assets/js/tasks-tree.js';
 
 // nodeView 复用 WPTasksOverview 的文案函数（浏览器里它是 window 全局）；这里挂上
 globalThis.WPTasksOverview = overview;
+// 相对时间/绝对时间走 WPCommon（浏览器里 common.js 先加载）；测试用最小替身，
+// 只为验「调用了共享实现、格式串正确」
+globalThis.WPCommon = {
+    fmtAgo: (ts) => (ts ? '1 分钟前' : ''),
+    fmtTime: (ts) => (ts ? '11-15 10:00' : '-'),
+};
 
 const {
     readOpen, writeOpen, autoOpenKeys, resolveOpen, flattenTree, treeIndex,
@@ -183,4 +189,48 @@ test('nodeView: 缺字段不抛（老任务无 lastActiveAt/无 counts）', () =
     assert.equal(v.depth, 2);
     assert.equal(v.countsText, '在跑 0 · 等你 0 · 出错 0');
     assert.deepEqual(nodeView(null, 0, '', null).type, '');
+});
+
+// ---------------------------------------------------------------- 直接活动（U2 追加）
+
+const ACTIVITY = {
+    exec: 3, sftp: 2, writes: 1, task: 0, session: 0,
+    lastAt: 1794709596, lastExec: 'ls -la /tmp',
+    recent: [
+        {at: 1794709596, action: 'agent.exec', summary: 'ls -la /tmp'},
+        {at: 1794709566, action: 'agent.sftp.put', summary: '/tmp/a.txt'},
+        {at: 1794709536, action: 'agent.task.create', summary: '整理简历'},
+    ],
+};
+
+test('nodeView: 指挥者节点带直接活动一行（执行 N 次、写文件 M 次 · X 前）', () => {
+    const lead = nodeView(node('lead', {id: 'ld_a', name: '甲', activity: ACTIVITY}), 0, '', {});
+    assert.equal(lead.activityText, '直接操作：执行 3 次、写文件 1 次 · 1 分钟前');
+    assert.equal(lead.activity, ACTIVITY);
+    // 明细：时间/动作/摘要各就位
+    assert.deepEqual(lead.activityRecent.map(r => r.action),
+                     ['agent.exec', 'agent.sftp.put', 'agent.task.create']);
+    assert.deepEqual(lead.activityRecent.map(r => r.summary),
+                     ['ls -la /tmp', '/tmp/a.txt', '整理简历']);
+    assert.equal(lead.activityRecent[0].time, '11-15 10:00');
+});
+
+test('nodeView: 未登记令牌也有直接活动；没有活动时不加那行', () => {
+    const owner = nodeView(node('owner', {id: 'kimi-code', name: 'kimi-code',
+                                         activity: ACTIVITY}), 0, '', {});
+    assert.equal(owner.activityText.includes('执行 3 次'), true);
+    const quiet = nodeView(node('lead', {id: 'ld_b', name: '睡'}), 0, '', {});
+    assert.equal(quiet.activityText, '');
+    assert.equal(quiet.activity, null);
+    assert.deepEqual(quiet.activityRecent, undefined);
+    // 任务节点不显示直接活动
+    const tk = nodeView(task('t1', {activity: ACTIVITY}), 1, '', {});
+    assert.equal(tk.activityText, '');
+});
+
+test('nodeView: 没有 lastAt 时只报次数不报时间', () => {
+    const slot = Object.assign({}, ACTIVITY, {lastAt: 0, recent: []});
+    const v = nodeView(node('owner', {id: 'x', name: 'x', activity: slot}), 0, '', {});
+    assert.equal(v.activityText, '直接操作：执行 3 次、写文件 1 次');
+    assert.deepEqual(v.activityRecent, []);
 });

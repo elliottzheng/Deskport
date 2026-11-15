@@ -126,6 +126,7 @@
             kindText: '', state: '', stateText: '', waitingYou: false,
             dotClass: '', statusText: '', sub: '', lastReportText: '',
             lastSeenText: '', unreadReports: 0, taskId: '', paused: false,
+            activityText: '', activity: null,
         };
         if (type === 'lead') {
             view.kindText = kindTextOf(n.kind);
@@ -150,12 +151,34 @@
             view.badge = '已停用';
             view.hint = ORPHAN_HINT;
         }
+        // 指挥者的直接活动（U2 追加）：主管与派活令牌不派任务也会自己动手
+        var act = n.activity;
+        if (act && (type === 'lead' || type === 'owner')) {
+            view.activity = act;
+            view.activityText = '直接操作：执行 ' + (Number(act.exec) || 0)
+                + ' 次、写文件 ' + (Number(act.writes) || 0) + ' 次'
+                + (act.lastAt ? ' · ' + agoTextOf(act.lastAt) : '');
+            view.activityRecent = (act.recent || []).map(function (r) {
+                return {at: r.at || 0, time: timeText(r.at), action: r.action || '',
+                        summary: r.summary || ''};
+            });
+        }
         if (view.closedHidden > 0) {
             // 只有主管节点能按 lead 拉全量（/api/tasks?lead=）；其它组只提示
             view.canMore = type === 'lead';
             view.moreHint = type !== 'lead';
         }
         return view;
+    }
+
+    function agoTextOf(ts) {
+        return (typeof WPCommon !== 'undefined' && WPCommon.fmtAgo)
+            ? WPCommon.fmtAgo(ts) : '';
+    }
+
+    function timeText(ts) {
+        return (typeof WPCommon !== 'undefined' && WPCommon.fmtTime)
+            ? WPCommon.fmtTime(ts) : '';
     }
 
     function kindTextOf(kind) {
@@ -189,6 +212,7 @@
                     highlightKey: '',       // 待办点击后要高亮的节点 key
                     highlightTimer: null,
                     treeErrors: {},
+                    activityKey: '',        // 哪个节点的直接活动明细展开着
                 };
             },
             computed: {
@@ -223,6 +247,7 @@
                         view.parentKey = row.parentKey;
                         view.moreCapped = !!self.moreCapped[row.key];
                         view.error = self.treeErrors[row.key] || '';
+                        view.activityOpen = self.activityKey === row.key;
                         return view;
                     });
                 },
@@ -262,6 +287,10 @@
                         return;
                     }
                     if (row.expandable) { this.toggleNode(row); }
+                },
+                // 直接活动明细：点节点第二行那行字展开/收起最近 10 条
+                toggleActivity(row) {
+                    this.activityKey = this.activityKey === row.key ? '' : row.key;
                 },
                 // 待办点击：展开到该节点、滚到可见、高亮几秒（例 3）
                 locatePending(row) {
