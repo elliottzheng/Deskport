@@ -70,18 +70,23 @@ def _create(env):
     return resp.get_json()['task']['id']
 
 
-def _stalledTask(env, lead=''):
-    """running + 当前工具调用 1000s 无事件（默认阈值 900s）。"""
+def _stalledTask(env, lead='', ageSec=1000):
+    """running + 当前工具调用 ageSec 秒无事件（默认阈值 900s）。
+
+    返回 (tid, stalledAt)：stalledAt 是造停滞用的同一时刻——巡检传
+    stalledAt + ageSec，不依赖第二次墙上时钟读数（全量并行下曾因两次读数
+    之间的时钟回拨偶发"不报"，实测 1/8；断言强度不变）。
+    """
     tid = _create(env)
     now = time.time()
     with env.repo.lock:
         task = env.repo.get(tid)
         task['status'] = 'running'
         task['lead'] = lead
-        task['_currentTool'] = {'name': 'Bash', 'since': now - 1000}
-        task['lastActiveAt'] = now - 1000
+        task['_currentTool'] = {'name': 'Bash', 'since': now - ageSec}
+        task['lastActiveAt'] = now - ageSec
         env.repo.save()
-    return tid
+    return tid, now
 
 
 def test_tool_stall_writes_status_and_lead_failure(env):
@@ -90,10 +95,9 @@ def test_tool_stall_writes_status_and_lead_failure(env):
                            data=json.dumps({'name': '甲'}),
                            content_type='application/json')
     leadId = resp.get_json()['lead']['id']
-    tid = _stalledTask(env, lead=leadId)
-    now = time.time()
+    tid, stalledAt = _stalledTask(env, lead=leadId)
 
-    task_health._toolStall(now)
+    task_health._toolStall(stalledAt + 1000)
     events = env.repo.get(tid)['events']
     stall = [e for e in events if e.get('type') == 'status' and '无输出' in (e.get('text') or '')]
     assert len(stall) == 1
@@ -105,7 +109,7 @@ def test_tool_stall_writes_status_and_lead_failure(env):
     # 有主管的不留指挥台标记（两路分流）
     assert env.repo.get(tid).get('_toolStall') is None
 
-    task_health._toolStall(now + 60)                   # 同一次调用只报一次
+    task_health._toolStall(stalledAt + 1060)            # 同一次调用只报一次
     stall = [e for e in env.repo.get(tid)['events']
              if e.get('type') == 'status' and '无输出' in (e.get('text') or '')]
     assert len(stall) == 1
@@ -114,8 +118,8 @@ def test_tool_stall_writes_status_and_lead_failure(env):
 
 def test_tool_stall_without_lead_enters_command_view(env):
     """无主管：留 _toolStall 标记，指挥台「等你处理」出现卡住行。"""
-    tid = _stalledTask(env)
-    task_health._toolStall(time.time())
+    tid, stalledAt = _stalledTask(env)
+    task_health._toolStall(stalledAt + 1000)
     assert env.repo.get(tid)['_toolStall']['name'] == 'Bash'
     rows = [p for p in command_view.overview()['pending'] if p['kind'] == 'stall']
     assert len(rows) == 1
@@ -134,12 +138,12 @@ def test_tool_stall_without_lead_enters_command_view(env):
 
 def test_tool_stall_silent_when_events_keep_coming(env):
     """阈值内有新事件（lastActiveAt 刷新）→ 不报。"""
-    tid = _stalledTask(env)
-    now = time.time()
+    tid, stalledAt = _stalledTask(env)
     with env.repo.lock:
-        env.repo.get(tid)['lastActiveAt'] = now - 60    # 1 分钟前还有事件
+        # 停滞后 940s 有一条新事件（巡检在停滞后 1000s）：60s < 900s 阈值
+        env.repo.get(tid)['lastActiveAt'] = stalledAt + 940
         env.repo.save()
-    task_health._toolStall(now)
+    task_health._toolStall(stalledAt + 1000)
     assert not any('无输出' in (e.get('text') or '')
                    for e in env.repo.get(tid)['events'])
 
@@ -148,15 +152,8 @@ def test_tool_stall_under_one_minute_shows_seconds(env):
     """L 返工：toolStallSec < 60（如 30s）——文案与指挥台行显示秒数，
     不再是「0 分钟」/「? 分钟」。"""
     env.monkeypatch.setattr(configMod, 'getToolStallSec', lambda: 30)
-    tid = _create(env)
-    now = time.time()
-    with env.repo.lock:
-        task = env.repo.get(tid)
-        task['status'] = 'running'
-        task['_currentTool'] = {'name': 'Bash', 'since': now - 40}
-        task['lastActiveAt'] = now - 40
-        env.repo.save()
-    task_health._toolStall(now)
+    tid, stalledAt = _stalledTask(env, ageSec=40)
+    task_health._toolStall(stalledAt + 40)
     events = env.repo.get(tid)['events']
     stall = [e for e in events if e.get('type') == 'status' and '无输出' in (e.get('text') or '')]
     assert len(stall) == 1 and '30 秒' in stall[0]['text']
@@ -166,7 +163,7 @@ def test_tool_stall_under_one_minute_shows_seconds(env):
 
 def test_tool_stall_disabled_by_config(env):
     """toolStallSec=0：关闭。"""
-    tid = _stalledTask(env)
+    tid, _stalledAt = _stalledTask(env)
     env.monkeypatch.setattr(configMod, 'getToolStallSec', lambda: 0)
     task_health._toolStall(time.time())
     assert not any('无输出' in (e.get('text') or '')
