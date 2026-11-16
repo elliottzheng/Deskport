@@ -38,7 +38,9 @@ def sftpList():
                 # 登录 CWD 解析, 之前导致 SFTP 目录导航 404)
                 full = posixpath.normpath(posixpath.join(base, attr.filename))
                 entries.append(remoteEntry(attr, full))
-    except FileNotFoundError:
+    except OSError:
+        # listdir_attr 对文件路径抛普通 IOError（FileNotFoundError 是其子类）——
+        # 一并按不存在处理，不 500（FB-2）
         return jsonify({'error': '远程路径不存在'}), 404
     except paramiko.SSHException as e:
         return jsonify({'error': str(e)}), 502
