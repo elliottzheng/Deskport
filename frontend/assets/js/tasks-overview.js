@@ -49,6 +49,23 @@
             + (Number(waiting) || 0) + ' · 出错 ' + (Number(c.failed) || 0);
     }
 
+    // 审批行按钮分组（M3 #4）：主操作「允许一次」单行突出（.btn-primary），
+    // 其余选项（总是允许等）与拒绝/查看收进「更多」菜单——320 宽下主操作
+    // 不被挤换行。没有 allow_once 的老链路把第一个可允许选项提为主操作，
+    // 一个选项都没有时两级都空（模板只留「更多」里的拒绝/查看）。
+    function splitPermissionOptions(options) {
+        var opts = Array.isArray(options) ? options.filter(Boolean) : [];
+        var primary = opts.filter(function (o) { return o && o.kind === 'allow_once'; });
+        var more = opts.filter(function (o) { return !(o && o.kind === 'allow_once'); });
+        if (!primary.length && more.length) {
+            var i = more.findIndex(function (o) {
+                return o && (o.kind === 'allow_always' || !o.kind);
+            });
+            primary = [more.splice(i < 0 ? 0 : i, 1)[0]];
+        }
+        return {primary: primary, more: more};
+    }
+
     // overview 的 summaryBrief → 行视图。agoText 由调用方给（WPCommon.fmtAgo 的产物，
     // 相对时间格式全站只许 common.js 一份）。resultLabel（批次 G1）：纯函数在
     // tasks-result.js，node 单测环境没有该全局时按空处理。
@@ -83,6 +100,7 @@
         var rows = (Array.isArray(pending) ? pending : []).map(function (p) {
             var kind = p.kind || '';
             var lead = byId[p.leadId] || null;
+            var split = splitPermissionOptions(p.options);
             return {
                 key: kind + ':' + (p.taskId || p.leadId || '') + ':'
                     + (p.requestId || p.seq || ''),
@@ -100,6 +118,9 @@
                                : (retired[p.leadId] || ''),
                 requestId: p.requestId || '',
                 options: Array.isArray(p.options) ? p.options : [],
+                // M3 #4：主操作/次级分组（模板据此出 .btn-primary 与「更多」菜单）
+                primaryOptions: split.primary,
+                moreOptions: split.more,
                 seq: p.seq || 0,
             };
         });
@@ -158,6 +179,7 @@
                     speakText: '',
                     speakBusy: false,
                     speakError: '',
+                    rowMenus: {},          // M3 #4：哪一待办行的「更多」菜单开着（同时只开一个）
                     rowErrors: {}, leadErrors: {},
                 };
             },
@@ -180,9 +202,18 @@
                 this.loadOverview();
                 this.overviewTimer = setInterval(this.loadOverview,
                                                  OVERVIEW_INTERVAL);
+                // M3 #9：新建弹层 Escape 关闭（照 common.js/feedback-panel.js 的
+                // 写法）；× 与遮罩原本可关，键盘多一条路，不形成死路
+                this.escCloseSheet = (e) => {
+                    if (e.key === 'Escape' && this.newSheetOpen) {
+                        this.newSheetOpen = false;
+                    }
+                };
+                document.addEventListener('keydown', this.escCloseSheet);
             },
             beforeUnmount() {
                 clearInterval(this.overviewTimer);
+                document.removeEventListener('keydown', this.escCloseSheet);
             },
             methods: {
                 // 模板直接调的纯函数：复用同一实现，不复制
@@ -307,6 +338,7 @@
                     return found;
                 },
                 async openTask(taskId, row) {
+                    this.closeRowMenu();
                     var hit = this.findTask(taskId);
                     if (hit) {
                         await this.select(hit);
@@ -328,8 +360,16 @@
                         if (row) { WPCommon.flashError(this, 'rowErrors', row.key, err.message); }
                     }
                 },
+                // M3 #4：「更多」菜单——同时只开一个；点开的行再点一次收起
+                toggleRowMenu(row) {
+                    this.rowMenus = this.rowMenus[row.key] ? {} : {[row.key]: true};
+                },
+                closeRowMenu() {
+                    if (Object.keys(this.rowMenus).length) { this.rowMenus = {}; }
+                },
                 async resolvePendingPermission(row, option) {
                     if (!row.taskId || !row.requestId) { return; }
+                    this.closeRowMenu();
                     var body = option
                         ? {requestId: row.requestId, optionId: option.optionId}
                         : {requestId: row.requestId, deny: true};
@@ -351,6 +391,7 @@
                 },
                 async markReportRead(row) {
                     if (!row.leadId || !row.seq) { return; }
+                    this.closeRowMenu();
                     try {
                         const r = await fetch('/api/command/leads/'
                                               + encodeURIComponent(row.leadId)
@@ -369,6 +410,7 @@
                 },
                 async closeProblemTask(row) {
                     if (!row.taskId) { return; }
+                    this.closeRowMenu();
                     var ok = await WPCommon.confirm(
                         '关闭任务「' + row.title + '」？之后不能再继续追问。',
                         {okText: '关闭', danger: true});
@@ -395,7 +437,8 @@
             stateText: stateText, firstLine: firstLine, countsText: countsText,
             taskRowView: taskRowView,
             pendingRows: pendingRows, mergeMoreTasks: mergeMoreTasks,
-            newLeadKindChoices: newLeadKindChoices, mixin: mixin,
+            newLeadKindChoices: newLeadKindChoices,
+            splitPermissionOptions: splitPermissionOptions, mixin: mixin,
         };
     }
     if (typeof module !== 'undefined' && module.exports) {
@@ -405,6 +448,7 @@
             taskRowView: taskRowView,
             pendingRows: pendingRows, mergeMoreTasks: mergeMoreTasks,
             newLeadKindChoices: newLeadKindChoices,
+            splitPermissionOptions: splitPermissionOptions,
         };
     }
 })();

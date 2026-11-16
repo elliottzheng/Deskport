@@ -7,6 +7,7 @@
 <title>命令执行 — Deskport</title>
 <link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/command.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/feedback.css?v=__BUILD__">
 </head>
 <body>
@@ -26,11 +27,18 @@
             </form>
             <p v-if="error" class="load-error" style="margin-top:12px">{{ error }}</p>
 
+            <!-- 最近执行（M3 #6）：本地记录，点一下填入输入框；无历史不显示 -->
+            <div class="cmd-recent" v-if="recent.length">
+                <span class="cmd-recent-label">最近执行</span>
+                <button type="button" class="cmd-recent-btn" v-for="(c, i) in recent" :key="c + i"
+                        :title="'填入输入框：' + c" @click="useRecent(c)">{{ c }}</button>
+            </div>
+
             <div v-if="result" class="output-block">
                 <div class="output-meta">exit={{ result.exitCode }}</div>
                 <pre class="output-pre"><template v-if="result.stdout">{{ result.stdout }}</template><span v-if="result.stderr" class="output-err">{{ result.stderr }}</span><span v-if="!result.stdout && !result.stderr" class="output-err">（无输出）</span></pre>
             </div>
-            <div v-else-if="!error" class="empty-tip" style="margin-top:16px">执行结果将显示在这里</div>
+            <div v-else-if="!error" class="empty-tip cmd-empty-tip">执行结果将显示在这里</div>
         </div>
     </main>
 

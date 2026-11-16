@@ -6,6 +6,7 @@ import overview from '../../frontend/assets/js/tasks-overview.js';
 const {
     taskStatusText, taskModeText, stateText, firstLine, countsText,
     taskRowView, pendingRows, mergeMoreTasks, newLeadKindChoices,
+    splitPermissionOptions,
 } = overview;
 
 test('taskStatusText: 九态映射，未知/空原样兜底', () => {
@@ -160,4 +161,41 @@ test('pendingRows: 审批行带上 purpose 与 owner（U3 人话字段）', () =
     const old = pendingRows([{kind: 'report', leadId: 'ld_1'}], {ld_1: {name: '甲'}}, {});
     assert.equal(old[0].purpose, '');
     assert.equal(old[0].owner, '');
+});
+
+test('splitPermissionOptions: allow_once 进主操作，其余进「更多」（M3 #4）', () => {
+    const opts = [
+        {optionId: 'o1', name: '允许一次', kind: 'allow_once'},
+        {optionId: 'o2', name: '总是允许', kind: 'allow_always'},
+    ];
+    const split = splitPermissionOptions(opts);
+    assert.deepEqual(split.primary.map(o => o.optionId), ['o1']);
+    assert.deepEqual(split.more.map(o => o.optionId), ['o2']);
+});
+
+test('splitPermissionOptions: 没有 allow_once 的老链路把第一个可允许选项提为主操作', () => {
+    const split = splitPermissionOptions([
+        {optionId: 'o1', name: '总是允许', kind: 'allow_always'},
+    ]);
+    assert.deepEqual(split.primary.map(o => o.optionId), ['o1']);
+    assert.deepEqual(split.more, []);
+    // 一个选项都没有（事件被挤掉）：两级都空，模板只留「更多」里的拒绝/查看
+    const empty = splitPermissionOptions([]);
+    assert.deepEqual(empty.primary, []);
+    assert.deepEqual(empty.more, []);
+    assert.deepEqual(splitPermissionOptions(null), {primary: [], more: []});
+});
+
+test('pendingRows: 审批行带 primaryOptions/moreOptions（M3 #4）', () => {
+    const rows = pendingRows([
+        {kind: 'permission', at: 100, taskId: 't1', requestId: 'rq-1',
+         options: [{optionId: 'o1', name: '允许一次', kind: 'allow_once'},
+                   {optionId: 'o2', name: '总是允许', kind: 'allow_always'}]},
+        {kind: 'report', at: 90, leadId: 'ld_1', seq: 1},
+    ], {}, {});
+    assert.deepEqual(rows[0].primaryOptions.map(o => o.optionId), ['o1']);
+    assert.deepEqual(rows[0].moreOptions.map(o => o.optionId), ['o2']);
+    // 非审批行也有这两个键（空数组），模板按 kind 分支不读它们
+    assert.deepEqual(rows[1].primaryOptions, []);
+    assert.deepEqual(rows[1].moreOptions, []);
 });

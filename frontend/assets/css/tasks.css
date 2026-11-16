@@ -101,7 +101,8 @@
 .task-detail-meta { font-size: 12px; color: var(--text-3); margin-top: 2px; overflow-wrap: anywhere; }
 .task-head-actions { display: flex; gap: 4px; flex-shrink: 0; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .task-head-actions .btn { padding: 4px 8px; font-size: 12px; }
-.task-mode-switch { width: auto; height: 30px; padding: 0 6px; font-size: 12px; }
+/* M1 遗留划入本批（#4b）：模式切换下拉 16px，与其它输入框一致防手机聚焦放大 */
+.task-mode-switch { width: auto; height: 30px; padding: 0 6px; font-size: 16px; }
 .ev-full { margin: 4px 0 2px; padding: 2px 8px; font-size: 11px; }
 
 .task-options { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
@@ -312,6 +313,15 @@ task-back { display: none; }
 }
 .cmd-pending-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex-shrink: 1; }
 .cmd-pending-actions .btn { min-height: 44px; }
+/* 审批行「更多」菜单（M3 #4）：次级动作收进 ··· 弹出，320 宽主操作仍单行 */
+.cmd-menu-wrap { position: relative; display: inline-flex; }
+.cmd-menu {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+    display: flex; flex-direction: column; gap: 2px; min-width: 128px; padding: 6px;
+    border: 1px solid var(--border); border-radius: var(--radius-m);
+    background: var(--surface); box-shadow: var(--shadow-float);
+}
+.cmd-menu .btn { width: 100%; justify-content: flex-start; min-height: 44px; }
 /* 行动失败的就地错误条（U 返工）：占满一行，几秒后或下次成功时消失 */
 .cmd-row-error {
     flex-basis: 100%; margin: 4px 0 0; font-size: 12px;
