@@ -373,6 +373,24 @@ while True:
 - `cd: No such file or directory`：路径按错操作系统的写法了。Windows 用 `E:/data`，Linux 用 `/srv/app`；先看 `GET /api/agent/hosts` 的 `os` 字段。
 - `outTruncated: true` / 输出被截断：单次输出上限 2 MiB。缩小输出（`| tail -n 100`）或分块读文件。
 
+具体怎么修见下一节。
+
+## 撞到这些错误时先看这里
+
+先对照下表；标「是」的才需要找部署者，其余自己就能修。
+
+| 现象 | 原因 | 怎么修（一句话） | 找部署者？ |
+|---|---|---|---|
+| `401` `unauthorized (需要 X-Agent-Token)` | 没带令牌或令牌错 | 请求头补 `X-Agent-Token: <令牌>` | 令牌不对才找他补 |
+| `403`，响应带 `need` | 令牌 scope 不够 | 按 `need` 找部署者补发对应 scope 的令牌（`need: full` = 这操作要全权） | 是 |
+| `404 主机不存在` + `availableHosts` | `node` 名字不对 | 改用 `GET /api/agent/hosts` 返回里的名字（`local` 是本机） | 列表里没有那台机器才找他 |
+| `400` `node 与 host 冲突` | `node` 和 `host` 都给了且不同 | 只给 `node`（`host` 是旧名） | 不用 |
+| `409`（`reason: "busy"`） | 上一轮还在跑，消息没送达 | 等它结束再发，或按响应里的排队语义重试 | 不用 |
+| `429` `并发任务已达上限` | 同时在跑的任务太多 | 先 `POST /api/tasks/<id>/close` 掉旧任务再建新的 | 想提限额才找他 |
+| `CERTIFICATE_VERIFY_FAILED` / `curl` 退 60 | 公网入口是隧道方的自签证书 | `curl` 加 `-k`；`deskport.py` 在 `.deskport.json` 写 `"insecure": true`（只在确认连自己的 Deskport 时） | 不用 |
+| `501` | 用 `http://` 打了只收 TLS 的隧道端口（501 由隧道方返回） | 换 `https://` 重试 | 不用 |
+| `outTruncated: true`（输出超 2 MiB） | 命令输出太大 | 缩小输出（如接 `tail -n 100` 只看尾部）或分块读文件 | 不用 |
+
 ## 约定
 
 - 命令与任务都真实执行：优先只读；写文件、装软件、动服务之前先向你的用户说明。
