@@ -21,3 +21,7 @@ logs/
 # 插件本体不入库：仓库只做兼容加载，插件见 docs/plugin-api.md 里的上游链接
 /plugins/
 .tmp/
+
+# worktree 防呆：批次 worktree 一律建在 E:/事项/远程/.wt/（绝对路径），
+# 误建在仓库内的（相对路径）一律忽略，防止混进主仓 status/提交
+.wt/
