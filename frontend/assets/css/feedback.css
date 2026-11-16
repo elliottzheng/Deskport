@@ -13,6 +13,8 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    min-width: 48px;
+    min-height: 48px;
     padding: 9px 14px 9px 12px;
     border: 1px solid var(--border-ctrl);
     border-radius: 999px;
@@ -222,7 +224,7 @@
 /* 手机：浮层改成底部抽屉，按钮贴安全区 */
 @media (max-width: 640px) {
     :root { --fb-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
-    .fb-fab { right: 12px; padding: 10px; }
+    .fb-fab { right: 12px; padding: 0; justify-content: center; }
     .fb-fab-text { display: none; }
     .fb-fab-dot { display: none; }
     .fb-fab::after { content: "反馈"; font-size: 12px; }

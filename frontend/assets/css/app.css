@@ -100,7 +100,7 @@ i[data-icon] > svg { width: 18px; height: 18px; flex-shrink: 0; }
     align-items: center;
     justify-content: center;
     gap: var(--sp-2);
-    height: 40px;
+    min-height: 44px;
     padding: 0 var(--sp-4);
     border-radius: var(--radius-m);
     font-size: 14px;
@@ -274,7 +274,7 @@ i[data-icon] > svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* ====== 命令执行 ====== */
 .cmd-row { display: flex; gap: var(--sp-2); }
-.cmd-row .cmd-input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 14px; }
+.cmd-row .cmd-input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 16px; }
 .output-block {
     margin-top: var(--sp-4);
     background: var(--bg-2);
@@ -432,7 +432,7 @@ i[data-icon] > svg { width: 18px; height: 18px; flex-shrink: 0; }
     padding: 2px; margin-right: 4px;
 }
 .session-switch a {
-    padding: 4px 10px; border-radius: 999px; font-size: 12px;
+    padding: 4px 10px; border-radius: 999px; font-size: 12px; min-height: 44px;
     color: var(--text-2); text-decoration: none;
 }
 .session-switch a.is-active {
