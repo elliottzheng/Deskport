@@ -32,6 +32,7 @@ from modules import settings as settingsModule  # noqa: E402
 from modules import capability_api as capabilityApiModule  # noqa: E402
 from modules import agent_tokens as agentTokensModule  # noqa: E402
 from modules import leads_api as leadsApiModule  # noqa: E402
+from modules import agent_peer as agentPeerModule  # noqa: E402  批次 PM：平级消息与登记薄
 from modules import leads_hosted as leadsHostedModule  # noqa: E402
 from modules import leads_inbox as leadsInboxModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
@@ -261,7 +262,8 @@ BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      tasksFederationModule, worklinesModule, feedbackModule,
                      tasksRenameModule,
                      taskKimiSessionsModule, taskResultApiModule,
-                     taskResultMcpModule, workitemApiModule)
+                     taskResultMcpModule, workitemApiModule,
+                     agentPeerModule)
 # agent_sessions / agent_sftp / agent_upload / agent_share / share_web / agent_skill_files 与 agent_api 共用同一蓝图对象：
 # 上面的 import 已把路由挂到该蓝图，随 agentApiModule 一次注册，无需重复登记。
 REGISTER_MODULES = (systemModule, metaModule, tasksModule,

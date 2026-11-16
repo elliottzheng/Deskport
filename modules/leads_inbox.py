@@ -63,7 +63,8 @@ SWEEP_SEC = 5              # sweeper 跳间隔
 # （批次 L L2）+ 需判断的结果/缺结果（批次 G1）+ 工作项待判断（批次 G2：
 # 卡着整条流水线，晚一分钟唤醒就是下游白等一分钟）
 URGENT_KINDS = ('human', 'escalation', 'question',
-                'task_judgment', 'result_missing', 'workitem_judgment')
+                'task_judgment', 'result_missing', 'workitem_judgment',
+                'peer')       # 批次 PM：平级消息——协商有时效性，立即唤醒
 
 _LOCK = threading.Lock()           # 进程内：append 与截头重写必须互斥（补 3）
 _DELIVER_LOCK = threading.Lock()   # 投递+推进游标互斥（sweeper 与 human 旁路竞速）

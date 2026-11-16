@@ -18,6 +18,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 - **机器参数用 `node`**（exec/sftp/会话与任务同一套词汇，缺省 `local`）：`host` 是旧名，仍接受；两个都给且不同 → 400
 - **提反馈**：`POST /api/feedback`（令牌通道，实名留痕，详见专节）——撞见平台 bug 时用，别只在报告里带一句
+- **平级协调**：`GET /api/agent/registry` 查谁在哪台节点；`POST /api/agent/message` 给另一个智能体发消息（占资源前先问，详见专节）
 - **派开发类活走工作项**：`deskport.py wi new …`（建 worktree→实施→验收→返工→集成全自动）；直接建任务只用于调查类
 - **技能版本**：`deskport.py` 自带版本常量（装配技能包时盖成本次构建号），每个请求自动带上；响应带回线上版本号，对不上时附 `X-Deskport-Skill-Stale: 1`——driver.py 每轮 DONE 行提醒重拉 skill.zip（旧脚本不用等撞上 400 才知道落后，你也无需手动配任何东西）
 
@@ -299,6 +300,38 @@ POST /api/feedback
   png/jpg/webp）拿 `file_id`，塞进信封的 `attachments: [{"file_id": "..."}]`。
 - 频控同网页端：每分钟 ≤5、每日 ≤20（429）；幂等键重复返回首次结果 + `duplicate:true`。
 - 只能提：`GET/PATCH/DELETE` 是主人权限，智能体读了 401——处理进度问主控。
+
+## 平级协调（占资源前先问，撞车时能问到人）
+
+同一台机器上会有多个互不认识的智能体。占端口/目录/服务**之前**先查登记薄；
+撞车或要协商（「9222 端口还要多久？」）直接给对方发消息——落对方的收件箱，
+对方被立即唤醒。回复用同一端点互换 `to` 即可。
+
+```text
+GET /api/agent/registry                    # 登记薄：谁（id/名/kind）、在哪（node；只给节点名，执行点详情/模型查 /api/tasks/nodes）
+POST /api/agent/message                    # 平级消息（落对方收件箱，立即唤醒）
+{"to": "<lead id 或 name>", "text": "...", "ref": "<可选>",
+ "context": {"host": "ai-xmyz", "port": 9222}}
+→ 202 {"ok": true, "to": "中招系统主控", "seq": 3}
+```
+
+- `to` 先按 lead id、再按 name 唯一匹配；找不到 400 带回 `availableLeads`。
+- 频控每令牌每分钟 10 条（429 带 `retryAfter`）；不能给自己发。
+- 没有群聊/公告板——一对一够用；对方没起托管任务时消息落箱，下次读取可见。
+
+实例（端口撞车）：
+
+```text
+GET /api/agent/registry
+→ {"leads": [{"id": "ld_1163a796", "name": "中招系统主控",
+               "node": "ai-xmyz", "taskId": "6c2013d2a770"}]}
+# 我要起 Lightpanda CDP，默认 9222——先问主人
+POST /api/agent/message
+{"to": "中招系统主控",
+ "text": "我要起 Lightpanda CDP，默认端口 9222；你的 Playwright 实例（pid 1741899）还在用吗？还要多久？不行我错峰到 9223。",
+ "context": {"host": "ai-xmyz", "port": 9222, "want": "lightpanda-cdp"}}
+# 醒来后对方 inbox 里看到这条，回一条（互换 to）即完成协商
+```
 
 ## 规程（必须遵守）
 
