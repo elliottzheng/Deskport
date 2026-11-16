@@ -258,7 +258,13 @@ createApp({
         this.loadMachines();
         // 浏览器退出全屏 (Esc) 时同步按钮文案
         document.addEventListener('fullscreenchange', () => { this.syncFullscreenFlag(); });
-        window.addEventListener('scroll', () => { this.ctxMenu = null; }, true);
+        // 反馈 7a093382: 菜单自身内部滚动 (滚轮/拖动滚动条) 不收起;
+        // 只有菜单外的滚动才关 (捕获阶段拿到所有 scroll, target 即发生滚动的元素)
+        window.addEventListener('scroll', (ev) => {
+            const menu = this.$refs.ctxMenu;
+            if (menu && ev.target && menu.contains(ev.target)) { return; }
+            this.ctxMenu = null;
+        }, true);
         window.addEventListener('resize', () => { this.ctxMenu = null; });
 
         // 键盘快捷键 (输入框聚焦时跳过)

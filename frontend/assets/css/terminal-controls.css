@@ -206,6 +206,8 @@
 }
 
 /* ====== SSH 认证/编辑 ====== */
+#sftp-edit-modal .modal { max-width: 760px; }
+#sftp-edit-modal .preview-md { max-height: 70vh; }
 #sftp-edit-content {
     width: 100%;
     min-height: 320px;
