@@ -66,6 +66,12 @@ window.AppShellV2 = (function () {
         }
     }
 
+    function markFrameLoaded(frame, key) {
+        frame.dataset.loaded = '1';
+        dispatchResize(frame);
+        postActive(key);
+    }
+
     function ensureFrame(key) {
         if (frames[key]) { return frames[key]; }
         var frame = document.createElement('iframe');
@@ -75,11 +81,32 @@ window.AppShellV2 = (function () {
         frame.setAttribute('allow', 'fullscreen');
         var src = frameSrc(key);
         frame.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'embed=1';
-        frame.addEventListener('load', function () {
-            frame.dataset.loaded = '1';
-            dispatchResize(frame);
-            postActive(key);
-        });
+        if (key === 'screen') {
+            // screen 是 MJPEG 长连接：img 不结束，iframe load 永不触发，
+            // dataset.loaded / 首帧 VIEW_ACTIVE / resize 全丢。改认 DOM 就绪
+            // + 延时补发；其他视图的 load 语义不动。
+            var settled = false;
+            var settle = function () {
+                if (settled) { return; }
+                settled = true;
+                markFrameLoaded(frame, key);
+            };
+            var pollReady = function () {
+                try {
+                    if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') {
+                        settle();
+                        return;
+                    }
+                } catch (err) { /* iframe 未就绪 */ }
+                setTimeout(pollReady, 50);
+            };
+            setTimeout(pollReady, 0);
+            setTimeout(settle, 1000);   // 兜底：文档迟迟不就绪也补发
+        } else {
+            frame.addEventListener('load', function () {
+                markFrameLoaded(frame, key);
+            });
+        }
         document.getElementById('shell-frames').appendChild(frame);
         frames[key] = frame;
         return frame;

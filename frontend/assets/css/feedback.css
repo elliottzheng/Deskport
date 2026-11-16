@@ -1,13 +1,15 @@
 /* 反馈入口：右下角悬浮按钮 + 半屏浮层。样式只用 tokens.css 的变量。
    底部偏移走 --fb-bottom：桌面贴底，手机让开底部 tab（60px + 安全区）；
-   页面上出现底部工具条时 body.fb-raise 再加 72px，不压别人的按钮。 */
-:root { --fb-bottom: 20px; }
+   页面上出现底部工具条时 body.fb-raise 再加 72px，不压别人的按钮。
+   批次 M4 #11：FAB 上移让出内容区——距右 / 距下 / 距底栏均 ≥16px，
+   不再贴边压在目录行「移除」等右下角操作上。 */
+:root { --fb-bottom: 16px; }
 .fb-root { position: relative; z-index: 260; }
 
 /* 悬浮按钮：所有界面可见，浮在各层之上（规格 §3.1） */
 .fb-fab {
     position: fixed;
-    right: 20px;
+    right: 16px;
     bottom: var(--fb-bottom);
     z-index: 260;
     display: inline-flex;
@@ -223,8 +225,10 @@
 
 /* 手机：浮层改成底部抽屉，按钮贴安全区 */
 @media (max-width: 640px) {
-    :root { --fb-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
-    .fb-fab { right: 12px; padding: 0; justify-content: center; }
+    /* M4 #11（择一：上移让出内容区）：竖屏距右 ≥16px；底部上移到目录行
+       （设置页收件箱扫描行，top≈746）之上，不再压右下角操作 */
+    :root { --fb-bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }
+    .fb-fab { right: 16px; padding: 0; justify-content: center; }
     .fb-fab-text { display: none; }
     .fb-fab-dot { display: none; }
     .fb-fab::after { content: "反馈"; font-size: 12px; }
@@ -244,6 +248,12 @@
 }
 
 body.fb-raise .fb-fab { bottom: calc(var(--fb-bottom) + 72px); }
+
+/* 横屏矮屏（shell.css M4 #10 保留底栏）：FAB 让开 60px tab 栏，距其 16px */
+@media (min-width: 641px) and (max-height: 430px) {
+    :root { --fb-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+    .fb-fab { right: 16px; }
+}
 
 /* 全屏浮层（移动端 SFTP 面板等）打开时直接收起：那时"抬起来"也压到别人的操作行 */
 body.fb-hide .fb-fab { display: none !important; }

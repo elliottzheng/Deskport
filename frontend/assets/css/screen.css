@@ -7,7 +7,29 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-l);
     overflow: hidden;
+    min-height: 40vh;   /* 无帧/弱网时也不是纯黑空片 */
 }
+/* 首帧未到：占位文案 + 转圈，避免用户面对黑屏 */
+.screen-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-3);
+    font-size: 14px;
+}
+.screen-placeholder::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--brand);
+    animation: screen-spin 1s linear infinite;
+}
+@keyframes screen-spin { to { transform: rotate(360deg); } }
 #stream-img {
     max-width: 100%;
     max-height: 78vh;

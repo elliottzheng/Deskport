@@ -24,6 +24,7 @@
 
         <div class="screen-wrap">
             <img id="stream-img" ref="streamImg" alt="实时屏幕流">
+            <div class="screen-placeholder" v-if="!frameReady">正在取画…</div>
             <div class="screen-offline" v-if="offline">画面暂不可用，重连中…</div>
         </div>
         <div class="screen-meta">
