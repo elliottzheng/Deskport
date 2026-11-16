@@ -145,3 +145,11 @@ html, body.shell-body { height: 100%; margin: 0; }
     background: var(--surface); color: var(--brand); font-weight: 600;
     box-shadow: var(--shadow-card);
 }
+/* 横屏矮屏（高 ≤430，如手机横屏 844×390）：桌面顶栏图标仅 36px 点不准，
+   保留底部 tab 栏（60px，触控达标）；顶栏隐藏后会话切换回到 session-head
+   （#session-inline 在顶栏里，一并不可见） */
+@media (min-width: 641px) and (max-height: 430px) {
+    .shell-top { display: none; }
+    .shell-tabs { display: flex; }
+    .shell-session-head:not([hidden]) { display: flex !important; }
+}

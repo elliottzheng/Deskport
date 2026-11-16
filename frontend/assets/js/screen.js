@@ -8,6 +8,7 @@ createApp({
             fps: 0,
             resolution: '',
             offline: false,
+            frameReady: false,
             status: '连接中',
             screenW: 0,
             screenH: 0,
@@ -90,7 +91,12 @@ createApp({
                 img.src = '/api/screen/stream?t=' + Date.now();
             };
             this._connectStream = connect;
-            img.onload = () => { this.offline = false; this.status = '已连接'; };
+            img.onload = () => {
+                this.frameReady = true;
+                this.offline = false;
+                this.status = '已连接';
+                clearTimeout(this._noFrameTimer);
+            };
             img.onerror = () => {
                 if (!this.liveOn) { return; }
                 this.offline = true;
@@ -99,12 +105,26 @@ createApp({
                 this.reconnectTimer = setTimeout(connect, 1000);
             };
             connect();
+            // 弱网/抓屏失败时连接挂着不出错：8s 拿不到首帧也亮 offline 占位
+            clearTimeout(this._noFrameTimer);
+            this._noFrameTimer = setTimeout(() => {
+                if (this.liveOn && !this.frameReady) {
+                    this.offline = true;
+                    this.status = '重连中';
+                }
+            }, 8000);
             this.fpsTimer = setInterval(() => {
                 if (img.complete && img.naturalWidth > 0) { this.frameCount += 1; }
                 this.fps = this.frameCount;
                 this.frameCount = 0;
             }, 1000);
             this.resTimer = setInterval(() => {
+                if (img.naturalWidth > 0 && !this.frameReady) {
+                    this.frameReady = true;
+                    this.offline = false;
+                    this.status = '已连接';
+                    clearTimeout(this._noFrameTimer);
+                }
                 if (!this.screenW && img.naturalWidth > 0) {
                     this.screenW = img.naturalWidth;
                     this.screenH = img.naturalHeight;
@@ -115,10 +135,13 @@ createApp({
         stopLive() {
             this.liveOn = false;
             clearTimeout(this.reconnectTimer);
+            clearTimeout(this._noFrameTimer);
+            this._noFrameTimer = null;
             clearInterval(this.fpsTimer);
             clearInterval(this.resTimer);
             this.fpsTimer = null;
             this.resTimer = null;
+            this.frameReady = false;
             const img = this.$refs.streamImg;
             if (img) {
                 img.onload = null;
