@@ -69,6 +69,11 @@
             if (!a || a.nodeType !== 1 || !b) { continue; }
             var tag = a.tagName ? a.tagName.toLowerCase() : '';
             if (tag === 'script' || tag === 'style' || tag === 'link') { continue; }
+            // 密码框的 value 属性（= defaultValue）会随 DOM 序列化进快照，剥掉；
+            // 用户键入的值是 property 不进序列化，这里只是彻底起见
+            if (tag === 'input' && a.getAttribute('type') === 'password') {
+                b.removeAttribute('value');
+            }
             var cs = view.getComputedStyle(a);
             var css = '';
             for (var i = 0; i < STYLE_PROPS.length; i++) {

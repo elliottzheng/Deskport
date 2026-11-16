@@ -112,11 +112,16 @@
     }
 
     function hookFrame(frame) {
-        if (!frame || frame.__wpFbScroll) { return; }
-        var win = null;
-        try { win = frame.contentWindow; } catch (e) { return; }
-        if (!win) { return; }
-        frame.__wpFbScroll = true;
+        if (!frame) { return; }
+        var doc = null;
+        try { doc = frame.contentDocument; } catch (e) { return; }
+        var win = doc ? doc.defaultView : null;
+        if (!doc || !win) { return; }
+        // 记 Document 而不是布尔或 window：iframe 导航必然换 Document，但浏览器不
+        // 一定换 Window 对象（实测同内核下 reload 复用 Window、只换 Document 并清掉
+        // Window 上的监听器）——按 window 判重会把补挂漏掉，滚动让位从此失效
+        if (frame.__wpFbDoc === doc) { return; }
+        frame.__wpFbDoc = doc;
         win.addEventListener('scroll', onScroll, { passive: true });
     }
 
