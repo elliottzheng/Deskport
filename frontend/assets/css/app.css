@@ -335,6 +335,17 @@ i[data-icon] > svg { width: 18px; height: 18px; flex-shrink: 0; }
     .tab.is-active { color: var(--brand); font-weight: 600; }
 }
 
+/* ====== 移动端页面头部压缩 (批次 M6) ======
+   标题 24→18px；副标题默认隐藏（screen 页副标题有操作说明价值，压 12px
+   单行 ellipsis 保留，见 screen.css 同断点规则）；头部下边距与紧邻其后的
+   首张卡片上 padding 收紧。桌面样式不动：规则只在 ≤640px 内。 */
+@media (max-width: 640px) {
+    .page-title { font-size: 18px; margin-bottom: var(--sp-1); }
+    .page-sub { display: none; }
+    .page-head { margin-bottom: var(--sp-3); }
+    .page-head + .card { padding-top: var(--sp-3); }
+}
+
 /* ====== 通用上下文菜单 (文件管理 + SSH SFTP 共用) ====== */
 /* ====== 上下文菜单 ====== */
 .ctx-menu {
