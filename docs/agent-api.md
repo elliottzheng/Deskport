@@ -984,6 +984,37 @@ policy 判定为「需要询问」时：
   节点实况（既有 `GET /api/sessions/<sid>` 的 `running` 字段），回合还在跑
   时 `/api/tasks/<id>/cancel` 的响应带 `nodeStillRunning: true`——不假装停了。
 
+## 平级协调（批次 PM：登记薄 + 平级消息）
+
+多个独立智能体共用一台机器时的协调通道：占资源前查登记薄，撞车时给对方
+发消息（落对方收件箱、立即唤醒）。复用主管收件箱的投递/未读/唤醒，不造
+消息系统。
+
+```
+GET /api/agent/registry
+→ 200 {"leads": [{"id": "ld_...", "name": "...", "kind": "external",
+                  "status": "active", "node": "ai-xmyz", "taskId": "..."}]}
+```
+
+- 登记薄：聚合已注册主管（`leads_store`）与其托管任务所在执行点；
+  `node`/`taskId` 为空 = 当前没有托管任务。任何有效令牌可读。
+
+```
+POST /api/agent/message
+{"to": "<lead id 或 name>", "text": "...", "ref": "<可选>",
+ "context": {"host": "...", "port": ...}}
+→ 202 {"ok": true, "to": "<name>", "leadId": "ld_...", "seq": N}
+```
+
+- 寻址：先 lead id 精确、再 name 唯一匹配（cleanName 口径）；
+  找不到 400 带 `availableLeads`；给自己发 400。
+- 身份：`from` 服务端按令牌定（text 前缀 `【令牌名】`，`ref.from` 结构化），
+  自报不采信。
+- 唤醒：`kind='peer'` 进 URGENT_KINDS，立即唤醒不等合并窗口；
+  对方无托管任务时条目落箱，下次读取可见。
+- 频控：每令牌每分钟 10 条，429 带 `retryAfter`。
+- 不做：群聊/公告板、在线状态、已读回执、消息编辑删除。
+
 ## 技能分发（URL 自举）
 
 一个技能就是一个目录：`SKILL.md` 是手册，同目录的其它文件是附件（客户端、驱动、
