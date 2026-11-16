@@ -998,6 +998,8 @@ GET /api/agent/registry
 
 - 登记薄：聚合已注册主管（`leads_store`）与其托管任务所在执行点；
   `node`/`taskId` 为空 = 当前没有托管任务。任何有效令牌可读。
+  只给节点名（不内联 nodes 全量字段）——执行点详情与模型列表查
+  `/api/tasks/nodes`，避免两份真相。
 
 ```
 POST /api/agent/message

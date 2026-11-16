@@ -308,7 +308,7 @@ POST /api/feedback
 对方被立即唤醒。回复用同一端点互换 `to` 即可。
 
 ```text
-GET /api/agent/registry                    # 登记薄：谁（id/名/kind）、在哪（node）
+GET /api/agent/registry                    # 登记薄：谁（id/名/kind）、在哪（node；只给节点名，执行点详情/模型查 /api/tasks/nodes）
 POST /api/agent/message                    # 平级消息（落对方收件箱，立即唤醒）
 {"to": "<lead id 或 name>", "text": "...", "ref": "<可选>",
  "context": {"host": "ai-xmyz", "port": 9222}}
