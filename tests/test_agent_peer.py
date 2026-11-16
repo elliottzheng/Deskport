@@ -160,6 +160,65 @@ def test_peer_message_rate_limit(env):
     assert resp.get_json()['retryAfter'] >= 1
 
 
+def test_peer_message_context_over_long_clipped(env, monkeypatch):
+    """验收 FB 必修：超长 context 不得 500，落箱 ≤MAX_CONTEXT。"""
+    _post(env['app'], '/api/agent/message',
+          {'to': '乙主管', 'text': 'x',
+           'context': {'note': 'x' * 600, 'host': 'ai-xmyz'}}, env['tokA'])
+    entries = leads_inbox.readAll(env['leadB']['id'])
+    assert len(entries) == 1
+    ref = entries[0]['ref']
+    assert len(json.dumps(ref, ensure_ascii=False)) <= \
+        len(json.dumps({'from': {'token': '甲', 'lead': env['leadA']['id']},
+                        'ref': ''}, ensure_ascii=False)) + \
+        agent_peer.MAX_CONTEXT + 8
+    stored = ref.get('context') or {}
+    assert len(json.dumps(stored, ensure_ascii=False)) <= agent_peer.MAX_CONTEXT
+    # 前面的键优先（note 超长整体进不去，host 小键进）
+    assert 'host' in stored or stored == {}
+
+
+def test_peer_message_retired_lead_receives(env):
+    """停用 lead 按规格未禁：照旧可寻址、条目落箱（规格未定义，固化现状）。"""
+    lead = leads_store.get(env['leadB']['id'])
+    leads_store.update(env['leadB']['id'], {'status': 'retired'})
+    resp = _post(env['app'], '/api/agent/message',
+                 {'to': env['leadB']['id'], 'text': '给停用的'}, env['tokA'])
+    assert resp.status_code == 202
+    assert leads_inbox.readAll(env['leadB']['id'])[0]['kind'] == 'peer'
+
+
+def test_registry_hosted_node_aggregated(env, monkeypatch):
+    """hosted lead 的 node 从其托管任务取（聚合口径回归）。"""
+    lead = leads_store.get(env['leadB']['id'])
+    lead['taskId'] = 'tk-hosted'
+    leads_store._save({lead['id']: lead})
+
+    class Repo:
+        def load(self):
+            pass
+
+        def get(self, taskId):
+            return {'id': taskId, 'node': 'ai-xmyz', 'status': 'running'}
+    monkeypatch.setattr(leads_inbox.store, 'repo', Repo())
+    rows = agent_peer._registryRows()
+    row = [r for r in rows if r['id'] == env['leadB']['id']][0]
+    assert row['node'] == 'ai-xmyz' and row['taskId'] == 'tk-hosted'
+
+
+def test_message_ambiguous_name_400(env):
+    """重名寻址：两个同名 lead 时按名发 → 400（不得歧义投递）。"""
+    data = leads_store._load()
+    data['ld_dup'] = {'id': 'ld_dup', 'name': '重名', 'kind': 'external',
+                      'status': 'active', 'taskId': ''}
+    data['ld_dup2'] = {'id': 'ld_dup2', 'name': '重名', 'kind': 'external',
+                       'status': 'active', 'taskId': ''}
+    leads_store._save(data)
+    resp = _post(env['app'], '/api/agent/message',
+                 {'to': '重名', 'text': 'x'}, env['tokA'])
+    assert resp.status_code == 400
+
+
 # ------------------------------------------- 唤醒旁路（进程内直测）
 
 def _wakeEnv(monkeypatch, leadB, kind='peer', text='【甲】在吗'):

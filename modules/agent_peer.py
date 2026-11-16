@@ -67,6 +67,22 @@ def _rateOk(key):
         return True, 0
 
 
+def _clipContext(context):
+    """context 逐键累加，保证整体序列化 ≤MAX_CONTEXT。
+
+    验收 FB 必修：截 JSON **文本**再 json.loads 必炸（被截的文本不是合法
+    JSON）——对要存的内容截断（键太多就后面的键不进），不截序列化结果。
+    """
+    out = {}
+    for key, value in (context or {}).items():
+        candidate = dict(out)
+        candidate[str(key)[:40]] = value
+        if len(json.dumps(candidate, ensure_ascii=False)) > MAX_CONTEXT:
+            break
+        out = candidate
+    return out
+
+
 def _registryRows():
     """登记薄行：每个 lead 一行，node 取其托管任务所在执行点。"""
     tasks_store.repo.load()
@@ -150,20 +166,21 @@ def agentMessage():
     context = body.get('context')
     if context is not None and not isinstance(context, dict):
         return jsonify({'error': 'context 必须是对象'}), 400
-    contextText = json.dumps(context, ensure_ascii=False)[:MAX_CONTEXT] \
-        if context else ''
     ref = ''
     if context or body.get('ref'):
         ref = {'from': {'token': str(agent.get('name') or ''),
                         'lead': str(agent.get('lead') or '')},
                'ref': str(body.get('ref') or '')[:120]}
         if context:
-            ref['context'] = json.loads(contextText) if contextText else {}
+            ref['context'] = _clipContext(context)
     fromName = str(agent.get('name') or 'unknown')
     seq = leads_inbox.append(str(lead.get('id') or ''), 'up', 'peer',
                              '【%s】%s' % (fromName, text[:MAX_TEXT - 32]),
                              ref)
     if not seq:
         return jsonify({'error': '消息落箱失败（lead id 为空或方向非法）'}), 400
+    # 立即唤醒旁路（验收 FB：wakeNow 对 hosted 生效，external 自然跳过——
+    # 条目落箱，对方下次长轮询看到；peer 在 URGENT_KINDS，不等合并窗口）
+    leads_inbox.wakeNow(str(lead.get('id') or ''))
     return jsonify({'ok': True, 'to': str(lead.get('name') or ''),
                     'leadId': str(lead.get('id') or ''), 'seq': seq}), 202
