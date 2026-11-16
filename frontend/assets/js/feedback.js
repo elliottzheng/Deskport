@@ -84,6 +84,36 @@ window.WPFeedback = (function () {
         });
     }
 
+    // ---- 手动上传兜底（FB-5）：快照拿不到（终端/投屏/画不出来）时用户选一张图。
+    // 读图 → 缩到 ≤2560 边 → 压到 ≤1MB → POST attachments；成功返 {file_id, canvas}
+    // （canvas 交给面板接着标注），失败抛错由面板提示，不阻断提交
+    function uploadManualShot(file) {
+        return new Promise(function (resolve, reject) {
+            var url = URL.createObjectURL(file);
+            var img = document.createElement('img');
+            img.onload = function () {
+                URL.revokeObjectURL(url);
+                var k = Math.min(1, 2560 / Math.max(img.naturalWidth, img.naturalHeight));
+                var c = document.createElement('canvas');
+                c.width = Math.max(1, Math.round(img.naturalWidth * k));
+                c.height = Math.max(1, Math.round(img.naturalHeight * k));
+                c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                window.WPFeedbackCapture.compress(c, 1024 * 1024).then(function (blob) {
+                    if (!blob) { reject(new Error('图片压不到 1MB 以内，换张小一点的试试')); return; }
+                    uploadShot(blob).then(function (res) {
+                        if (!res || !res.file_id) { reject(new Error('上传失败')); return; }
+                        resolve({ file_id: res.file_id, canvas: c });
+                    }, reject);
+                }, reject);
+            };
+            img.onerror = function () {
+                URL.revokeObjectURL(url);
+                reject(new Error('这张图读不出来，换一张试试'));
+            };
+            img.src = url;
+        });
+    }
+
     function postEnvelope(envelope) {
         return fetch('/api/feedback', {
             method: 'POST',
@@ -116,16 +146,26 @@ window.WPFeedback = (function () {
             message: payload.message,
             contact: payload.contact,
             attachments: [],
-            capture: payload.blob ? {} : { note: payload.captureNote || '未附带截图' }
+            capture: (payload.blob || payload.uploadedFileId)
+                ? {} : { note: payload.captureNote || '未附带截图' }
         });
         panel.setHint('正在提交…');
 
+        // 附件两条来路：画布快照/标注版（source=page 或上传图标注后的 upload），
+        // 以及手动上传已拿到 file_id 的（source=upload，不重复传图）
         var upload = payload.blob ? uploadShot(payload.blob) : Promise.resolve(null);
         return upload.then(function (file) {
             if (file && file.file_id) {
                 envelope.attachments = [{
                     type: 'screenshot', file_id: file.file_id,
-                    has_annotations: !!payload.hasAnnotations, source: 'page'
+                    has_annotations: !!payload.hasAnnotations,
+                    source: payload.attachmentSource || 'page'
+                }];
+            } else if (payload.uploadedFileId) {
+                envelope.attachments = [{
+                    type: 'screenshot', file_id: payload.uploadedFileId,
+                    has_annotations: !!payload.hasAnnotations,
+                    source: 'upload'
                 }];
             }
             return postEnvelope(envelope);
@@ -225,7 +265,8 @@ window.WPFeedback = (function () {
         if (loadQueue().length) { scheduleFlush(15000); }
     }
 
-    return { init: init, flush: flush, queueLength: function () { return loadQueue().length; } };
+    return { init: init, flush: flush, queueLength: function () { return loadQueue().length; },
+             uploadAttachment: uploadShot, uploadManualShot: uploadManualShot };
 })();
 
 if (document.readyState === 'loading') {

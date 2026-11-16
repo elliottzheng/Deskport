@@ -2,7 +2,9 @@
    底部偏移走 --fb-bottom：桌面贴底，手机让开底部 tab（60px + 安全区）；
    页面上出现底部工具条时 body.fb-raise 再加 72px，不压别人的按钮。
    批次 M4 #11：FAB 上移让出内容区——距右 / 距下 / 距底栏均 ≥16px，
-   不再贴边压在目录行「移除」等右下角操作上。 */
+   不再贴边压在目录行「移除」等右下角操作上。
+   批次 FB-5：桌面面板放大到 min(1080px,96vw)/min(90vh,1000px)；画布视区支持
+   滚轮缩放与拖拽平移；FAB 桌面滚动时隐藏、静置探测压住可交互元素时上移/藏起。 */
 :root { --fb-bottom: 16px; }
 .fb-root { position: relative; z-index: 260; }
 
@@ -26,7 +28,7 @@
     line-height: 1;
     box-shadow: var(--shadow-float);
     cursor: pointer;
-    transition: transform .15s ease, color .15s ease, border-color .15s ease;
+    transition: transform .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease;
 }
 .fb-fab:hover { color: var(--brand); border-color: var(--brand); transform: translateY(-1px); }
 .fb-fab-dot {
@@ -60,9 +62,9 @@
 .fb-mask[hidden] { display: none; }
 
 .fb-panel {
-    width: min(720px, 100%);
-    max-height: min(86vh, 760px);
-    max-height: min(86dvh, 760px);   /* 手机地址栏/键盘变化时按可视高度算 */
+    width: min(1080px, 96vw);           /* FB-5：桌面放大，1080 屏截图不再缩成 720 */
+    max-height: min(90vh, 1000px);
+    max-height: min(90dvh, 1000px);   /* 手机地址栏/键盘变化时按可视高度算 */
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -103,16 +105,30 @@
     padding: 8px;
     margin-bottom: 12px;
 }
-.fb-canvas { display: block; width: 100%; height: auto; border-radius: var(--radius-s); cursor: crosshair; }
+/* FB-5：画布视区——滚轮缩放 + 拖拽平移；画布绝对定位，位移/尺寸由 JS 写 */
+.fb-shot-view {
+    position: relative;
+    height: min(52vh, 520px);
+    min-height: 220px;
+    overflow: hidden;
+    border-radius: var(--radius-s);
+    background: var(--bg-2);
+    touch-action: none;
+    cursor: crosshair;
+}
+.fb-shot-view.is-pan { cursor: grab; }
+.fb-shot-view.is-panning { cursor: grabbing; }
+.fb-canvas { position: absolute; left: 0; top: 0; display: block; transform-origin: 0 0; }
 .fb-canvas[hidden] { display: none; }
 .fb-shot-tip { color: var(--text-3); font-size: 13px; padding: 18px 8px; text-align: center; }
 .fb-shot-tip[hidden] { display: none; }
-.fb-retry {
-    display: block; margin: 0 auto 8px; border: 1px solid var(--border-ctrl);
-    background: var(--surface); color: var(--brand); font-size: 12px;
-    padding: 5px 12px; border-radius: 999px; cursor: pointer;
+.fb-zoom {
+    margin-left: auto; align-self: center; min-width: 52px; text-align: center;
+    font-size: 12px; color: var(--text-3);
+    border: 1px solid var(--border-ctrl); border-radius: 999px; padding: 5px 10px;
 }
-.fb-retry[hidden] { display: none; }
+.fb-zoom.is-11 { color: var(--brand); border-color: var(--brand); background: var(--brand-bg); }
+.fb-upload { cursor: pointer; }
 .fb-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .fb-tool {
     border: 1px solid var(--border-ctrl); background: var(--surface);
@@ -248,6 +264,13 @@
 }
 
 body.fb-raise .fb-fab { bottom: calc(var(--fb-bottom) + 72px); }
+
+/* FB-5 桌面避让：滚动时隐藏（滚停复现）；探测到压住可交互元素时上移两档，
+   还躲不开就藏起。移动端不参与（M4 口径），JS 侧也有宽度守卫 */
+body.fb-scroll .fb-fab { opacity: 0; pointer-events: none; transform: translateY(6px); }
+body.fb-lift1 .fb-fab { bottom: calc(var(--fb-bottom) + 76px); }
+body.fb-lift2 .fb-fab { bottom: calc(var(--fb-bottom) + 152px); }
+body.fb-avoid .fb-fab { display: none; }
 
 /* 横屏矮屏（shell.css M4 #10 保留底栏）：FAB 让开 60px tab 栏，距其 16px */
 @media (min-width: 641px) and (max-height: 430px) {
