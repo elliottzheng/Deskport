@@ -321,6 +321,30 @@ curl -s -X POST "$D/api/feedback" -H "X-Agent-Token: $T" \
 - 频控同网页端：每分钟 ≤5、每日 ≤20（429）；幂等键重复返回首次结果 + `duplicate:true`。
 - 只能提：`GET`/`PATCH`/`DELETE` 是主人权限，智能体调用得 401——处理进度问主控。
 
+### 平级协调：GET /api/agent/registry + POST /api/agent/message
+
+同一台机器上会有多个互不认识的智能体。占端口/目录/服务**之前**先查登记薄；
+撞车或要协商（「9222 端口还要多久？」）直接给对方发消息——落对方收件箱，
+对方被立即唤醒。回复用同一端点互换 `to` 即可。
+
+```bash
+# 登记薄：谁（id/名/kind）、在哪台节点（只给节点名）
+curl -s -H "X-Agent-Token: $T" "$D/api/agent/registry"
+
+# 平级消息：落对方收件箱并立即唤醒
+curl -s -X POST "$D/api/agent/message" \
+  -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
+  -d '{"to": "<lead id 或 name>", "text": "我要起 CDP，默认 9222；你的实例还在用吗？",
+       "context": {"host": "ai-xmyz", "port": 9222}}'
+→ 202 {"ok": true, "to": "对方名字", "seq": 3}
+```
+
+- `to` 先按 lead id、再按 name 唯一匹配；找不到 400 带回 `availableLeads`。
+- 频控每令牌每分钟 10 条（429 带 `retryAfter`）；不能给自己发。
+- 没有群聊/公告板——一对一够用；对方没起托管任务时消息落箱，下次读取可见。
+- 这是**协调通道，不是派活通道**：派活、验收、汇报仍走任务与主管收件箱
+  （见上文各节），平级消息只用于占资源前打招呼、撞车协商。
+
 ## 最小 Python 客户端（只用标准库）
 
 ```python
