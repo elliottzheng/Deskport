@@ -255,3 +255,86 @@ body { padding-bottom: 0 !important; overflow: hidden; }
     cursor: pointer;
 }
 .machine-select:hover, .machine-select:focus { border-color: var(--brand); }
+
+/* ====== 快捷 CD 栏 (反馈 dad400ea/d9377f0f) — JS 建于 #bar 之后 ====== */
+.cwd-bar {
+    position: relative;   /* 候选浮层的定位参照 */
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+.cwd-label {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--brand);
+    cursor: default;
+}
+.cwd-input {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    padding: 0 var(--sp-2);
+    background: var(--bg);
+    color: var(--text-1);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    font-family: var(--mono);
+    font-size: 12px;
+    outline: none;
+}
+.cwd-input:focus { border-color: var(--brand); }
+.cwd-go {
+    flex-shrink: 0;
+    height: 30px;
+    padding: 0 var(--sp-3);
+    background: var(--surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    font-size: 12px;
+    cursor: pointer;
+}
+.cwd-go:hover { border-color: var(--brand); color: var(--brand); }
+/* 最近访问候选: 聚焦时出, 失焦/Esc/点选后收; 无历史不渲染 */
+.cwd-recent {
+    position: absolute;
+    top: 100%;
+    left: var(--sp-3);
+    right: var(--sp-3);
+    z-index: 40;
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 132px;
+    overflow-y: auto;
+    padding: var(--sp-2);
+    background: var(--surface);
+    border: 1px solid var(--border-ctrl);
+    border-radius: var(--radius-s);
+    box-shadow: var(--shadow-float);
+}
+.cwd-recent.open { display: flex; }
+.cwd-recent-chip {
+    max-width: 100%;
+    padding: 4px 10px;
+    background: var(--bg-2);
+    color: var(--text-1);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.cwd-recent-chip:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-bg); }
+@media (max-width: 640px) {
+    .cwd-bar { gap: 6px; padding: 6px var(--sp-2); }
+    .cwd-label { display: none; }
+    .cwd-input { font-size: 16px; }   /* iOS 聚焦不回缩 */
+}
