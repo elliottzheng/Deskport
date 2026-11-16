@@ -133,6 +133,7 @@
             sessionStorage.removeItem('terminal-open');
             manager.createSession(pending.cmd || '', pending.cwd,
                 { kick: pending.kick || null, machine: pending.machine || '' });
+            TermSessionUI.rememberHandoff(pending);   // 落最近访问 (dad400ea)
         }
     } catch (err) { /* 忽略脏数据 */ }
 
@@ -156,6 +157,7 @@
                 sessionStorage.removeItem('terminal-open');
                 manager.createSession(p.cmd || '', p.cwd,
                     { kick: p.kick || null, machine: p.machine || '' });
+                TermSessionUI.rememberHandoff(p);   // 落最近访问 (dad400ea)
             }
         } catch (err) { /* 忽略 */ }
     });

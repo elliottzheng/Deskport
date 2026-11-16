@@ -191,6 +191,9 @@ window.TermFeatures = (function () {
                 displayName: displayName,
                 renameSession: renameSession,
             });
+            // 快捷 CD 栏 (反馈 dad400ea/d9377f0f): 两页共用; 最近访问候选只在
+            // 本地终端页出 (数据源是文件页 terminal-open 交接)
+            TermSessionUI.mountCwdBar({ manager: m, setStatus: setStatus, pageKind: pageKind });
             var pageActive = true;
             // 前台进程 / 目录短名定时刷新（仅当前视图可见时）
             setInterval(function () {
