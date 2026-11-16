@@ -259,9 +259,11 @@ var TermSessionUI = (function () {
 
         // 目录/文件判定: 本地与成员会话走 /api/files (目录列表 + 下载 URL HEAD 探),
         // SSH 会话走 /api/ssh/sftp/list + /api/ssh/sftp/download——全是既有通道
-        function classify(path, live) {
+        // wantMachine: 候选带来的成员机 id——live 被换机置空时探测走候选所属
+        // 机器, 不拿本机探他机路径报假「不存在」（FB-2）
+        function classify(path, live, wantMachine) {
             var isSsh = !!(live && live.kind === 'ssh');
-            var machine = (live && live.machine) || '';
+            var machine = (live && live.machine) || wantMachine || '';
             var q = 'path=' + encodeURIComponent(path)
                 + (machine ? '&machine=' + encodeURIComponent(machine) : '');
             var dirProbe;
@@ -305,7 +307,7 @@ var TermSessionUI = (function () {
                 return;
             }
             setStatus('正在识别路径…');
-            classify(path, live).then(function (res) {
+            classify(path, live, wantMachine).then(function (res) {
                 if (res.kind === 'file') {
                     triggerDownload(res.downloadUrl);
                     setStatus('开始下载: ' + baseName(path), 'ok');

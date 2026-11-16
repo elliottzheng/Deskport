@@ -254,3 +254,29 @@ def test_zip_budget_exceeded_is_413(sftp_env, monkeypatch):
     paths = json.dumps(['/big.bin'])
     resp = client.get('/api/ssh/sftp/download-zip?hostId=h&paths=' + quote(paths))
     assert resp.status_code == 413
+
+
+def test_list_file_path_is_404_not_500(sftp_env, monkeypatch):
+    """listdir_attr 对文件路径抛普通 IOError（真实 paramiko 行为，FB-2）：
+    按不存在返回 404，不 500。"""
+    from modules import ssh_sftp_ops
+    client, _fake = sftp_env
+
+    class _FileListSftp:
+        """listdir_attr 一律抛 OSError 的桩（文件路径在真实 paramiko 上的行为）。"""
+
+        def normalize(self, path):
+            return path if path.startswith('/') else '/' + (path or '')
+
+        def listdir_attr(self, path):
+            raise OSError('FileStatus: failure')
+
+    @contextmanager
+    def fileSession(hostId):
+        yield _FileListSftp()
+
+    # ops 在首访 import 时就把 _sftpSession 绑进了本模块命名空间，patch 持有者本身
+    monkeypatch.setattr(ssh_sftp_ops, '_sftpSession', fileSession)
+    resp = client.post('/api/ssh/sftp/list', json={'hostId': 'h', 'path': '/a.txt'})
+    assert resp.status_code == 404
+    assert '不存在' in resp.get_json()['error']

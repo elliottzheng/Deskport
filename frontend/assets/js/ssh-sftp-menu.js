@@ -13,6 +13,19 @@ window.SftpMenu = (function () {
 
     function close() {
         if (menuEl) { menuEl.remove(); menuEl = null; }
+        window.removeEventListener('scroll', onScroll, true);
+        document.removeEventListener('keydown', onKeydown);
+    }
+
+    // 对齐 files 页口径（FB-1）：菜单外滚动关；菜单自身滚动不关
+    // （.ctx-menu 可滚动，max-height 60vh，见 app.css）
+    function onScroll(ev) {
+        if (menuEl && ev.target && menuEl.contains(ev.target)) { return; }
+        close();
+    }
+
+    function onKeydown(e) {
+        if (e.key === 'Escape') { close(); }
     }
 
     function build(x, y, maxH) {
@@ -31,6 +44,8 @@ window.SftpMenu = (function () {
         document.body.appendChild(menu);
         menuEl = menu;
         setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
+        window.addEventListener('scroll', onScroll, true);
+        document.addEventListener('keydown', onKeydown);
         return item;
     }
 
