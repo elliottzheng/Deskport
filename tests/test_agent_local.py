@@ -7,6 +7,7 @@ PowerShell 用系统自带 powershell.exe。
 import base64
 import hashlib
 import json
+import os
 import time
 from types import SimpleNamespace
 
@@ -163,6 +164,76 @@ def test_local_exec_timeout_kills_tree(env):
                  'timeoutSec': 1}).get_json()
     assert body['exit'] is None and body['reason'] == 'timeout'
     time.sleep(0.5)
+
+
+# ---- _findBash fallback（反馈 ced9ad57：prod PATH 只有 Git\cmd，which 全挂） ----
+
+def test_findBash_prefers_which(monkeypatch, tmp_path):
+    """which 命中时行为不变：原路径优先，不走 fallback。"""
+    import modules.agent_local as localMod
+    fake = tmp_path / 'which-bash.exe'
+    fake.write_bytes(b'')
+    monkeypatch.setattr('shutil.which',
+                        lambda name: str(fake) if name == 'bash' else None)
+    monkeypatch.setattr(localMod, '_bashFallbackPaths',
+                        lambda: [r'C:\Program Files\Git\bin\bash.exe'])
+    assert localMod._findBash() == str(fake)
+
+
+def test_bashFallbackPaths_standard_locations():
+    """fallback 候选覆盖 Git for Windows 各默认安装位置。"""
+    import modules.agent_local as localMod
+    paths = localMod._bashFallbackPaths()
+    assert r'C:\Program Files\Git\bin\bash.exe' in paths
+    assert r'C:\Program Files (x86)\Git\bin\bash.exe' in paths
+
+
+def test_findBash_fallback_candidates(monkeypatch, tmp_path):
+    """which 失败时按候选路径依次探测：每个候选命中即返回；全落空 → None。"""
+    import modules.agent_local as localMod
+    monkeypatch.setattr('shutil.which', lambda name: None)
+    cands = []
+    for i in range(4):
+        cand = tmp_path / ('cand%d' % i) / 'bash.exe'
+        cand.parent.mkdir()
+        cands.append(cand)
+    monkeypatch.setattr(localMod, '_bashFallbackPaths',
+                        lambda: [str(c) for c in cands])
+    assert localMod._findBash() is None
+    for cand in cands:
+        assert localMod._findBash() is None
+        cand.write_bytes(b'')
+        assert localMod._findBash() == str(cand)
+        cand.unlink()
+
+
+def test_findBash_real_git_bash(monkeypatch):
+    """真机：默认安装位置存在时 _findBash 命中它（复现 prod 场景：which 失败）。"""
+    real = r'C:\Program Files\Git\bin\bash.exe'
+    if not os.path.isfile(real):
+        pytest.skip('本机无 %s' % real)
+    import modules.agent_local as localMod
+    monkeypatch.setattr('shutil.which', lambda name: None)
+    assert localMod._findBash() == real
+
+
+def test_local_exec_bash_missing_error_message(env, monkeypatch):
+    """fallback 全落空：exec 错误文案保持「本机找不到 bash（Git Bash）」。"""
+    import modules.agent_local as localMod
+    monkeypatch.setattr(localMod, '_findBash', lambda: None)
+    body = post(env, '/api/agent/ssh/exec',
+                {'host': 'local', 'command': 'echo hi'}).get_json()
+    assert body['exit'] == 1
+    assert body['err'] == '本机找不到 bash（Git Bash）'
+
+
+def test_local_session_bash_missing_502(env, monkeypatch):
+    """会话入口同样文案：bash 找不到 → 502。"""
+    import modules.agent_local as localMod
+    monkeypatch.setattr(localMod, '_findBash', lambda: None)
+    resp = post(env, '/api/agent/ssh/sessions', {'host': 'local'})
+    assert resp.status_code == 502
+    assert resp.get_json()['error'] == '本机找不到 bash（Git Bash）'
 
 
 # ---- sessions ----
