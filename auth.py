@@ -9,6 +9,7 @@ from flask import g, request, session, redirect, jsonify
 
 import config
 from modules import events
+from modules import leads_store
 
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 60
@@ -20,6 +21,7 @@ EXEMPT_PREFIXES = (
     '/api/agent/handbook',      # 公开接入手册: 令牌之前就要能读
     '/api/agent/tools',         # 公开工具箱: 手册指向的零依赖客户端/驱动/协作原则
     '/api/agent/skill.zip',     # 公开整包: 无令牌下一个 zip 拿全技能目录
+    '/api/system/drain',        # 部署排空: 端点内自检(回环或网页会话), 远程匿名 403
     '/assets/css/tokens.css',
     '/assets/css/login.css',
     '/manifest.webmanifest',
@@ -52,6 +54,32 @@ def safeNextTarget(nextTarget):
     if nextTarget and nextTarget.startswith('/') and not nextTarget.startswith('//'):
         return nextTarget
     return '/'
+
+
+def _feedbackTokenAllowed(path, method):
+    """智能体令牌在反馈系统里的边界（批次 F1，规格 §7.1）。
+
+    放行：提交信封与附件、读自己的（mine/详情）、清未读、评论/确认/重开自己的。
+    不放行：检索（GET /api/feedback）、待受理摘要、统计、PATCH 状态回写、删除
+    ——这些是处理者（网页会话）独有；处理智能体的 feedback:triage 在 F3。
+    「自己的」复核在 modules/feedback.py 各路由里做（令牌越权读别人 403）。
+    """
+    segs = [s for s in path.split('/') if s]        # ['api', 'feedback', ...]
+    if len(segs) < 2 or segs[0] != 'api' or segs[1] != 'feedback':
+        return False
+    rest = segs[2:]
+    if method == 'POST':
+        if not rest or rest == ['attachments'] or rest == ['mine', 'read']:
+            return True
+        return len(rest) == 2 and rest[1] in ('comments', 'confirm', 'reopen')
+    if method == 'GET':
+        if rest == ['mine']:
+            return True
+        if len(rest) == 2 and rest[0] == 'attachments':
+            return True
+        # 单段 = 详情（<id>）；mine/attachments/stats/pending 这些保留段不算 id
+        return len(rest) == 1 and rest[0] not in ('mine', 'attachments', 'stats', 'pending')
+    return False
 
 
 def renderLoginPage(errorMessage, nextTarget):
@@ -139,6 +167,8 @@ def register(app):
             from modules.agent_api import federationTokenName
             g.agentTokenName = federationTokenName()
             g.agentOnBehalfOf = ''
+            # 批次 Q：联邦身份不参与指挥链，没有主管
+            g.agentLead = ''
             return None
         if isAuthenticated():
             return None
@@ -153,18 +183,37 @@ def register(app):
             return None
         if request.headers.get('Upgrade', '').lower() == 'websocket':
             return 'Unauthorized', 401
+        # 智能体反馈通道（批次 F1）：持任何有效令牌（含设备/联邦令牌）可提反馈、
+        # 读自己的、追问/确认/重开自己的；身份按令牌名留痕，on_behalf_of 与主管
+        # 归属随 g 带进 submitter（调研 S5：归属信息不再丢失）。
+        # 检索/状态回写/统计/删除仍是主人会话独有——处理智能体的 feedback:triage
+        # 能力与事件流长轮询在 F3，本批不放行。
+        if path.startswith('/api/feedback') and _feedbackTokenAllowed(path, request.method):
+            from modules import agent_api as agentModule
+            agent = agentModule.agentFromRequest()
+            if agent is not None:
+                g.agentTokenName = agent.get('name') or ''
+                g.agentOnBehalfOf = str(agent.get('onBehalfOf') or '')
+                g.agentLead = str(agent.get('lead') or '')
+                if g.agentLead:
+                    leads_store.touch(g.agentLead)
+                return None
+            # 没令牌 → 落到下方 /api/ 统一 401（与网页未登录一致）
         if path.startswith('/api/agent/') or path.startswith('/api/tasks') \
                 or path.startswith('/api/worklines') \
+                or path.startswith('/api/workitems') \
                 or path.startswith('/api/capability/'):
             # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行。
             # /api/tasks、/api/worklines 放行后外部智能体可建任务/收事件/回权限
+            # /api/workitems 同档（批次 G2：主管派/看/决策工作项）
             # /api/capability/me 是只读自述(主体+规则+示例判定), 任何有效令牌
             # (含设备令牌) 都该能问"我能干什么", 所以不跟着要 full scope
             from modules import agent_api as agentModule
             agent = agentModule.agentFromRequest()
             if agent is not None:
-                if path.startswith('/api/tasks') or path.startswith('/api/worklines'):
-                    # 这两组前缀没有逐端点守卫, 在入口统一要求全权 scope
+                if path.startswith('/api/tasks') or path.startswith('/api/worklines') \
+                        or path.startswith('/api/workitems'):
+                    # 这几组前缀没有逐端点守卫, 在入口统一要求全权 scope
                     # （受限令牌如手机上传 scope 在这里 403, 不进任务端点）
                     denied = agentModule.scopeDenied(agent, agentModule.SCOPE_FULL)
                     if denied is not None:
@@ -172,10 +221,27 @@ def register(app):
                 g.agentTokenName = agent.get('name') or ''
                 # 批次 H：令牌可绑定「代表谁」，写操作审计随事件落下
                 g.agentOnBehalfOf = str(agent.get('onBehalfOf') or '')
+                # 批次 Q：令牌可绑主管——建任务记 task.lead、按主管筛任务、
+                # /api/agent/lead 自查都读它；没绑为 ''（网页会话同样不设）
+                g.agentLead = str(agent.get('lead') or '')
+                if g.agentLead:
+                    # 主管最近活跃（Q7）：同一主管 60 秒内最多写盘一次
+                    leads_store.touch(g.agentLead)
                 return None
             if path.startswith('/api/agent/'):
                 return jsonify({'error': 'unauthorized (需要 X-Agent-Token)'}), 401
             # /api/tasks 未命中令牌 → 落到下方统一 401
+        # 批次 G1：任务会话令牌（X-Deskport-Session-Token）只放行结果提交两处
+        # ——/api/mcp 与 /api/tasks/<id>/result；令牌与任务的绑定在端点再校验
+        if path.startswith('/api/mcp') or (path.startswith('/api/tasks/')
+                                           and path.endswith('/result')):
+            from modules import task_result_mcp
+            token = request.headers.get(task_result_mcp.TOKEN_HEADER) or ''
+            taskId = task_result_mcp.tokenTask(token)
+            if taskId and (path.startswith('/api/mcp')
+                           or path == '/api/tasks/%s/result' % taskId):
+                g.taskResultToken = token
+                return None
         if path.startswith('/api/'):
             return jsonify({'error': 'unauthorized'}), 401
         from modules import plugins as pluginModule

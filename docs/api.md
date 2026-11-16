@@ -1,6 +1,6 @@
 # API 参考
 
-本文覆盖：当前全部业务端点（auth、system、command、screen、terminal）的方法、路径、参数、响应与错误码。
+本文覆盖：当前全部业务端点（auth、system、command、screen、terminal、指挥台）的方法、路径、参数、响应与错误码。
 本文不覆盖：`/api/files*` 文件管理 API（已独立成篇，见 [api-files.md](api-files.md)）、终端 WS 帧语义（见 [terminal-protocol.md](terminal-protocol.md)）。
 
 ## 通用约定
@@ -62,6 +62,24 @@ psutil 实时快照。无参数。
 - `user`：取 `psutil.users()` 最后一个登录用户，无登录用户时为 `"-"`。
 - `interfaces`：全部网卡的 IPv4；`169.*` 链路本地地址 `linkLocal` 为 `true`，前端降序展示且置灰。
 - `memory.*` 单位字节；`uptimeSeconds` 基于进程启动时缓存的 `psutil.boot_time()`。
+
+### `POST /api/system/drain`
+
+部署排空（批次 DR）：`deploy.ps1` 同步代码前调用——中枢停止接受新的一轮开始（新消息/新任务照常排队，不拒绝），等在飞回合自然结束或超时。超时也放行部署，仍在跑的任务标记 `pausedBy='restart'`（web 重启后由批次 L3 自动续接）。
+
+只认**网页会话或本机回环地址**调用（远端匿名 403，无需令牌）。请求体 `{"timeoutSec": N}`：缺省 `300`；`0` = 探针（只报在飞回合，不进入排空）。排空进行中再来一次返回 `409`。
+
+```json
+{
+  "drained": true, "timedOut": false,
+  "initial": [{"id": "ab12cd34", "title": "…", "node": "local",
+               "status": "running", "owner": "面板"}],
+  "remaining": [], "waitedSec": 42.3
+}
+```
+
+- `drained`：`true` = 所有在飞回合已自然结束；`false` 且 `timedOut: true` = 超时放行，`remaining` 里的任务已标记 `pausedBy='restart'`。
+- `waitedSec`：实际等待秒数。探针响应为 `{"probe": true, "running": [...], "count": N}`。
 
 ## 命令执行
 
@@ -148,3 +166,153 @@ MJPEG 长响应，`Content-Type: multipart/x-mixed-replace; boundary=frame`。�
 ## 文件管理
 
 `/api/files*` 全部端点（浏览/下载/上传/远程下载/启动/重命名/新建/回收站与永久删除/打包下载/解压/压缩/搜索）见 [api-files.md](api-files.md)。
+
+## 指挥台
+
+`/tasks`（指挥台）一屏数据：等你处理 + 一棵指挥树。只读聚合 `tasks_store` /
+`leads_store` / `leads_inbox`，不新建存储；鉴权与 `/api/settings/leads*` 同档——
+**只认网页会话**（设备/智能体令牌与未登录一律 401）。
+
+### `GET /api/command/overview`
+
+无参数。响应四块，前端（批次 U2 起）只渲染 `tree`，其余字段原样保留供回滚与对账：
+
+| 字段 | 说明 |
+|---|---|
+| `pending` | 等你处理：三类行按时间倒序——`permission`（挂起审批，带 `options` 可直接批准/拒绝）、`report`（主管未读汇报）、`problem`（出问题的下属：failed/interrupted/空转/静默轮，限最近 24h） |
+| `tree` | 指挥树（见下） |
+| `leads` | 旧字段：主管卡片（含全量任务 briefs） |
+| `unassigned` | 旧字段：无主任务（含全量任务 briefs） |
+| `retiredLeads` | 停用主管 id→名字（它们名下的任务仍会进 `pending`） |
+
+**树的节点形状**（`children` 递归同形；`type` 为 `task` 时是叶子，不带 `counts`）：
+
+| 键 | 说明 |
+|---|---|
+| `type` | `lead` 主管 / `owner` 未登记的指挥者 / `direct` 面板自己派的 / `orphan` 主管记录已停用或已删 / `task` 任务 / `more` 折起来的更深层级 |
+| `key` | 稳定标识（`lead:<id>`、`owner:<令牌名>`、`direct`、`lead:<已停用id>`、`task:<id>`、`<父key>:more`），前端拿它记展开状态与高亮 |
+| `id` / `name` | 主管 id / 名字；`owner` 的 id 就是令牌名；`direct` 的 id 为空 |
+| `kind` / `state` / `taskId` | 仅 `lead`：`hosted`/`external`、状态徽标（`busy`/`asleep`/`waiting_you`/`paused`）、托管任务 id |
+| `counts` | `{running, waiting_you, failed}`，**逐级汇总含所有后代**（托管主管节点本身即它的托管任务：该任务不计入子项，但计入本节点计数） |
+| `children` | 子节点；`lead` 的子节点 = 名下任务（剔除托管任务本身）+ `parent` 指向它的下一层主管 |
+| `closedHidden` | 该节点下已关闭任务裁剪后还剩几条（默认只显示最近 5 条） |
+| `hint` | 仅 `owner`/`orphan`：登记提示 / 停用提示 |
+
+规则：
+
+- 一级顺序：主管（按建册时间）→ 未登记指挥者（按 owner 分组）→ 已停用的主管 → 面板自己派的（`owner='面板'`，与建任务处同一字面量）。
+- 层级最多 3 层，第 4 层起折成 `more` 节点（只给汇总计数，不再展开）。
+- 任务节点只带行内要用的字段（`id`/`title`/`status`/`node`/`model`/`modelEffective`/`lastActiveAt`），完整摘要走 `GET /api/tasks/<id>`。
+- 体积：300 个任务 < 200KB（树与旧字段承载同一批任务，等于把任务摘要写了两遍）。
+- 已知限制：主管 `parent` 成环时该主管不上树（`leads_store` 目前只接受 `parent='human'`，成环只能靠手改状态文件）。
+
+### `POST /api/command/leads/<leadId>/reports/read`
+
+把该主管的 `reportSeq` 推到 `seq`（用户已读汇报；只增不减）。请求体 `{"seq": <int>}`；
+主管不存在 404，缺 `seq` 或非整数 400。响应 `{"ok": true, "reportSeq": <int>}`。
+
+#### `activity`（指挥者的直接活动，批次 U2 追加）
+
+主管与未登记的派活令牌不派任务也会自己动手（exec、传文件、建任务）。`lead` /
+`owner` 节点带 `activity`（其它节点类型没有这个键）：
+
+| 键 | 说明 |
+|---|---|
+| `exec` / `sftp` / `task` / `session` | 最近 60 分钟内四类直接操作的次数（`agent.exec` 含 `agent.exec.session`） |
+| `writes` | 最近 60 分钟内 `agent.sftp.put`（写文件）次数 |
+| `lastAt` | 最后一次直接操作的 epoch 秒；0 = 没有 |
+| `lastExec` | 最后一次 exec 的命令前 60 字符 |
+| `recent` | 最近 10 条明细 `[{at, action, summary}]`，按时间正序，不受 60 分钟窗口限制 |
+| `fresh` | 最近 24 小时内有过直接操作 |
+
+规则：
+
+- 数据源是审计日志 `control_audit.jsonl`，**按令牌名匹配**：`agent.exec` /
+  `agent.sftp.*` 取 detail 前缀 `[令牌名] `，`agent.task.*` 取 `target`。只读，
+  从文件尾倒序扫最近 5000 行，汇总结果按 10 秒缓存（指挥台 5 秒一刷）。
+- 汇总逻辑在 `modules/command_activity.py`（`command_view.py` 已贴 400 行预算），
+  纯数据、不 import Flask。
+- 只要最近 24 小时有直接操作，**没有任务也上线成一级节点**（插在「你直接派的」
+  前面）；超 24 小时不上线。
+- 令牌按 `config.agentTokens[].lead` 绑定归到主管节点；主管停用时树上同 key 是
+  orphan 组，照样挂得上。
+- 已知缺口：`agent.session.open` 的审计条目不带令牌名（只有 `on_behalf_of`），
+  归不到具体指挥者，只能跳过——要补得在写入侧加令牌名。
+
+#### 审批行的人话字段（批次 U3）
+
+`kind == "permission"` 的 pending 行除共有字段外还带：
+
+| 键 | 说明 |
+|---|---|
+| `detail` | 命令本身（Bash 的 `command`）；没有 command 的工具退化为参数摘要 |
+| `purpose` | 下属自述的用途（ACP permission 的 `description` 字段） |
+| `owner` | 派活令牌名（前端据此在未登记成主管时标「未登记的指挥者：<令牌名>」） |
+
+前端按这些字段 + 树上索引渲染成「任务标题 · 主管/派活者 · 命令 · 用途」，
+不再把 command 与其它参数糊成一行、也不再直接显示原始 JSON。
+
+## 工作项（批次 G2：流水线）
+
+开发类工作的推进单元：平台建 worktree/分支 → 派实施 → 同步 main → 派独立验收 →
+返工回同一实施会话 → 主仓门禁+全量后合并。主管只在 `needs_judgment` 被叫醒。
+鉴权同任务：网页会话全看；绑了主管的令牌只看自己的、只能决策/取消自己的。
+
+### `POST /api/workitems`
+
+创建（主管/网页）。请求体：`{projectId, specPath 或 specText, implModel,
+verifyModel（必须与 implModel 不同）, title?, footprint[]（必填，glob）,
+maxAttempts?（缺省 3）, lead?, forceParallel?}`。平台先在工作节点建
+worktree 与分支（`git worktree add <worktreeRoot>/<id> -b wi/<id> <main>`），
+再建实施任务（`expects=impl`、cwd=worktree、策略=项目写边界）；同项目足迹
+相交的在跑工作项会挡住它——直接进 `queued`（响应里带 `queuedFor`）。
+
+```json
+{"ok": true, "project": "deskport",
+ "workItem": {"id": "wi-ab12cd", "state": "implementing", "stage": "impl",
+              "attempt": 1, "branch": "wi/wi-ab12cd", "worktree": "E:/…/.wt/wi-ab12cd",
+              "implTask": "…", "footprint": ["modules/*.py"]}}
+```
+
+### `GET /api/workitems`
+
+列表（主管只返自己的）。响应 `{workItems: [brief…], count, byState}`；
+brief 带 `state`/`stage`（impl/verify/integrate/queue/done/judge/fail/cancelled）、
+`attempt`/`maxAttempts`、`lastVerdict`/`mustFix`、`queuedFor`/`queuedShare`、
+`integration{commit,gates,tests,log}`、`judgmentReason`、`history`（最近 20 条）。
+
+### `GET /api/workitems/<id>`
+
+详情：brief + `tasks`（名下任务 brief）+ `integrateLogTail`（集成日志尾部 8KB）。
+
+### `POST /api/workitems/<id>/decision`
+
+主管判断（仅 `needs_judgment` 可调，否则 409）。`{action: continue|rework|
+integrate|cancel, text?}`：continue 回到进来前的状态（text 作为主管说明发给
+当前任务）；rework 按 text 返工（算一次 attempt）；integrate 直接进集成；
+cancel 取消并收尾。
+
+### `POST /api/workitems/<id>/cancel`
+
+取消（任何非终态）：关名下所有任务、拆 worktree（分支保留）。
+
+### `GET/POST /api/settings/projects` · `DELETE /api/settings/projects/<id>`
+
+项目配置（只认网页会话）。字段：`{id, name, node（暂只支持 local）, repoPath,
+mainBranch, worktreeRoot, gatesCmd, testCmd, setupNotes, fallbackModels[],
+policy}`；命令支持 `{repo}`/`{tmp}` 占位符。首次访问种一条内置项目
+`deskport`（本仓库副本；门禁/测试命令取 `.drive/merge_branch.py` 与
+`tools/run_tests.py` 的做法），内置项可改参数、不可删除。
+
+### 状态机（文字图）
+
+```text
+queued ──▶ implementing ──▶ verifying ──┬─▶ integrating ──▶ integrated
+  ▲             ▲   ▲                    │      │
+  │             │   └── rework ──────────┘      └── 同步冲突/集成失败
+  │             │                                （回 implementing）
+  │             └── 任务起不来/卡死/提前收工/换手失败/结束无结果
+  └── needs_judgment ◀── 实施有 questions / 验收 needs_judgment /
+                         attempt 超限 / 主管叫停
+failed / cancelled 为旁路终态；每次迁移写 history（时间、原因、关联任务/提交）。
+```

@@ -17,15 +17,25 @@ from modules import tasks_store as store
 WAIT_ENDERS = ('waiting', 'failed', 'closed', 'cancelled')
 
 
-def _parseWaitSeconds(value, cap=600):
-    """"wait": <秒> → 1..cap 的整数或 None（不等待）。"""
+def parseWaitSeconds(value, cap=600):
+    """"wait": <秒> → 1..cap 的整数或 None（不等待）。
+
+    0/负数/非数字都不等待——查询串 '0' 与 JSON 0 同结果（批次 P3b 前 '0'
+    会落进 max(1, …) 白等 1s，inbox 复用本函数时实测复现）。
+    """
     if value in (None, '', False):
         return None
     try:
         secs = int(value)
     except (TypeError, ValueError):
         return None
-    return max(1, min(secs, cap))
+    if secs <= 0:
+        return None
+    return min(secs, cap)
+
+
+# 旧名别名：tasks_api/worklines_api 存量引用（批次 P3b 公开化，接缝表登记不变）
+_parseWaitSeconds = parseWaitSeconds
 
 
 def _lastAssistantAfter(task, after):
@@ -64,6 +74,10 @@ def _waitSnapshot(task, after, ignorePending=None):
                  'tools': sum(1 for e in events if e.get('type') == 'tool'),
                  'autoApproved': sum(1 for e in events
                                      if e.get('type') == 'auto_approved'),
+                 # 2026-11-14 外部智能体反馈 P0-2：自动拒绝（含后台幽灵审批）之前
+                 # 在执行方眼里是"无声无息丢一轮"，主控至少要在轮末统计里看见次数
+                 'autoDenied': sum(1 for e in events
+                                   if e.get('type') == 'auto_denied'),
                  'errors': sum(1 for e in events if e.get('type') == 'error')}
         status = task.get('status') or 'queued'
         pendingPerm = task.get('pendingPermission') or ''
@@ -119,6 +133,14 @@ def _blockWait(task, after, timeout, ignorePendingRequestId=None):
         if remaining <= 0:
             if snap['status'] in ('queued', 'running'):
                 snap['status'] = 'running'
+            # 超时未等到结束点：游标停在调用方的 after，不推进展。快照的
+            # lastSeq 若已越过"终稿已落、状态仍 running"的隙（终稿→WAITING
+            # 有结构性间隙，2026-11-14 调查实测 P90 2.8s、最大 9.4s），下次
+            # wait 的 after 会跳过终稿 seq，_lastAssistantAfter 找不到
+            # assistant——主控拿到空 finalText 把健康任务当丢稿 close 掉
+            # （实测 b025c78c2f85；约 2% 轮次期望踩中）。事件不丢不重：
+            # 客户端带原 after 再来，窗口照旧重算
+            snap['lastSeq'] = after
             return snap
         with store.repo.lock:
             store.repo.evCond.wait(remaining)   # 放锁休眠，事件到达即醒

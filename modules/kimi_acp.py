@@ -99,6 +99,7 @@ class KimiAcp:
         self.session_id = None
         self.agent_info = {}
         self.capabilities = {}
+        self.mcp_servers = None      # 批次 G1：submit_result 注入（runner 置值后 start）
         self.stderr_lines = []
         self._id = 0
         self._pending = {}
@@ -222,7 +223,10 @@ class KimiAcp:
         return None
 
     # ---- lifecycle ----
-    def start(self, session_id=None):
+    def start(self, session_id=None, mcp_servers=None):
+        """建立会话；mcp_servers（批次 G1，ACP http 形式）随 session/new 与
+        session/load 注入——kimi 握手声明 mcpCapabilities.http=true，只认
+        http/sse，stdio 形式不注入。"""
         try:
             kimi = _kimiBin()
         except RuntimeError:
@@ -254,13 +258,15 @@ class KimiAcp:
         }, timeout=20)
         self.agent_info = init.get('agentInfo') or {}
         self.capabilities = init.get('agentCapabilities') or {}
+        servers = mcp_servers if mcp_servers is not None else self.mcp_servers
+        servers = servers or []
         if session_id:
             # 回放窗口 = session/load 请求在途（R4-5a #4：load 返回即结束）
             self._loading = True
             try:
                 loaded = self.request('session/load', {
                     'sessionId': session_id, 'cwd': self.cwd,
-                    'mcpServers': [], 'additionalDirectories': [],
+                    'mcpServers': servers, 'additionalDirectories': [],
                 }, timeout=60)
             finally:
                 self._loading = False
@@ -273,7 +279,8 @@ class KimiAcp:
                     log.info('ACP set_mode %s 失败(忽略): %s', self.mode, e)
         else:
             session = self.request('session/new', {
-                'cwd': self.cwd, 'mcpServers': [], 'additionalDirectories': [],
+                'cwd': self.cwd, 'mcpServers': servers,
+                'additionalDirectories': [],
             }, timeout=30)
             self.session_id = session.get('sessionId')
             if not self.session_id:

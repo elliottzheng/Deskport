@@ -114,3 +114,9 @@ $lnk.Save()
 ## 升级
 
 改 `pyproject.toml` 后执行 `uv sync`，`uv.lock` 随之更新并入库。运行 `python -m pytest tests -q` 与 `python tools/check_structure.py` 后再发布。
+
+## 发布（deploy.ps1）
+
+在 dev 目录执行 `powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1`：precheck（py_compile / 结构 / 前端门禁）→ **排空** → 备份 → robocopy 同步 → 按需重启守护进程与 web → smoke，失败自动回滚。
+
+排空（批次 DR，缺省开启）：同步代码前调用本机 `POST /api/system/drain`，中枢停止接受新的一轮开始（新消息/新任务照常排队），等在飞回合自然结束（缺省 300s，`-DrainTimeoutSec N` 调整）；超时不阻塞部署——仍在跑的任务标记 `pausedBy=restart`，web 重启后由批次 L3 自动续接。`-NoDrain` 跳过排空恢复旧行为（会打断正在进行的一轮）。web 不在跑时排空调用失败不阻塞部署。

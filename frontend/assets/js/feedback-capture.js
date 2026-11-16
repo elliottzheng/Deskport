@@ -369,7 +369,7 @@ window.WPFeedbackCapture = (function () {
     function envelope(fields) {
         fields = fields || {};
         return {
-            schema_version: '1.0',
+            schema_version: '2',
             feedback_id: fields.feedback_id || '',
             idempotency_key: fields.idempotency_key || '',
             submitted_at: new Date().toISOString(),

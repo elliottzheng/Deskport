@@ -32,6 +32,7 @@ class TaskSummary(TypedDict):
     status: str
     createdAt: float
     owner: str
+    lead: str
     createdLabel: str
     startedAt: float
     endedAt: float

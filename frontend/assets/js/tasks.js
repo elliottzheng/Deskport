@@ -3,10 +3,11 @@
     'use strict';
     const { createApp } = Vue;
 
-    createApp({
+    const app = createApp({
         data() {
             return {
                 prompt: '',
+                newTitle: '',
                 mode: 'auto',
                 runWhere: 'local',
                 nodes: [],
@@ -19,7 +20,6 @@
                 pathMenuLoaded: false,
                 quickDirs: [],
                 recentPaths: [],
-                tasks: [],
                 selectedId: null,
                 detail: null,
                 events: [],
@@ -31,13 +31,13 @@
                 fullEvents: {},
                 error: '',
                 notice: '',
+                savedScroll: 0,
                 pickerOpen: false,
                 pickerSource: 'all',
                 inboxItems: [],
                 picked: {},
-                listTimer: null,
                 detailTimer: null,
-                autoSelected: false,
+                titleEdit: false, titleDraft: '', titleBusy: false, titleError: '',
             };
         },
         computed: {
@@ -119,50 +119,23 @@
         mounted() {
             this.loadRecent();
             this.loadCwdRoots();
-            this.refresh();
             this.loadNodes();
-            this.listTimer = setInterval(this.refresh, 2000);
             this.detailTimer = setInterval(this.pollDetail, 1000);
         },
         beforeUnmount() {
-            clearInterval(this.listTimer);
             clearInterval(this.detailTimer);
         },
         methods: {
-            async refresh() {
-                if (document.visibilityState !== 'visible') { return; }
-                try {
-                    const r = await fetch('/api/tasks?full=1');
-                    const data = await r.json();
-                    if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                    this.tasks = data.tasks || [];
-                    if (!this.selectedId && !this.autoSelected && this.tasks.length) {
-                        this.autoSelected = true;
-                        this.select(this.tasks[0]);
-                    } else if (this.selectedId && this.detail) {
-                        const id = this.selectedId;
-                        const cur = this.tasks.find(function (t) { return t.id === id; });
-                        if (cur) {
-                            // R4-0 列表是精简摘要：只合并存在的键，
-                            // 缺的字段（resultFiles/canContinue…）由 loadEvents 全量轮询补
-                            const patch = {};
-                            ['status', 'resultFiles', 'error', 'lastText', 'canContinue',
-                             'pendingPermission', 'canResume', 'awaitingAnswer', 'mode',
-                             'lastActiveLabel', 'queuedMessages'].forEach(function (k) {
-                                if (cur[k] !== undefined) { patch[k] = cur[k]; }
-                            });
-                            this.detail = Object.assign({}, this.detail, patch);
-                        }
-                    }
-                } catch (err) { /* 保持当前列表 */ }
-            },
             async select(task) {
+                // 手机上详情是全屏 sheet：打开前记住列表滚动位置，返回时还原
+                this.savedScroll = window.scrollY || 0;
                 this.selectedId = task.id;
                 this.detail = task;
                 this.events = [];
                 this.after = 0;
                 this.message = '';
                 this.notice = '';
+                this.titleEdit = false; this.titleError = '';
                 this.fullEvents = {};
                 this.loadDetail();   // R4-0 精简列表缺 resultFiles/createdLabel 等，详情端点补全
                 await this.loadEvents();
@@ -197,6 +170,8 @@
                         status: data.status,
                         lastText: data.lastText || '',
                         resultFiles: data.resultFiles || [],
+                        result: data.result || null,
+                        resultCount: data.resultCount || 0,
                         error: data.error || '',
                         canContinue: data.canContinue,
                         canResume: data.canResume,
@@ -224,7 +199,8 @@
                 this.busy = true;
                 this.error = '';
                 try {
-                    const body = { prompt: prompt, mode: this.mode, node: this.runWhere };
+                    const body = { prompt: prompt, mode: this.mode, node: this.runWhere,
+                                   title: (this.newTitle || '').trim() };
                     const isLocal = this.isLocalRun;   // await 前捕获，避免请求途中切执行点
                     const cwd = (this.localCwd || '').trim();
                     if (isLocal) {
@@ -241,12 +217,14 @@
                     });
                     const data = await r.json();
                     if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-                    this.tasks.unshift(data.task);
                     this.prompt = '';
+                    this.newTitle = '';
                     this.paths = [];
                     this.pathMenuOpen = false;
                     if (isLocal) { this.rememberCwd(cwd); }
+                    this.newSheetOpen = false;
                     await this.select(data.task);
+                    await this.loadOverview();   // 新任务（无主）立刻进「你直接派的」
                 } catch (err) {
                     this.error = err.message;
                 } finally {
@@ -255,6 +233,40 @@
             },
             rememberCwd(p) {
                 try { localStorage.setItem('wp.taskCwd', p); } catch (err) { /* ignore */ }
+            },
+            // 批次 T：详情头部点标题 → 行内输入框改名（回车保存，Esc/失焦取消）
+            startTitleEdit() {
+                if (!this.detail) { return; }
+                this.titleDraft = this.detail.title || '';
+                this.titleError = '';
+                this.titleEdit = true;
+                this.$nextTick(() => { const el = this.$refs.titleInput; if (el) { el.focus(); el.select(); } });
+            },
+            cancelTitleEdit() {
+                this.titleEdit = false;
+                this.titleError = '';
+            },
+            async saveTitle() {
+                const title = (this.titleDraft || '').trim();
+                if (!title || this.titleBusy) { return; }
+                this.titleBusy = true;
+                this.titleError = '';
+                try {
+                    const r = await fetch('/api/tasks/' + encodeURIComponent(this.selectedId), {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: title }),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+                    this.detail = Object.assign({}, this.detail, { title: data.title });
+                    this.titleEdit = false;
+                    await this.loadOverview();   // 列表与主管卡片同步新名
+                } catch (err) {
+                    this.titleError = err.message;   // 就地提示，输入框保持打开
+                } finally {
+                    this.titleBusy = false;
+                }
             },
             async loadCwdRoots() {
                 try {
@@ -330,13 +342,15 @@
                     await this.loadEvents();
                 }
             },
-            backToList() {
-                this.autoSelected = true;
+            backToList(restoreScroll) {
                 this.selectedId = null;
                 this.detail = null;
                 this.events = [];
                 this.after = 0;
                 this.message = '';
+                if (restoreScroll === false) { return; }   // 调用方自己滚（回主管卡片）
+                const scroll = this.savedScroll || 0;
+                this.$nextTick(function () { window.scrollTo(0, scroll); });
             },
             async cancel() {
                 if (!this.selectedId) { return; }
@@ -467,31 +481,15 @@
             fmtTime(ts) {
                 return WPCommon.fmtTime(ts);
             },
-            statusLabel(s) {
-                return {
-                    queued: '排队中', running: '运行中', waiting: '等你继续', paused: '已休眠',
-                    closed: '已结束', done: '完成', failed: '失败',
-                    cancelled: '已取消', interrupted: '已中断',
-                }[s] || s || '-';
-            },
-            modeLabel(m) {
-                return {
-                    auto: '自动批准', default: '逐项批准', plan: '只读规划', yolo: '全部放行',
-                }[m] || m || 'auto';
-            },
-            shortArgs(a) {
-                try {
-                    const obj = JSON.parse(a || '{}');
-                    const vals = Object.keys(obj).map(function (k) { return obj[k]; });
-                    return String(vals.join(' · ')).slice(0, 120);
-                } catch (err) {
-                    return String(a || '').slice(0, 120);
-                }
-            },
             downloadUrl(p) {
-                return '/api/tasks/' + encodeURIComponent(this.selectedId)
-                    + '/download?path=' + encodeURIComponent(p);
+                return '/api/tasks/' + encodeURIComponent(this.selectedId) + '/download?path=' + encodeURIComponent(p);
             },
         },
-    }).mount('#app');
+    });
+app.mixin(WPTasksOverview.mixin());
+app.mixin(WPTasksOverview.tree.mixin());   // 批次 U2：指挥树（tasks-tree.js）
+app.mixin(WPTasksOverview.events.mixin());   // 批次 U3：事件流说人话（tasks-events.js）
+app.mixin(WPTasksResult.mixin());   // 批次 G1：结果卡片与行内标签（tasks-result.js）
+app.mixin(WPWorkItems.mixin());   // 批次 G2：工作区面板（workitems.js）
+app.mount('#app');
 })();

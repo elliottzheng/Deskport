@@ -83,6 +83,16 @@ def isolatedConfig():
     mp.setenv('APPDATA', str(root))
     _resetConfigCache()
     yield
+    # 批次 L L6：create_app 会取状态目录所有者锁（持锁句柄开在会话的 tmp
+    # 状态目录里）——先放掉再删目录，否则 rmtree 被占用文件挡住
+    try:
+        import modules.state_owner as stateOwner
+        if stateOwner._ownerHandle is not None:
+            stateOwner._ownerHandle.close()
+            stateOwner._ownerHandle = None
+            stateOwner._mode = ''
+    except Exception:
+        pass
     mp.undo()
     _resetConfigCache()
     shutil.rmtree(root, ignore_errors=True)
@@ -94,3 +104,34 @@ def freshConfigCache():
     _resetConfigCache()
     yield
     _resetConfigCache()
+
+
+@pytest.fixture(scope='session', autouse=True)
+def idleTaskHealthLoop():
+    """批次 L：task_health 的巡检线程在测试进程里空转。
+
+    线上它 5s 一跳（重启 60s 后自动续接 + 工具卡住报警）；测试里这些状态
+    都由用例自己搭、直接调 task_health.tick()，后台那一跳只会和用例竞态
+    （如重启回归集造的 paused 任务被它中途续掉）。把线程目标换成空操作，
+    tick 本体保持可调。
+    """
+    import modules.task_health as taskHealth
+    original = taskHealth._loop
+    taskHealth._loop = lambda: None
+    yield
+    taskHealth._loop = original
+
+
+@pytest.fixture(scope='session', autouse=True)
+def idleWorkitemWatchLoop():
+    """批次 G2：workitem_watch 的后台巡检在测试进程里空转。
+
+    app.py 模块级就 create_app()——巡检线程在收集期（任何 fixture 之前）
+    已经起来了，改 _loop 拦不住已经开跑的线程；把每跳前的开关关掉，线程
+    空转。线上 2s 一跳（起不来重试/卡死/提前收工/上下文换手）；测试里这些
+    状态由用例自搭、显式调 workitem_watch.sweep() 驱动（开关不影响直调）。
+    """
+    import modules.workitem_watch as workitemWatch
+    workitemWatch._enabled = False
+    yield
+    workitemWatch._enabled = True

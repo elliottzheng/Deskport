@@ -1,25 +1,29 @@
 """通用驱动：把同目录的 deskport.py 当方向盘，指挥一个托管智能体干活。
 
-    driver.py <别名> [y|n|c|m [档位]|new <会话id|w:工作线id> [档位]|st]
+    driver.py -h | --help                                 打印本用法（不碰任何状态）
+    driver.py inbox [--wait 秒]                           收件箱模式（外部主管）：长轮询，有新条目
+                                                          一行一条打印（[kind] 摘要，≤200 字）后退出 0；
+                                                          超时无新条目打 IDLE 退出 2；令牌未绑主管一句话
+                                                          报错退出 2；游标存 run/_inbox/state.json，打印完
+                                                          自动 ack
+    driver.py <别名> new <会话id|w:工作线id|-> [档位]      先 new 建任务，之后才能 y/n/c/m/st
+    driver.py <别名> [y|n|c|m [档位]|st|resume]
 
-    (无参数)   接着跑，等这一轮结束（结论写 run/<别名>/last.txt 一行）
+    new <目标>  用 msg.txt 建任务：`new <kimi会话id>` 接手已有会话（fork 副本），
+               `new w:<工作线id>` 在工作线上派活，`new -` 直接新开任务；
+               run/<别名>/title.txt 存在时作为 title 传给建任务（不拼进提示词）
+    (别名后无命令)  接着跑，等这一轮结束（结论写 run/<别名>/last.txt 一行）
     y | n      批准 / 拒绝卡住的审批，然后接着跑
     c          压缩执行方上下文（/compact，一批活之间用）
     m [档位]   把 run/<别名>/msg.txt 发出去；换档位时同时切换预授权
-    new <目标> 用 msg.txt 建任务：`new <kimi会话id>` 接手已有会话（fork 副本），
-               `new w:<工作线id>` 在工作线上派活，`new -` 直接新开任务
     st         只打印状态（任务号、档位、上下文用量、有没有挂着的审批）
+    resume     任务被部署打成 paused/interrupted 时：先发一条续接消息（默认文案，
+               可用 run/<别名>/msg.txt 覆盖），再照常驱动
 
-边界全在 driver.json（脚本同目录，或 `DRIVER_CONFIG` 指过去）：
-
-    {
-      "root": "E:/proj/app",                  // 可写根目录（执行方的边界）
-      "danger": "rm\\s+-rf|\\\\bkill\\\\b|deploy",      // 命中即停下等人
-      "safe": "^\\\\s*(ls|cat|grep|git (status|diff|log))\\\\b",  // 只读/测试，自动放行
-      "profiles": {"dev": "<正则>", "commit": "<正则>"},   // 规格预授权档位（§8c）
-      "extraWritable": ["/tmp/build/"], "defaultProfile": "dev",
-      "serverPolicy": true                    // 同时给服务端 policy 兜一层
-    }
+边界全在 driver.json（脚本同目录，或 DRIVER_CONFIG 指过去）：必填 root/danger/safe，
+可选 profiles/extraWritable/defaultProfile/serverPolicy——字段与最小样例见同目录
+driver.example.json；缺文件、缺键都会一句话报错并指向它。（inbox 模式不驱动任务，
+不需要 driver.json。）
 
 「响应即上下文」的落实：stdout 只出一行结论（DONE / STOP / TIMEOUT），全量流水进
 run/<别名>/log；命令本身短到两个字符（`driver.py a y`）。
@@ -29,8 +33,11 @@ import http.client
 import json
 import os
 import re
+import ssl
 import sys
 import time
+import traceback
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,6 +46,36 @@ import deskport  # noqa: E402  同目录的单文件客户端
 HERE = Path(__file__).resolve().parent
 RUN_ROOT = Path(os.environ.get("DRIVER_RUN_DIR") or (HERE / "run"))
 TIMEOUT, MAX_TEXT, STALL_SEC = 900, 3000, 600   # 一轮等待上限 / 结论正文上限 / 无事件判停
+EXAMPLE = HERE / "driver.example.json"          # 最小样例：driver.json 缺什么照它补
+REQUIRED_KEYS = ("root", "danger", "safe")      # 边界三件套：去哪写、什么停、什么放
+INBOX_DIR = RUN_ROOT / "_inbox"                 # 收件箱模式的游标（不占别名目录）
+INBOX_WAIT, INBOX_MAX_TEXT = 60, 200            # 长轮询缺省秒 / 条目摘要上限
+RESUME_TEXT = ('中枢重启过，这一轮被打断了；先确认做到哪一步，再从断点继续，'
+               '边界与交付要求不变')             # resume 的默认续接文案（msg.txt 可覆盖）
+
+
+class DriverError(Exception):
+    """可预期的失败：一句人话 + 退出码 2，不吐栈（要栈用 DRIVER_DEBUG=1）。"""
+
+
+# 证书错误口径与 deskport.py 的 CLI 一致（批次 M）：同一句话术，不造第二套
+CERT_HINT = """driver: 对端证书校验失败（自签证书：常见于反向代理 / frp 隧道的 HTTPS 入口）
+  三种处理，按可信度从高到低：
+   1) 把对端证书存成文件，用 connect(cafile="/path/to/cert.pem") 或 .deskport.json 的 "cafile" 键
+   2) 确认对端就是你要连的那台 Deskport 时，在 .deskport.json 加 "insecure": true
+   3) 同一网段可改用内网明文地址（http://<host>:6789，不需要证书）
+  注意：只有在你确认连的是自己的 Deskport 时才可用 2) 或 3)。"""
+
+
+def _fail(run, msg, code=2, err=None):
+    """一句人话收尾（run 建好了进 last.txt/log）；DRIVER_DEBUG=1 才打栈到 stderr。"""
+    if run is None:
+        print(msg, flush=True)
+    else:
+        run.say(msg)
+    if err is not None and os.environ.get("DRIVER_DEBUG"):
+        traceback.print_exc()
+    return code
 
 
 # ---------------------------------------------------------------- 边界判定
@@ -153,13 +190,14 @@ class Policy:
 # ---------------------------------------------------------------- 别名目录
 
 class Run:
-    """一个别名一个目录：state.json / msg.txt / last.txt / log / pending.json。"""
+    """一个别名一个目录：state.json / msg.txt / title.txt / last.txt / log / pending.json。"""
 
     def __init__(self, alias: str):
         self.dir = RUN_ROOT / alias
         self.dir.mkdir(parents=True, exist_ok=True)
         self.state = self.dir / "state.json"
         self.msg = self.dir / "msg.txt"
+        self.title = self.dir / "title.txt"
         self.last = self.dir / "last.txt"
         self.logf = self.dir / "log"
         self.pending = self.dir / "pending.json"
@@ -167,9 +205,14 @@ class Run:
 
     def load(self) -> dict:
         try:
-            return json.loads(self.state.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw = self.state.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
+        try:
+            return json.loads(raw)
+        except ValueError as err:
+            raise DriverError("%s 损坏（%s）；删掉它即可重置这个别名"
+                              % (self.state, err)) from None
 
     def save(self, st: dict) -> None:
         self.state.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
@@ -197,6 +240,87 @@ class Run:
 
 # ---------------------------------------------------------------- 驱动循环
 
+def _inboxState() -> dict:
+    """收件箱模式的游标（run/_inbox/state.json）；损坏/缺失都从 0 开始。"""
+    try:
+        return json.loads((INBOX_DIR / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _inboxSave(seq: int) -> None:
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    (INBOX_DIR / "state.json").write_text(
+        json.dumps({"seq": int(seq)}), encoding="utf-8")
+
+
+def _inboxWait(args) -> int:
+    """解析 --wait 秒（缺省 60，夹到 1–600）；不认识的参数一句话报错。"""
+    wait, i = INBOX_WAIT, 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--wait":
+            if i + 1 >= len(args):
+                raise DriverError("--wait 要跟秒数（1–600）")
+            raw, i = args[i + 1], i + 2
+        elif arg.startswith("--wait="):
+            raw, i = arg.split("=", 1)[1], i + 1
+        else:
+            raise DriverError("inbox 只认 --wait 秒（收到 %r）" % arg)
+        try:
+            wait = int(raw)
+        except (TypeError, ValueError):
+            raise DriverError("--wait 要跟秒数（1–600），收到 %r" % raw) from None
+    return max(1, min(600, wait))
+
+
+def inboxMode(args) -> int:
+    """外部主管的收件箱模式：长轮询 → 一行一条 → 自动 ack。
+
+    退出码：0 有新条目；2 超时无新条目（打 IDLE）/ 未绑主管 / 参数与连接问题。
+    """
+    try:
+        wait = _inboxWait(args)
+    except DriverError as err:
+        print("driver: %s" % err, flush=True)
+        return 2
+    try:
+        dp = deskport.connect().dp
+        after = int(_inboxState().get("seq") or 0)
+        entries, lastSeq = dp.inbox(after, wait)
+        if not entries:
+            print("IDLE", flush=True)
+            return 2
+        for e in entries:
+            text = " ".join(str(e.get("text") or "").split())[:INBOX_MAX_TEXT]
+            print("[%s] %s" % (e.get("kind") or "?", text), flush=True)
+        try:
+            dp.inboxAck(lastSeq)                 # 打印完自动 ack，别让下轮重复
+        except Exception as err:                 # ack 失败不甩栈：警告一句，结论照旧
+            print("WARN 已打印但 ack 失败（%s），下次可能重复" % str(err)[:120],
+                  flush=True)
+            return 0
+        _inboxSave(lastSeq)
+        return 0
+    except deskport.DeskportError as err:        # 没绑主管 → 400：一句话说清去哪绑
+        print("driver: %s" % err, flush=True)
+        return 2
+    except urllib.error.URLError as err:         # 证书 / 连不上：同 driver 主链路口径
+        reason = getattr(err, "reason", err)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            print(CERT_HINT, flush=True)
+        else:
+            print("driver: 连不上对端（%s）；查地址、网络与服务是否在跑" % reason,
+                  flush=True)
+        return 2
+    except (OSError, http.client.HTTPException) as err:
+        print("driver: %s: %s" % (type(err).__name__, str(err)[:200]), flush=True)
+        return 2
+    except ValueError as err:                    # 缺地址/缺令牌：deskport 已说清
+        print("driver: %s" % err, flush=True)
+        return 2
+
+
 def _brief(event: dict) -> str:
     a = event.get("args") or {}
     if isinstance(a, str):
@@ -219,9 +343,9 @@ def _retry(fn, run, tries=3):
 
 def drive(dp, task, run: Run, policy: Policy, profile: str,
           queued: list, timeout=TIMEOUT) -> int:
-    """跑到本轮结束 / 需要人判断 / 超时。返回退出码：0 DONE、2 超时、3 停下、4 失效审批。"""
+    """跑到本轮结束 / 需要人判断 / 超时。返回退出码：0 DONE、2 超时、3 停下。"""
     end = time.time() + timeout
-    auto = ghost = 0
+    auto, ghost, lastStale = 0, 0, None
     while time.time() < end:
         r = _retry(lambda: task.until(min(60, max(1, int(end - time.time()) + 1))), run)
         if r is None:                                    # 老中枢没有阻塞 wait：不降级轮询
@@ -235,18 +359,35 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
                 try:
                     task.permission(event.get("requestId"), policy.pick(event, True))
                 except deskport.DeskportError as err:
-                    if err.status == 409:                # 回放出来的旧审批，不能当新请求
-                        run.say("STALE 审批已失效（多半是回放污染），停下待查：%s" % err)
-                        return 4
+                    if err.status == 409:
+                        # 审批已失效（2026-11-14 反馈：误报 STALE 打死 6+ 窗口）。
+                        # 竞态/回放→跳过继续等下一个决策点；反复 409=死标记→停
+                        rid = event.get("requestId")
+                        if rid and rid == lastStale:
+                            run.say("STOP 审批 %s 反复失效：任务盘上留着死标记，"
+                                    "先 driver.py <别名> st 查状态，发消息唤醒或重建" % rid)
+                            return 3
+                        lastStale = rid
+                        info = _retry(task.info, run)
+                        if info.get("status") in ("paused", "interrupted", "failed",
+                                                  "closed", "cancelled"):
+                            run.say("STOP 审批 %s 已失效，任务%s：先 st 查状态，"
+                                    "发消息唤醒或重建" % (rid, info.get("status")))
+                            return 3
+                        run.log("  [skip] 审批 %s 已失效（竞态/回放），继续等下一决策点" % rid)
+                        task.seq = r.get("lastSeq") or task.seq
+                        continue
                     raise
                 auto += 1
+                lastStale = None
                 run.log("  [auto-allow:%s] %s" % (why, _brief(event)))
                 continue
             run.pending.write_text(json.dumps(event, ensure_ascii=False, indent=1), encoding="utf-8")
             run.say("STOP %s | %s | %s" % (why, event.get("name"), _brief(event)))
             return 3
-        if st == "paused":                               # 中枢重启等原因暂停：不是超时也不是完成
-            run.say("STOP paused 任务被暂停，先查状态再续（driver.py <别名> st）")
+        if st == "paused":                               # 部署/重启把在飞任务打成 paused：不是失败
+            run.say("STOP paused 任务被暂停（web 重启会这样）；"
+                    "driver.py <别名> resume 发续接消息再跑")
             return 3
         if st == "running":
             info = _retry(task.info, run)
@@ -279,9 +420,12 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
         txt = r.get("finalText") or ""
         run.log("[assistant] " + txt)
         cut = "…(+%d 字，见 log)" % (len(txt) - MAX_TEXT) if len(txt) > MAX_TEXT else ""
-        run.say("DONE %s tools=%s server-auto=%s local-auto=%d errors=%s\n%s%s"
-                % (st, stats.get("tools"), stats.get("autoApproved"), auto,
-                   stats.get("errors"), txt[:MAX_TEXT], cut))
+        # 过期提醒只是warning后缀（2026-11-14 用户明确：不影响任务）：折进DONE行，不拦截、不改退出码
+        stale = (" ｜技能包过期(%s→%s)，重拉 skill.zip" % (s["local"], s["current"])
+                 if (s := dp.skillStale) else "")
+        run.say("DONE %s tools=%s server-auto=%s server-denied=%s local-auto=%d errors=%s%s\n%s%s"
+                % (st, stats.get("tools"), stats.get("autoApproved"), stats.get("autoDenied", 0),
+                   auto, stats.get("errors"), stale, txt[:MAX_TEXT], cut))
         return 0
     run.say("TIMEOUT 任务仍在跑")
     return 2
@@ -290,35 +434,61 @@ def drive(dp, task, run: Run, policy: Policy, profile: str,
 # ---------------------------------------------------------------- 入口
 
 def loadConfig() -> dict:
+    """边界配置：缺失/损坏/缺键/坏正则都是 DriverError——一句话说清缺什么，指向 example。"""
     path = Path(os.environ.get("DRIVER_CONFIG") or HERE / "driver.json")
-    cfg = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    cfg.setdefault("root", os.getcwd())
+    if not path.exists():
+        raise DriverError("找不到边界配置 %s；照同目录 %s 抄一份 "
+                          "（或设 DRIVER_CONFIG 指过去）" % (path, EXAMPLE.name))
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as err:
+        raise DriverError("边界配置 %s 损坏（%s）；照同目录 %s 重写"
+                          % (path, err, EXAMPLE.name)) from None
+    if not isinstance(cfg, dict):
+        raise DriverError("边界配置 %s 不是 JSON 对象；照同目录 %s 重写"
+                          % (path, EXAMPLE.name))
+    missing = [k for k in REQUIRED_KEYS if not cfg.get(k)]
+    if missing:
+        raise DriverError("边界配置 %s 缺键 %s；字段见同目录 %s"
+                          % (path, "、".join(missing), EXAMPLE.name))
+    try:
+        re.compile(cfg["danger"])
+        re.compile(cfg["safe"])
+    except re.error as err:
+        raise DriverError("边界配置 %s 的 danger/safe 不是合法正则（%s）；"
+                          "改法见同目录 %s" % (path, err, EXAMPLE.name)) from None
     return cfg
 
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv:
-        print(__doc__.strip().splitlines()[0])
-        print("用法: driver.py <别名> [y|n|c|m [档位]|new <会话id|w:工作线id> [档位]|st]", flush=True)
-        return 1
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip(), flush=True)
+        return 0
+    if argv[0] == "inbox":                              # 收件箱模式：无别名、不读 driver.json
+        return inboxMode(argv[1:])
     alias, rest = argv[0], argv[1:]
     cmd = rest[0] if rest else ""
-    cfg = loadConfig()
-    policy = Policy(cfg)
-    run = Run(alias)
-    if run.busy():
-        print("BUSY 别名已有驱动在运行，未启动第二个", flush=True)
-        return 6
-    run.lock.write_text(str(os.getpid()), encoding="utf-8")
-    run.last.write_text("", encoding="utf-8")
-    st = run.load()
-    queued = st.pop("queued", []) or []
-    if st.get("root"):
-        cfg["root"] = st["root"]
-        policy = Policy(cfg)
-    profile = st.get("profile") or cfg.get("defaultProfile") or "dev"
+    run = None
     try:
+        cfg = loadConfig()
+        policy = Policy(cfg)
+        run = Run(alias)
+        if run.busy():
+            print("BUSY 别名已有驱动在运行，未启动第二个", flush=True)
+            return 6
+        run.lock.write_text(str(os.getpid()), encoding="utf-8")
+        run.last.write_text("", encoding="utf-8")
+        st = run.load()
+        queued = st.pop("queued", []) or []
+        if st.get("root"):
+            cfg["root"] = st["root"]
+            policy = Policy(cfg)
+        profile = st.get("profile") or cfg.get("defaultProfile") or "dev"
+        if cmd != "new" and not st.get("task"):     # 判空前置：新别名不走任何网络
+            run.say("STOP 别名 %s 还没有任务，先 driver.py %s new <会话id|w:工作线id|->"
+                    % (alias, alias))
+            return 3
         dp = deskport.connect().dp
         text = None
         if cmd == "new":
@@ -326,6 +496,10 @@ def main(argv=None) -> int:
             profile = rest[2] if len(rest) > 2 else profile
             text = run.msg.read_text(encoding="utf-8")
             opts = {"policy": policy.serverPolicy() or None}
+            if run.title.exists():                     # 标题走 title 字段（不拼进提示词）
+                title = run.title.read_text(encoding="utf-8").strip()
+                if title:
+                    opts["title"] = title
             if target.startswith("w:"):
                 routed, task = dp.workline(target[2:]).send(text, **opts)
                 run.log("  [routed] %s" % routed)
@@ -337,9 +511,6 @@ def main(argv=None) -> int:
             run.say("NEW %s" % task.id)
         else:
             task = dp.task(st["task"])
-            if not st.get("task"):
-                run.say("STOP 别名 %s 还没有任务，先 driver.py %s new <会话id|w:工作线id|->" % (alias, alias))
-                return 3
             if cmd == "st":
                 info = _retry(task.info, run)
                 q = "有挂起审批" if info.get("pendingPermission") or run.pending.exists() else "无挂起审批"
@@ -347,7 +518,15 @@ def main(argv=None) -> int:
                 run.say("ST %s profile=%s %s context=%s/%s" % (info.get("status"), profile, q,
                         ctx.get("used"), ctx.get("max")))
                 return 0
-            if cmd in ("y", "n"):
+            if cmd == "resume":
+                info = _retry(task.info, run)
+                if info.get("status") in ("paused", "interrupted"):
+                    text = (run.msg.read_text(encoding="utf-8")
+                            if run.msg.exists() else RESUME_TEXT)
+                    _retry(lambda: task.message(text), run)
+                    run.log("  [resume] %s → 已发续接消息" % info.get("status"))
+                task.seq = 0                           # 从头跟这一轮
+            elif cmd in ("y", "n"):
                 if run.pending.exists():
                     event = json.loads(run.pending.read_text(encoding="utf-8"))
                     try:
@@ -386,14 +565,32 @@ def main(argv=None) -> int:
         st["queued"] = list(queued)                 # 没补发出去的落盘，下次接着补
         run.save(st)
         return rc
+    except DriverError as err:                 # 可预期失败：一句人话 + exit 2，无栈
+        return _fail(run, "driver: %s" % err, 2, err)
+    except urllib.error.URLError as err:       # 首次连接最常见：证书 / 连不上
+        reason = getattr(err, "reason", err)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return _fail(run, CERT_HINT, 2, err)
+        if isinstance(reason, ssl.SSLError):
+            return _fail(run, "driver: 与对端的 TLS 连接失败（%s）；证书不受信任的处理"
+                          "同证书校验失败，见 %s 的 _说明" % (reason, EXAMPLE.name), 2, err)
+        if isinstance(reason, ConnectionError):
+            return _fail(run, "driver: 连不上对端（%s）；查地址、网络与服务是否在跑" % reason,
+                         2, err)
+        return _fail(run, "ERROR URLError: %s" % str(err)[:300], 1, err)
     except (OSError, http.client.HTTPException, deskport.DeskportError) as err:
-        run.say("ERROR %s: %s" % (type(err).__name__, str(err)[:300]))
-        return 1
+        return _fail(run, "ERROR %s: %s" % (type(err).__name__, str(err)[:300]), 1, err)
+    except ValueError as err:                  # 缺令牌/缺地址/prompt 超长：deskport 已说清
+        return _fail(run, "driver: %s" % err, 2, err)
+    except Exception as err:                   # 顶层兜底：一句人话，栈只在 DRIVER_DEBUG=1
+        head = (str(err).strip().splitlines() or ["无描述"])[0]
+        return _fail(run, "driver: 内部错误 %s: %s" % (type(err).__name__, head[:300]), 2, err)
     finally:
-        try:
-            run.lock.unlink()
-        except OSError:
-            pass
+        if run is not None:
+            try:
+                run.lock.unlink()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

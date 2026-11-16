@@ -28,7 +28,8 @@
     body.term-focus #app-shell { display: none; }   /* 应用头(远控平台/退出)隐藏, 退出走侧栏脚部 */
     #bar { min-height: 44px; }
     /* 单行只留 侧栏开关 与 状态, 其余全部收进侧栏/选择器 */
-    #bar > *:not(#sidebar-toggle):not(#status):not(#session-switch) { display: none !important; }
+    /* SFTP 例外：手机上传/取文件是最常用的动作之一，别人收进侧栏时它必须留在顶栏 */
+    #bar > *:not(#sidebar-toggle):not(#sftp-toggle):not(#status):not(#session-switch) { display: none !important; }
     #bar #sidebar-toggle { width: 40px; height: 40px; }
     #status { margin-left: auto; padding-right: 12px; font-size: 12px; }
     /* 侧栏脚部: 工具 + 站内导航 + 退出 */

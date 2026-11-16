@@ -1,10 +1,8 @@
 // 反馈面板：右下角悬浮按钮 + 半屏浮层（截图标注 / 一句话 / 联系方式）+「我的反馈」。
 // 只在浮层里操作，绝不路由跳转（§3.2）；截图与标注就是最终上传的内容（所见即所传）。
+// 「我的反馈」页签的内容在 feedback-mine.js（批次 F1：按身份过滤 + 未读红点 +
+// 评论线程 + 确认/重开）；本文件只管采集与画布。
 window.WPFeedbackPanel = (function () {
-    var STATUS_TEXT = {
-        submitted: '已提交', acknowledged: '已收到', processing: '处理中',
-        resolved: '已解决', rejected: '未采纳', user_confirmed: '已确认'
-    };
     var root = null;
     var panel = null;
     var maskEl = null;
@@ -15,7 +13,6 @@ window.WPFeedbackPanel = (function () {
     var hintEl = null;
     var submitBtn = null;
     var shotTip = null;
-    var mineList = null;
     var tabs = {};
     var baseImage = null;
     var ops = [];
@@ -31,10 +28,28 @@ window.WPFeedbackPanel = (function () {
         return node;
     }
 
-    // 底部有工具条（文件多选、收件箱操作栏、终端虚拟键、控制台 FAB）时把按钮抬上去，别压住别人的按钮
+    // 底部有工具条（文件多选、收件箱操作栏、终端控制键、控制台 FAB）时把按钮抬上去，别压住别人的按钮
     function placeFab() {
-        var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), .term-vkeys:not([hidden]), .ctl-fab');
+        // 控制键条的容器是 #control-keys（旧选择器 .term-vkeys 根本不存在，等于没抬过——
+        // 手机反馈「反馈按钮挡住了到底部的按钮」就是它压在控制键条上）
+        var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), #control-keys:not(.hidden), .ctl-fab');
+        // 壳（/app）里终端与 SSH 是 iframe：控制键条在 iframe 里面，外层选择器看不见它，
+        // 但浮按钮画在壳文档上、永远盖在 iframe 之上，所以按"当前视图"判断
+        var frame = document.querySelector('iframe');
+        var src = frame ? (frame.getAttribute('src') || '') : '';
+        if (/\/terminal|\/ssh/.test(src)) { raise = raise || document.body; }
         document.body.classList.toggle('fb-raise', !!raise);
+        // 全屏浮层（移动端 SFTP 面板铺满整屏）打开时直接收起：那时抬起来也会压在
+        // 浮层底部的操作行（新建/上传/删除）上，用户报过"挡住到底部的按钮"
+        var covered = false;
+        ['sftp-panel'].forEach(function (id) {
+            var node = document.getElementById(id);
+            if (node && node.offsetParent !== null && getComputedStyle(node).display !== 'none') {
+                covered = true;
+            }
+        });
+        if (document.querySelector('.more-sheet:not([hidden])')) { covered = true; }
+        document.body.classList.toggle('fb-hide', covered);
     }
 
     function buildFab() {
@@ -158,8 +173,7 @@ window.WPFeedbackPanel = (function () {
 
         var mine = el('div', 'fb-body fb-mine');
         mine.hidden = true;
-        mineList = el('div', 'fb-mine-list');
-        mine.appendChild(mineList);
+        mine.appendChild(el('div', 'fb-mine-list'));   // 内容由 WPFeedbackMine 填
 
         panel.appendChild(head);
         panel.appendChild(write);
@@ -283,57 +297,13 @@ window.WPFeedbackPanel = (function () {
         });
     }
 
-    // ---- 我的反馈（§7.2 必做）----
-    function statusBadge(status) {
-        var span = el('span', 'fb-badge', STATUS_TEXT[status] || status);
-        span.setAttribute('data-status', status || 'submitted');
-        return span;
-    }
-
-    function renderMine(items) {
-        mineList.textContent = '';
-        if (!items.length) {
-            mineList.appendChild(el('div', 'fb-empty', '还没有提交过反馈。'));
-            return;
-        }
-        items.forEach(function (item) {
-            var card = el('div', 'fb-card');
-            var top = el('div', 'fb-card-top');
-            top.appendChild(statusBadge(item.status));
-            top.appendChild(el('span', 'fb-card-route', item.route || ''));
-            top.appendChild(el('span', 'fb-card-time', (item.submitted_at || '').slice(0, 16).replace('T', ' ')));
-            card.appendChild(top);
-            card.appendChild(el('div', 'fb-card-msg', item.message || '（无文字）'));
-            if (item.status_note) {
-                card.appendChild(el('div', 'fb-card-note', '处理说明：' + item.status_note));
-            }
-            (item.attachments || []).forEach(function (att) {
-                var img = document.createElement('img');
-                img.className = 'fb-card-shot';
-                img.loading = 'lazy';
-                img.src = att.url;
-                img.alt = '截图';
-                card.appendChild(img);
-            });
-            mineList.appendChild(card);
-        });
-    }
-
-    function loadMine() {
-        mineList.textContent = '';
-        mineList.appendChild(el('div', 'fb-empty', '读取中…'));
-        fetch('/api/feedback?size=20', { credentials: 'same-origin' })
-            .then(function (res) { return res.ok ? res.json() : Promise.reject(res.status); })
-            .then(function (data) { renderMine((data && data.items) || []); })
-            .catch(function () { renderMine([]); });
-    }
-
+    // ---- 页签：写反馈 / 我的反馈（后者内容在 feedback-mine.js）----
     function switchTab(name) {
         tabs.write.classList.toggle('is-on', name === 'write');
         tabs.mine.classList.toggle('is-on', name === 'mine');
         panel.querySelector('.fb-write').hidden = name !== 'write';
         panel.querySelector('.fb-mine').hidden = name !== 'mine';
-        if (name === 'mine') { loadMine(); }
+        if (name === 'mine' && window.WPFeedbackMine) { window.WPFeedbackMine.show(); }
     }
 
     function open(tab) {
@@ -407,6 +377,7 @@ window.WPFeedbackPanel = (function () {
         document.body.appendChild(root);
         // 点一下就可能切换出底部工具条（多选模式等）：跟着重排，不做轮询
         document.addEventListener('pointerdown', function () { setTimeout(placeFab, 0); }, true);
+        document.addEventListener('click', function () { setTimeout(placeFab, 0); }, true);
         window.addEventListener('resize', placeFab);
         window.addEventListener('orientationchange', placeFab);
         setTimeout(placeFab, 400);

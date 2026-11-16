@@ -5,11 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#F4F7FB">
 <link rel="icon" href="data:,">
-<title>任务 — Deskport</title>
+<title>指挥台 — Deskport</title>
 <link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/tasks.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/tasks-result.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/workitems.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/feedback.css?v=__BUILD__">
 </head>
 <body>
@@ -18,115 +20,245 @@
 <main class="container tasks-page" id="app" v-cloak>
     <div class="page-head">
         <div>
-            <h1 class="page-title">任务</h1>
-            <p class="page-sub">给 Kimi 一句话，选上文件，回来看结果。</p>
+            <h1 class="page-title">指挥台</h1>
+            <p class="page-sub">只看主管上交的事；派活、发话、建主管都在右上角。</p>
         </div>
+        <button type="button" class="btn btn-primary cmd-new-btn" @click="openNewSheet()">新建</button>
     </div>
 
     <div class="tasks-layout" :class="{ 'show-detail': !!selectedId }">
         <section class="tasks-main">
-            <div class="task-composer">
-                <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
-                          placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
-                          @keydown.ctrl.enter="create"></textarea>
-                <div class="task-files" v-if="isLocalRun">
-                    <span class="task-file" v-for="p in paths" :key="p">
-                        {{ baseName(p) }}
-                        <button type="button" title="移除" @click="removePath(p)">&times;</button>
-                    </span>
-                    <button type="button" class="btn btn-secondary" @click="openPicker">从收件箱选择</button>
-                    <button type="button" class="btn btn-ghost" @click="togglePathMenu">添加路径</button>
+            <p class="load-error cmd-load-error" v-if="overviewError">
+                没加载出来：{{ overviewError }}
+                <button type="button" class="btn btn-secondary" @click="loadOverview">重试</button>
+            </p>
+            <p class="empty-tip" v-if="!overview && overviewState !== 'error'">加载中…</p>
+
+            <section class="card cmd-pending" v-if="overview && pendingWithPath.length">
+                <div class="card-title">等你处理<span class="title-side">{{ pendingWithPath.length }} 件</span></div>
+                <div class="cmd-pending-row" v-for="p in pendingWithPath" :key="p.key">
+                    <span class="cmd-kind" :class="'cmd-kind-' + p.kind">{{ p.kindText }}</span>
+                    <div class="cmd-pending-main" @click="locatePending(p)"
+                         :title="p.path ? '在指挥树里定位：' + p.path : ''">
+                        <div class="cmd-pending-title">
+                            <span class="cmd-pending-task" v-if="p.taskTitle">{{ p.taskTitle }}</span>
+                            <span class="cmd-pending-title-text" v-else>{{ p.title }}</span>
+                            <span class="cmd-pending-lead" v-if="p.showLead"> · {{ p.leadName }}</span>
+                        </div>
+                        <div class="cmd-pending-sub" v-if="p.detail">{{ p.detail }}</div>
+                        <div class="cmd-pending-purpose" v-if="p.purpose">用途：{{ p.purpose }}</div>
+                        <div class="cmd-pending-path" v-if="p.path">在树上：{{ p.path }}</div>
+                        <p class="cmd-pending-hint" v-if="p.unregistered">{{ p.registerHint }}</p>
+                    </div>
+                    <div class="cmd-pending-actions">
+                        <template v-if="p.kind === 'permission'">
+                            <button type="button" class="btn btn-secondary"
+                                    v-for="o in p.options" :key="o.optionId"
+                                    @click="resolvePendingPermission(p, o)">
+                                {{ o.name || o.kind }}
+                            </button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="resolvePendingPermission(p, null)">拒绝</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="openTask(p.taskId, p)">查看</button>
+                        </template>
+                        <template v-else-if="p.kind === 'report'">
+                            <button type="button" class="btn btn-secondary"
+                                    @click="markReportRead(p)">已读</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="speakToLead(p.leadId)">回复</button>
+                        </template>
+                        <template v-else-if="p.kind === 'workitem'">
+                            <button type="button" class="btn btn-secondary"
+                                    @click="wiDecidePending(p, 'continue')">继续</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="wiDecidePending(p, 'rework')">返工</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="wiDecidePending(p, 'integrate')">集成</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="wiDecidePending(p, 'cancel')">取消</button>
+                        </template>
+                        <template v-else>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="openTask(p.taskId, p)">查看</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="closeProblemTask(p)">关闭</button>
+                        </template>
+                    </div>
+                    <p class="cmd-row-error" v-if="rowErrors[p.key]">{{ rowErrors[p.key] }}</p>
                 </div>
-                <div class="task-path-menu" v-if="pathMenuOpen">
-                    <div class="task-path-sec" v-if="quickDirs.length">
-                        <div class="task-path-title">快速访问</div>
-                        <button type="button" class="task-path-item" v-for="d in quickDirs" :key="d.path"
-                                :class="{ added: paths.indexOf(d.path) >= 0 }" @click="addQuick(d.path)">
-                            <span class="task-path-tag">{{ d.tag }}</span>
-                            <span class="task-path-name">{{ d.label }}</span>
-                            <span class="task-path-full">{{ d.path }}</span>
-                        </button>
-                    </div>
-                    <div class="task-path-sec" v-if="recentPaths.length">
-                        <div class="task-path-title">最近用过</div>
-                        <button type="button" class="task-path-item" v-for="p in recentPaths" :key="p"
-                                :class="{ added: paths.indexOf(p) >= 0 }" @click="addQuick(p)">
-                            <span class="task-path-tag">最近</span>
-                            <span class="task-path-name">{{ baseName(p) }}</span>
-                            <span class="task-path-full">{{ p }}</span>
-                        </button>
-                    </div>
-                    <div class="task-path-sec">
-                        <div class="task-path-title">手动输入</div>
-                        <div class="task-path-add">
-                            <input class="input" v-model.trim="pathInput" spellcheck="false"
-                                   placeholder="C:\data\... 文件或文件夹" @keydown.enter="addPath">
-                            <button type="button" class="btn btn-secondary" @click="addPath">添加</button>
+            </section>
+
+            <section class="cmd-workitems">
+                <div class="cmd-sec-title">工作项<span class="cmd-sec-side">开发类活：平台推着走，只在要判断时叫你</span></div>
+                <p class="load-error cmd-load-error" v-if="workItemsError && !workItems.length">
+                    没加载出来：{{ workItemsError }}
+                    <button type="button" class="btn btn-secondary" @click="loadWorkItems">重试</button>
+                </p>
+                <p class="empty-tip" v-if="!workItemsError && !workItems.length">
+                    还没有工作项——派开发类活用右上角「新建」或技能包
+                    <code>deskport.py wi new …</code>。
+                </p>
+                <div class="cmd-wi-rows">
+                    <div class="cmd-wi" v-for="row in workItemRows" :key="row.id"
+                         :class="{open: row.open, judging: row.state === 'needs_judgment'}">
+                        <button type="button" class="cmd-wi-caret" :class="{open: row.open}"
+                                :title="row.open ? '折叠' : '展开名下任务'"
+                                :aria-label="row.open ? '折叠' : '展开名下任务'"
+                                @click.stop="toggleWorkItem(row)">&#9662;</button>
+                        <div class="cmd-wi-main" @click="toggleWorkItem(row)">
+                            <div class="cmd-wi-line1">
+                                <span class="cmd-wi-title">{{ row.title }}</span>
+                                <span class="cmd-badge" :class="'cmd-badge-' + wiStateClass(row.state)">{{ row.stateText }}</span>
+                                <span class="cmd-wi-attempt" :title="'第几次实施交付'">{{ row.attemptText }}</span>
+                                <span class="cmd-badge cmd-badge-result" v-if="row.verdictText"
+                                      :title="row.lastImplSummary">{{ row.verdictText }}</span>
+                            </div>
+                            <div class="cmd-wi-line2">
+                                <span class="cmd-wi-stages" :title="'阶段：' + row.stageText">
+                                    <span class="cmd-wi-stage" v-for="s in row.stageBar" :key="s.key"
+                                          :class="'is-' + s.state">{{ s.label }}</span>
+                                </span>
+                                <span class="cmd-wi-commit" v-if="row.lastImplCommit">{{ row.lastImplCommit }}</span>
+                                <span class="cmd-wi-time" v-if="row.updatedText">{{ row.updatedText }}</span>
+                            </div>
+                            <div class="cmd-wi-line2" v-if="row.queueHint">
+                                <span class="cmd-wi-queue">{{ row.queueHint }}</span>
+                            </div>
+                            <div class="cmd-wi-line2" v-if="row.state === 'needs_judgment'">
+                                <span class="cmd-wi-reason">待判断：{{ row.judgmentReason }}</span>
+                            </div>
+                            <div class="cmd-wi-line2" v-if="row.integration && row.integration.commit">
+                                <span class="cmd-wi-merged">已合并 {{ row.integration.commit.slice(0, 12) }}</span>
+                            </div>
+                        </div>
+                        <div class="cmd-wi-actions" v-if="row.state === 'needs_judgment'" @click.stop>
+                            <button type="button" class="btn btn-secondary"
+                                    :disabled="row.busy" @click="wiDecide(row, 'continue')">继续</button>
+                            <button type="button" class="btn btn-ghost"
+                                    :disabled="row.busy" @click="wiDecide(row, 'rework')">返工</button>
+                            <button type="button" class="btn btn-ghost"
+                                    :disabled="row.busy" @click="wiDecide(row, 'integrate')">集成</button>
+                            <button type="button" class="btn btn-ghost"
+                                    :disabled="row.busy" @click="wiCancel(row)">取消</button>
+                        </div>
+                        <div class="cmd-wi-detail" v-if="row.open">
+                            <p class="cmd-wi-detail-empty" v-if="!row.tasks.length">名下任务加载中…</p>
+                            <div class="cmd-wi-task" v-for="t in row.tasks" :key="t.id"
+                                 @click="openTask(t.id)">
+                                <span class="cmd-dot" :class="'task-dot is-' + t.status"></span>
+                                <span class="cmd-wi-task-name">{{ t.title || t.id }}</span>
+                                <span class="cmd-wi-task-sub">{{ wiTaskStatusText(t.status) }}
+                                    <template v-if="t.expects"> · {{ t.expects }}</template>
+                                    <template v-if="t.resultLabel"> · {{ t.resultLabel }}</template>
+                                </span>
+                            </div>
+                            <p class="cmd-wi-log" v-if="row.detail && row.detail.integrateLogTail">
+                                <details>
+                                    <summary>集成日志（尾部）</summary>
+                                    <pre>{{ row.detail.integrateLogTail }}</pre>
+                                </details>
+                            </p>
                         </div>
                     </div>
                 </div>
-                <div class="task-options">
-                    <label class="task-mode">执行点
-                        <select class="input task-where" v-model="runWhere">
-                            <option value="local">本机</option>
-                            <option v-for="n in remoteNodes" :key="n.name" :value="n.name">{{ n.name }}</option>
-                        </select>
-                    </label>
-                    <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
-                           spellcheck="false" :placeholder="remoteCwdPlaceholder">
-                    <template v-if="isLocalRun">
-                        <label class="task-mode" for="task-local-cwd">工作目录</label>
-                        <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
-                               spellcheck="false" list="task-cwd-roots"
-                               :placeholder="cwdRoots.length ? cwdRoots[0] : '绝对路径，如 C:\Users\你的用户名\Documents'">
-                        <datalist id="task-cwd-roots">
-                            <option v-for="d in cwdRoots" :key="d" :value="d"></option>
-                        </datalist>
-                    </template>
-                    <label class="task-mode">模式
-                        <select class="input" v-model="mode">
-                            <option value="auto">自动批准（推荐）</option>
-                            <option value="default">逐项批准</option>
-                            <option value="plan">只读规划</option>
-                            <option value="yolo">全部放行</option>
-                        </select>
-                    </label>
-                    <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
-                    <span class="task-hint task-cwd-hint" v-if="isLocalRun">留空 = Deskport 分配的任务目录；填了必须是已存在的绝对路径，且在工作目录或默认工作空间之下<template v-if="cwdRoots.length">（可选：{{ cwdRoots.join('、') }}）</template></span>
-                </div>
-                <div class="task-compose-foot">
-                    <span class="task-hint">{{ isLocalRun
-                        ? '在独立工作区执行；输入文件复制一份，不改原件。'
-                        : '在所选节点的远端目录执行；直接使用远端已有文件。' }}</span>
-                    <button type="button" class="btn btn-primary" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
-                        {{ busy ? '创建中…' : '开始任务' }}
-                    </button>
-                </div>
-                <p class="load-error" v-if="error">{{ error }}</p>
-            </div>
+            </section>
 
-            <div class="task-list">
-                <button type="button" class="task-row" v-for="t in tasks" :key="t.id"
-                        :class="{ active: selectedId === t.id }" @click="select(t)">
-                    <span class="task-dot" :class="'is-' + t.status"></span>
-                    <span class="task-row-main">
-                        <span class="task-row-title">{{ t.title || t.prompt }}</span>
-                        <span class="task-row-sub">{{ t.createdLabel }} · {{ statusLabel(t.status) }}<template v-if="t.node"> · {{ t.node }}</template></span>
-                    </span>
-                    <span class="task-row-count" v-if="t.resultFiles && t.resultFiles.length">{{ t.resultFiles.length }} 个结果</span>
-                </button>
-                <p class="empty-tip" v-if="!tasks.length">还没有任务。上面写一句，选个文件试试。</p>
-            </div>
+            <section class="cmd-tree">
+                <div class="cmd-sec-title">指挥树<span class="cmd-sec-side">主管与任务按派活关系一层层挂起来</span></div>
+                <p class="empty-tip" v-if="overview && !treeRows.length">还没有任务——点右上角「新建」派一个活，或到设置页建主管。</p>
+                <div class="cmd-tree-rows">
+                    <div class="cmd-node" v-for="row in treeRows" :key="row.key"
+                         :class="['cmd-node-' + row.type, {child: row.depth > 0, open: row.expanded, leaf: !row.expandable, highlight: highlightKey === row.key}]"
+                         :style="{ marginLeft: 'calc(var(--cmd-indent) * ' + row.depth + ')' }"
+                         :data-key="row.key">
+                        <button type="button" class="cmd-caret" v-if="row.expandable"
+                                :class="{open: row.expanded}"
+                                :title="row.expanded ? '折叠' : '展开'"
+                                :aria-label="row.expanded ? '折叠' : '展开'"
+                                @click.stop="toggleNode(row)">▾</button>
+                        <span class="cmd-caret cmd-caret-blank" v-else></span>
+                        <div class="cmd-node-main" @click="openNode(row)">
+                            <div class="cmd-node-line1">
+                                <span class="cmd-dot" v-if="row.type === 'task'" :class="row.dotClass"></span>
+                                <span class="cmd-node-name" :class="{task: row.type === 'task'}">{{ row.name }}</span>
+                                <span class="cmd-badge cmd-badge-kind" v-if="row.kindText">{{ row.kindText }}</span>
+                                <span class="cmd-badge" :class="'cmd-badge-' + row.state" v-if="row.stateText">{{ row.stateText }}</span>
+                                <span class="cmd-badge cmd-badge-plain" v-else-if="row.badge">{{ row.badge }}</span>
+                                <span class="cmd-badge cmd-badge-you" v-if="row.waitingYou">等你</span>
+                                <!-- 批次 G1：任务行的结构化结果小标签（verdict · 测试数） -->
+                                <span class="cmd-badge cmd-badge-result" v-if="row.type === 'task' && row.resultLabel" :title="row.resultLabel">{{ row.resultLabel }}</span>
+                                <span class="cmd-node-counts" v-if="row.type !== 'task'">{{ row.countsText }}</span>
+                            </div>
+                            <div class="cmd-node-line2" v-if="row.sub || row.lastReportText || row.lastSeenText || row.unreadReports">
+                                <span class="cmd-node-sub" v-if="row.sub">{{ row.sub }}</span>
+                                <span class="cmd-node-report" v-if="row.lastReportText">汇报：{{ row.lastReportText }}</span>
+                                <span v-if="row.lastSeenText">最近活跃 {{ row.lastSeenText }}</span>
+                                <span class="cmd-node-unread" v-if="row.unreadReports">{{ row.unreadReports }} 条新汇报</span>
+                            </div>
+                            <div class="cmd-node-line2" v-if="row.hint || row.moreHint">
+                                <p class="cmd-node-hint" v-if="row.hint">{{ row.hint }}</p>
+                                <p class="cmd-more-hint" v-if="row.moreHint">已关闭的仅显示最近 5 条（还有 {{ row.closedHidden }} 条）</p>
+                            </div>
+                            <div class="cmd-node-line2" v-if="row.activityText">
+                                <button type="button" class="cmd-activity"
+                                        :class="{open: row.activityOpen}"
+                                        :title="row.activityOpen ? '收起直接操作明细' : '看最近 10 条直接操作'"
+                                        @click.stop="toggleActivity(row)">
+                                    {{ row.activityText }}
+                                    <span class="cmd-activity-caret" :class="{open: row.activityOpen}">▾</span>
+                                </button>
+                            </div>
+                            <div class="cmd-activity-list" v-if="row.activityOpen && row.activityRecent.length">
+                                <div class="cmd-activity-item" v-for="(r, i) in row.activityRecent" :key="row.key + ':act' + i">
+                                    <span class="cmd-activity-time">{{ r.time }}</span>
+                                    <span class="cmd-activity-action">{{ r.action }}</span>
+                                    <span class="cmd-activity-summary">{{ r.summary }}</span>
+                                </div>
+                            </div>
+                            <div class="cmd-node-line2" v-if="row.closedHidden > 0 && row.canMore">
+                                <button type="button" class="btn btn-ghost cmd-more"
+                                        v-if="!moreTasks[row.key]" @click.stop="loadMoreTasks(row)">
+                                    更多（还有 {{ row.closedHidden }} 条已关闭）
+                                </button>
+                                <p class="cmd-more-hint" v-else-if="row.moreCapped">仅显示最近 50 条</p>
+                            </div>
+                            <p class="cmd-row-error" v-if="row.error">{{ row.error }}</p>
+                        </div>
+                        <div class="cmd-node-actions" v-if="row.type === 'lead'" @click.stop>
+                            <button type="button" class="btn btn-ghost" @click="speakToLead(row.id)">发话</button>
+                            <button type="button" class="btn btn-ghost" v-if="row.taskId"
+                                    @click="openTask(row.taskId)">打开主管会话</button>
+                            <button type="button" class="btn btn-ghost" @click="toggleLeadPause(row.node)">
+                                {{ row.paused ? '恢复' : '暂停' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </section>
 
         <aside class="task-detail" v-if="detail">
             <div class="task-detail-head">
-                <div>
-                    <div class="task-detail-title">{{ detail.title || detail.prompt }}</div>
+                <div class="task-detail-head-main">
+                    <div class="task-detail-title" v-if="!titleEdit"
+                         @click="startTitleEdit"
+                         :title="'点这改名：' + (detail.title || detail.prompt)">
+                        {{ detail.title || detail.prompt }}
+                    </div>
+                    <input v-else ref="titleInput" class="input task-detail-title-input"
+                           v-model="titleDraft" maxlength="40" :disabled="titleBusy"
+                           placeholder="新标题（1–40 字，回车保存，Esc 取消）"
+                           @keydown.enter.prevent="saveTitle"
+                           @keydown.esc="cancelTitleEdit" @blur="cancelTitleEdit">
+                    <p class="load-error task-detail-title-error" v-if="titleError">{{ titleError }}</p>
                     <div class="task-detail-meta">
                         {{ detail.createdLabel }} · {{ statusLabel(detail.status) }} · {{ modeLabel(detail.mode) }}
                         <span v-if="cwdLine"> · {{ cwdLine }}</span>
                         <span v-if="detail.lastActiveLabel"> · 最近 {{ detail.lastActiveLabel }}</span>
+                    </div>
+                    <div class="task-detail-lead" v-if="detail.lead">
+                        所属主管：<a href="#" @click.prevent="gotoLead(detail.lead)">{{ leadNameOf(detail.lead) }}</a>
                     </div>
                 </div>
                 <div class="task-head-actions">
@@ -138,43 +270,114 @@
                         <option value="plan">只读规划</option>
                         <option value="yolo">全部放行</option>
                     </select>
-                    <button type="button" class="btn btn-ghost task-back" @click="backToList">← 列表</button>
+                    <button type="button" class="btn btn-ghost task-back cmd-detail-back" @click="backToList()">← 返回</button>
                     <a class="btn btn-ghost" :href="logUrl" title="下载完整 jsonl 日志">日志</a>
                     <button type="button" class="btn btn-ghost" v-if="isRunning" @click="cancel">停止本轮</button>
                     <button type="button" class="btn btn-ghost" v-if="canEnd" @click="closeSession">结束会话</button>
                 </div>
             </div>
-            <div class="task-chat" ref="chat">
-                <div class="task-event" v-for="e in events" :key="e.seq" :class="'ev-' + e.type">
-                    <div v-if="e.type === 'user'" class="ev-user">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'assistant'" class="ev-text">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'tool'" class="ev-tool">
-                        <span class="ev-tool-name">{{ e.name }}</span>
-                        <code>{{ shortArgs(e.args) }}</code>
+            <div class="task-result-card" v-if="detail.result">
+                <div class="task-result-head">
+                    <span class="result-verdict" :class="resultVerdictClass(detail.result)">{{ resultVerdictText(detail.result) }}</span>
+                    <code class="task-result-commit" v-if="resultCommit(detail.result)" :title="resultCommit(detail.result)">{{ resultCommit(detail.result).slice(0, 12) }}</code>
+                    <span class="task-result-tests" v-if="resultTestsText(detail.result)">{{ resultTestsText(detail.result) }}</span>
+                    <span class="task-result-count" v-if="detail.resultCount > 1">第 {{ detail.resultCount }} 次提交</span>
+                </div>
+                <p class="task-result-summary" v-if="detail.result.summary">{{ detail.result.summary }}</p>
+                <div class="task-result-gates" v-if="resultGateItems(detail.result).length">
+                    <span class="result-gate" v-for="g in resultGateItems(detail.result)" :key="g.name"
+                          :class="g.value === 'pass' ? 'is-pass' : 'is-fail'">{{ g.name }} {{ g.value === 'pass' ? '✓' : '✗' }}</span>
+                </div>
+                <div class="task-result-lists">
+                    <div class="task-result-list" v-if="(detail.result.mustFix || []).length">
+                        <div class="task-result-list-title">必须修（{{ detail.result.mustFix.length }}）</div>
+                        <ol><li v-for="(m, i) in detail.result.mustFix" :key="i">{{ m }}</li></ol>
                     </div>
-                    <details v-else-if="e.type === 'tool_result'" class="ev-result">
-                        <summary>工具结果<span v-if="e.truncated">（已截断）</span></summary>
-                        <button v-if="e.truncated && fullEvents[e.seq] === undefined"
-                                type="button" class="btn btn-ghost ev-full"
-                                @click.prevent.stop="loadFull(e)">查看完整</button>
-                        <pre>{{ fullEvents[e.seq] !== undefined ? fullEvents[e.seq] : e.text }}</pre>
-                    </details>
-                    <div v-else-if="e.type === 'permission_request'" class="permission-card">
-                        <div class="permission-title">需要你授权：{{ e.name || '工具调用' }}</div>
-                        <div class="permission-opts" v-if="!permissionResolved(e)">
+                    <div class="task-result-list" v-if="(detail.result.risks || []).length">
+                        <div class="task-result-list-title">风险（{{ detail.result.risks.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.risks" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.questions || []).length">
+                        <div class="task-result-list-title">待主管判断（{{ detail.result.questions.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.questions" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.evidence || []).length">
+                        <div class="task-result-list-title">证据（{{ detail.result.evidence.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.evidence" :key="i">{{ m }}</li></ul>
+                    </div>
+                    <div class="task-result-list" v-if="(detail.result.unverified || []).length">
+                        <div class="task-result-list-title">未验到（{{ detail.result.unverified.length }}）</div>
+                        <ul><li v-for="(m, i) in detail.result.unverified" :key="i">{{ m }}</li></ul>
+                    </div>
+                </div>
+            </div>
+            <div class="task-chat" ref="chat">
+                <div class="task-event" v-for="row in eventRows" :key="row.key" :class="'ev-' + row.type">
+                    <div v-if="row.type === 'user'" class="ev-user">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'assistant'" class="ev-text">{{ row.text }}</div>
+                    <!-- 工具调用：Bash 显示命令、文件类显示路径、其它显示 工具名 · 关键参数 -->
+                    <div v-else-if="row.type === 'tool'" class="ev-tool">
+                        <div class="ev-tool-head">
+                            <span class="ev-tool-name">{{ row.tool }}</span>
+                            <span class="ev-tool-text" :class="'ev-tool-' + row.kind">{{ row.headline }}</span>
+                            <button type="button" class="ev-tool-more" v-if="row.expandable"
+                                    @click="toggleTool(row)">
+                                {{ row.open ? '收起' : row.expandLabel }}
+                            </button>
+                        </div>
+                        <!-- 多行命令/Write：默认前 3 行，展开后看全文（U3 规格） -->
+                        <pre class="ev-tool-body" v-if="row.open && row.fullText">{{ row.fullText }}</pre>
+                        <pre class="ev-tool-body" v-else-if="!row.open && row.preview.length">{{ row.preview.join('\n') }}</pre>
+                        <div class="ev-tool-diff" v-if="row.open && row.diff">
+                            <pre class="ev-diff-old" v-if="row.diff.oldLines.length">- {{ row.diff.oldLines.join('\n- ') }}</pre>
+                            <pre class="ev-diff-new" v-if="row.diff.newLines.length">+ {{ row.diff.newLines.join('\n+ ') }}</pre>
+                            <p class="ev-diff-meta" v-if="row.diff.oldTotal > row.diff.oldLines.length || row.diff.newTotal > row.diff.newLines.length">
+                                改动片段默认只显示前几行（旧 {{ row.diff.oldTotal }} 行 / 新 {{ row.diff.newTotal }} 行）
+                            </p>
+                        </div>
+                        <p class="ev-tool-purpose" v-if="row.purpose">用途：{{ row.purpose }}</p>
+                    </div>
+                    <!-- 工具结果：默认折叠，标题说几行，展开后限高纵向滚动 -->
+                    <div v-else-if="row.type === 'tool_result'" class="ev-result" :class="{open: row.open}">
+                        <button type="button" class="ev-result-summary" @click="toggleResult(row)">
+                            <span class="ev-result-caret" :class="{open: row.open}">▾</span>
+                            {{ row.title }}
+                        </button>
+                        <div class="ev-result-body" v-if="row.open">
+                            <button v-if="row.truncated && row.full === undefined"
+                                    type="button" class="btn btn-ghost ev-full"
+                                    @click.stop="loadResultFull(row)">查看完整</button>
+                            <pre>{{ row.full !== undefined ? row.full : row.text }}</pre>
+                        </div>
+                    </div>
+                    <!-- 审批卡片：谁的任务 · 工具 · 命令 · 下属自述的用途 -->
+                    <div v-else-if="row.type === 'permission_request'" class="permission-card">
+                        <div class="permission-title">需要你授权：{{ row.tool }}</div>
+                        <p class="permission-cmd" v-if="row.command || row.path">{{ row.command || row.path }}</p>
+                        <p class="permission-purpose" v-if="row.purpose">用途：{{ row.purpose }}</p>
+                        <div class="permission-opts" v-if="!row.resolved">
                             <button type="button" class="btn btn-secondary"
-                                    v-for="o in e.options" :key="o.optionId"
-                                    @click="resolvePermission(e, o)">
+                                    v-for="o in row.options" :key="o.optionId"
+                                    @click="resolvePermission(row.raw, o)">
                                 {{ o.name || o.kind }}
                             </button>
-                            <button type="button" class="btn btn-ghost" @click="resolvePermission(e, null)">拒绝</button>
+                            <button type="button" class="btn btn-ghost" @click="resolvePermission(row.raw, null)">拒绝</button>
                         </div>
-                        <div class="permission-done" v-else>{{ permissionResultText(e) }}</div>
+                        <div class="permission-done" v-else>{{ row.resultText }}</div>
                     </div>
-                    <div v-else-if="e.type === 'status'" class="ev-status">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'plan'" class="ev-plan">{{ e.text }}</div>
-                    <div v-else-if="e.type === 'error'" class="ev-error">{{ e.text }}</div>
-                    <div v-else class="ev-log">{{ e.text }}</div>
+                    <!-- 连续 status 合并成一行淡色时间线 -->
+                    <div v-else-if="row.type === 'status-run'" class="ev-status-run"
+                         :title="row.count + ' 条状态'">{{ row.text }}</div>
+                    <!-- 结构化结果提交（G1）：一行带 verdict 徽标；判定字段在
+                         row.raw（结果事件的 expects/verdict 由服务端落） -->
+                    <div v-else-if="row.type === 'result'" class="ev-result-submit">
+                        <span class="result-verdict" :class="resultVerdictClass(row.raw)">{{ resultVerdictText(row.raw) }}</span>
+                        <span>{{ row.text }}</span>
+                    </div>
+                    <div v-else-if="row.type === 'plan'" class="ev-plan">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'error'" class="ev-error">{{ row.text }}</div>
+                    <div v-else-if="row.type === 'auto_approved' || row.type === 'auto_denied'" class="ev-auto">{{ row.text }}</div>
+                    <div v-else class="ev-log">{{ row.text }}</div>
                 </div>
                 <p class="task-waiting" v-if="detail.status === 'running'">Kimi 正在执行…</p>
                 <p class="task-waiting" v-else-if="detail.status === 'waiting'">{{ detail.awaitingAnswer ? 'Kimi 在等你回答上面的问题。' : '这一轮已结束，可以继续追问。' }}</p>
@@ -201,6 +404,156 @@
             </div>
             <div class="task-error" v-if="detail.error">{{ detail.error }}</div>
         </aside>
+    </div>
+
+    <div class="inbox-mask" v-if="newSheetOpen" @click.self="newSheetOpen = false">
+        <div class="inbox-sheet cmd-sheet">
+            <div class="inbox-sheet-head">
+                <span>新建</span>
+                <button class="inbox-x" @click="newSheetOpen = false">&times;</button>
+            </div>
+            <div class="cmd-sheet-choice" v-if="newSheetTab === ''">
+                <button type="button" class="cmd-choice" @click="newSheetTab = 'lead'">
+                    <span class="cmd-choice-title">新建主管</span>
+                    <span class="cmd-choice-hint">本批只做外部接入：建成后到设置页签发令牌并绑定</span>
+                </button>
+                <button type="button" class="cmd-choice" @click="newSheetTab = 'task'">
+                    <span class="cmd-choice-title">直接派活</span>
+                    <span class="cmd-choice-hint">自己派一个任务，不绑主管</span>
+                </button>
+            </div>
+            <div v-else-if="newSheetTab === 'lead'">
+                <button type="button" class="btn btn-ghost cmd-sheet-back" @click="newSheetTab = ''">← 返回</button>
+                <div class="cmd-kind-row">
+                    <div class="cmd-kind-opt" v-for="c in newLeadKinds" :key="c.kind"
+                         :class="c.enabled ? 'is-on' : 'is-off'" :title="c.hint">
+                        <span class="cmd-kind-title">{{ c.title }}</span>
+                        <span class="cmd-kind-hint">{{ c.hint }}</span>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="new-lead-name">名称</label>
+                    <input id="new-lead-name" class="input" v-model.trim="newLeadName"
+                           placeholder="主管名字，1–24 个字符">
+                </div>
+                <div class="field">
+                    <label class="field-label" for="new-lead-project">项目标签（可空）</label>
+                    <input id="new-lead-project" class="input" v-model.trim="newLeadProject"
+                           placeholder="如：奥赛集训">
+                </div>
+                <button type="button" class="btn btn-primary"
+                        :disabled="newLeadBusy || !newLeadName" @click="createExternalLead">
+                    {{ newLeadBusy ? '创建中…' : '建成外部主管' }}
+                </button>
+                <p class="load-error" v-if="newLeadError">{{ newLeadError }}</p>
+                <p class="cmd-ok" v-if="newLeadOk">{{ newLeadOk }}</p>
+            </div>
+            <div v-else>
+                <button type="button" class="btn btn-ghost cmd-sheet-back" @click="newSheetTab = ''">← 返回</button>
+                <div class="task-composer">
+                    <div class="field">
+                        <label class="field-label" for="new-task-title">标题（可空）</label>
+                        <input id="new-task-title" class="input" v-model.trim="newTitle"
+                               maxlength="40" placeholder="留空按提示词自动生成，如：整理简历">
+                    </div>
+                    <textarea class="input task-prompt" v-model.trim="prompt" rows="3"
+                              placeholder="例如：把这份简历整理成一页纸，重点看教学经历。"
+                              @keydown.ctrl.enter="create"></textarea>
+                    <div class="task-files" v-if="isLocalRun">
+                        <span class="task-file" v-for="p in paths" :key="p">
+                            {{ baseName(p) }}
+                            <button type="button" title="移除" @click="removePath(p)">&times;</button>
+                        </span>
+                        <button type="button" class="btn btn-secondary" @click="openPicker">从收件箱选择</button>
+                        <button type="button" class="btn btn-ghost" @click="togglePathMenu">添加路径</button>
+                    </div>
+                    <div class="task-path-menu" v-if="pathMenuOpen">
+                        <div class="task-path-sec" v-if="quickDirs.length">
+                            <div class="task-path-title">快速访问</div>
+                            <button type="button" class="task-path-item" v-for="d in quickDirs" :key="d.path"
+                                    :class="{ added: paths.indexOf(d.path) >= 0 }" @click="addQuick(d.path)">
+                                <span class="task-path-tag">{{ d.tag }}</span>
+                                <span class="task-path-name">{{ d.label }}</span>
+                                <span class="task-path-full">{{ d.path }}</span>
+                            </button>
+                        </div>
+                        <div class="task-path-sec" v-if="recentPaths.length">
+                            <div class="task-path-title">最近用过</div>
+                            <button type="button" class="task-path-item" v-for="p in recentPaths" :key="p"
+                                    :class="{ added: paths.indexOf(p) >= 0 }" @click="addQuick(p)">
+                                <span class="task-path-tag">最近</span>
+                                <span class="task-path-name">{{ baseName(p) }}</span>
+                                <span class="task-path-full">{{ p }}</span>
+                            </button>
+                        </div>
+                        <div class="task-path-sec">
+                            <div class="task-path-title">手动输入</div>
+                            <div class="task-path-add">
+                                <input class="input" v-model.trim="pathInput" spellcheck="false"
+                                       placeholder="C:\data\... 文件或文件夹" @keydown.enter="addPath">
+                                <button type="button" class="btn btn-secondary" @click="addPath">添加</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="task-options">
+                        <label class="task-mode">执行点
+                            <select class="input task-where" v-model="runWhere">
+                                <option value="local">本机</option>
+                                <option v-for="n in remoteNodes" :key="n.name" :value="n.name">{{ n.name }}</option>
+                            </select>
+                        </label>
+                        <input v-if="!isLocalRun" class="input task-remote-cwd" v-model.trim="remoteCwd"
+                               spellcheck="false" :placeholder="remoteCwdPlaceholder">
+                        <template v-if="isLocalRun">
+                            <label class="task-mode" for="task-local-cwd">工作目录</label>
+                            <input id="task-local-cwd" class="input task-local-cwd" v-model.trim="localCwd"
+                                   spellcheck="false" list="task-cwd-roots"
+                                   :placeholder="cwdRoots.length ? cwdRoots[0] : '绝对路径，如 C:\Users\你的用户名\Documents'">
+                            <datalist id="task-cwd-roots">
+                                <option v-for="d in cwdRoots" :key="d" :value="d"></option>
+                            </datalist>
+                        </template>
+                        <label class="task-mode">模式
+                            <select class="input" v-model="mode">
+                                <option value="auto">自动批准（推荐）</option>
+                                <option value="default">逐项批准</option>
+                                <option value="plan">只读规划</option>
+                                <option value="yolo">全部放行</option>
+                            </select>
+                        </label>
+                        <span class="task-hint">逐项批准时，工具调用会停下来等你点允许。</span>
+                        <span class="task-hint task-cwd-hint" v-if="isLocalRun">留空 = Deskport 分配的任务目录；填了必须是已存在的绝对路径，且在工作目录或默认工作空间之下<template v-if="cwdRoots.length">（可选：{{ cwdRoots.join('、') }}）</template></span>
+                    </div>
+                    <div class="task-compose-foot">
+                        <span class="task-hint">{{ isLocalRun
+                            ? '在独立工作区执行；输入文件复制一份，不改原件。'
+                            : '在所选节点的远端目录执行；直接使用远端已有文件。' }}</span>
+                        <button type="button" class="btn btn-primary cmd-start-btn" :disabled="busy || !prompt || (!isLocalRun && !remoteCwd)" @click="create">
+                            {{ busy ? '创建中…' : '开始任务' }}
+                        </button>
+                    </div>
+                    <p class="load-error" v-if="error">{{ error }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="inbox-mask" v-if="speakOpen" @click.self="speakOpen = false">
+        <div class="inbox-sheet cmd-sheet cmd-speak">
+            <div class="inbox-sheet-head">
+                <span>给 {{ speakLeadName }} 发话</span>
+                <button class="inbox-x" @click="speakOpen = false">&times;</button>
+            </div>
+            <textarea class="input cmd-speak-input" v-model.trim="speakText" rows="3"
+                      placeholder="说一句话…（托管主管会被立即唤醒）"></textarea>
+            <div class="cmd-speak-foot">
+                <button type="button" class="btn btn-primary"
+                        :disabled="speakBusy || !speakText" @click="sendSpeak">
+                    {{ speakBusy ? '发送中…' : '发送' }}
+                </button>
+            </div>
+            <p class="load-error" v-if="speakError">{{ speakError }}</p>
+        </div>
     </div>
 
     <div class="inbox-mask" v-if="pickerOpen" @click.self="pickerOpen = false">
@@ -240,6 +593,13 @@
 <script src="/assets/js/app-shell.js?v=__BUILD__"></script>
 <script src="/assets/vendor/vue.global.prod.js?v=__BUILD__"></script>
 <script src="/assets/js/common.js?v=__BUILD__"></script>
+<script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-result.js?v=__BUILD__"></script>
+<script src="/assets/js/workitems.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-overview.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-tree.js?v=__BUILD__"></script>
+<script src="/assets/js/tasks-events.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>
