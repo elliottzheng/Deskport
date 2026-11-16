@@ -318,11 +318,11 @@ task-back { display: none; }
 .cmd-menu-wrap { position: relative; display: inline-flex; }
 .cmd-menu {
     position: absolute; right: 0; top: calc(100% + 4px); z-index: 120;
-    display: flex; flex-direction: column; gap: 2px; min-width: 128px; padding: 6px;
+    display: flex; flex-direction: column; gap: 2px; min-width: 128px; padding: 6px; overflow-y: auto;
     border: 1px solid var(--border); border-radius: var(--radius-m); background: var(--surface); box-shadow: var(--shadow-float);
 }
 .cmd-menu.up { top: auto; bottom: calc(100% + 4px); }
-.cmd-menu .btn { width: 100%; justify-content: flex-start; min-height: 44px; }
+.cmd-menu .btn { width: 100%; justify-content: flex-start; min-height: 44px; flex-shrink: 0; }
 /* 行动失败的就地错误条（U 返工）：占满一行，几秒后或下次成功时消失 */
 .cmd-row-error {
     flex-basis: 100%; margin: 4px 0 0; font-size: 12px;

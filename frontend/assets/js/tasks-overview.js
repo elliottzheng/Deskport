@@ -66,10 +66,10 @@
         return {primary: primary, more: more};
     }
 
-    // 「更多」菜单翻转判定（M3 返工 P1/P2，纯函数供单测）：top/bottom 是菜单默认向下
-    // 放的矩形；向下越过 limit（底栏顶/下一行动作区顶，取更紧者）且向上翻不出顶栏就翻
+    // 「更多」菜单翻转判定（纯函数供单测）：向下越过 limit（底栏顶/下一行动作区顶取更紧者）且
+    // 上翻不出天花板就翻；-52=.up 以 bottom 锚定与实际落点的差（按钮 44+间距 8，tasks.css），负值夹紧到 0
     function menuFlipUp(top, bottom, limit, headBottom) {
-        return bottom > limit && (2 * top - bottom) >= headBottom;
+        return bottom > limit && (2 * top - bottom - 52) >= Math.max(headBottom, 0);
     }
 
     // overview 的 summaryBrief → 行视图。agoText 由调用方给（WPCommon.fmtAgo 的产物，
@@ -187,8 +187,7 @@
                     speakError: '',
                     rowMenus: {},          // M3 #4：哪一待办行的「更多」菜单开着（同时只开一个）
                     // S4：≤640px 窄屏才把次级动作收进 ··· 菜单，桌面宽屏内联
-                    menuNarrow: typeof window !== 'undefined'
-                        && window.matchMedia('(max-width: 640px)').matches,
+                    menuNarrow: typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches,
                     rowErrors: {}, leadErrors: {},
                 };
             },
@@ -386,8 +385,7 @@
                         if (row) { WPCommon.flashError(this, 'rowErrors', row.key, err.message); }
                     }
                 },
-                // M3 #4：「更多」菜单——同时只开一个；点开的行再点一次收起。M3 返工：
-                // 渲染后量几何，向下放越界（底栏顶/下一行动作区顶）就向上翻（menuFlipUp）
+                // M3 #4：「更多」菜单：同时只开一个；渲染后量几何，向下越界就上翻（menuFlipUp）
                 toggleRowMenu(row, ev) {
                     if (this.rowMenus[row.key]) { this.rowMenus = {}; return; }
                     this.rowMenus = {[row.key]: true};
@@ -396,14 +394,19 @@
                         var menu = btn.closest('.cmd-menu-wrap').querySelector('.cmd-menu');
                         if (!menu) { return; }
                         var r = menu.getBoundingClientRect();
-                        // 翻转线取更紧的：底栏顶（P1）与下一行动作区顶（P2）
                         var tab = document.querySelector('.tabbar').getBoundingClientRect();
                         var limit = tab.bottom > 0 ? tab.top : window.innerHeight;
                         var next = btn.closest('.cmd-pending-row').nextElementSibling;
                         var nextBtn = next && next.querySelector('.cmd-menu-wrap .btn, .cmd-pending-actions');
                         if (nextBtn) { limit = Math.min(limit, nextBtn.getBoundingClientRect().top); }
-                        var head = document.querySelector('.topbar').getBoundingClientRect().bottom;
-                        if (menuFlipUp(r.top, r.bottom, limit, head)) { menu.classList.add('up'); }
+                        var prev = btn.closest('.cmd-pending-row').previousElementSibling;
+                        var prevBtn = prev && prev.querySelector('.cmd-menu-wrap .btn');
+                        var ceil = Math.max(0, document.querySelector('.topbar').getBoundingClientRect().bottom,
+                                            prevBtn ? prevBtn.getBoundingClientRect().bottom : 0);
+                        var room = r.top - ceil - 52;
+                        if (menuFlipUp(r.top, r.bottom, limit, ceil) || (r.bottom > limit && room >= 44)) {
+                            if (r.height > room) { menu.style.maxHeight = room + 'px'; } menu.classList.add('up');
+                        } else if (r.bottom > limit) { menu.style.maxHeight = Math.max(limit - r.top, 44) + 'px'; }
                     });
                 },
                 closeRowMenu() {
