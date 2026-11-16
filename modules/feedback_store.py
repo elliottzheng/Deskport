@@ -23,7 +23,7 @@ import time
 import uuid
 
 import config
-from modules import feedback_status, state, state_owner
+from modules import feedback_status, state, state_owner, textio
 
 OWNER_ID = 'owner'                     # 单密码系统：登录者就是这台机器的主人
 OWNER_DISPLAY = '主人'
@@ -175,20 +175,6 @@ def sameSubmitter(recordSubmitter, identity):
 
 # ---------------------------------------------------------------- 提交
 
-def _str(value, limit=None):
-    """自由文本口径（v1 同款）：非字符串返回 None；strip 后按上限截断。
-
-    服务端补写/兜底的展示列（submitted_at / feedback_id / page_id）走这里——
-    客户端爱传什么都不能让落库路径 500，超长也不能无上限整条落库（规格 §4.1）。
-    """
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    if limit is not None:
-        value = value[:limit]
-    return value
-
-
 def submit(envelope, submitter):
     """落一条反馈。返回 (item, created, err)。
 
@@ -199,8 +185,8 @@ def submit(envelope, submitter):
     """
     sid = submitter.get('id') or ''
     key = envelope['idempotency_key']
-    fid = _str(envelope.get('feedback_id'), 40) or ''
-    submittedAt = _str(envelope.get('submitted_at'), 40)
+    fid = textio.cleanText(envelope.get('feedback_id'), 40) or ''
+    submittedAt = textio.cleanText(envelope.get('submitted_at'), 40)
     if submittedAt is None and envelope.get('submitted_at') is not None:
         return None, False, (400, 'submitted_at 必须是字符串（ISO 8601，'
                                    '如 2026-11-16T10:30:00+08:00）')
@@ -238,7 +224,7 @@ def submit(envelope, submitter):
             'role': 'agent' if submitter.get('kind') == 'agent' else 'owner',
             'anonymous': False,
             'route': ctx.get('route') or '',
-            'page_id': _str(ctx.get('page_id'), 40) or '',
+            'page_id': textio.cleanText(ctx.get('page_id'), 40) or '',
             'message': envelope.get('message') or '',
             'comments': [],
             'unread': False,

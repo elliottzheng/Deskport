@@ -42,31 +42,28 @@ def holdersOf(kimiSessionId, excludeTaskId='', includeClosed=False):
         return out
 
 
-def _holdersError(kimiSessionId, holders):
-    who = '、'.join('%s（%s，%s）' % (h['id'][:8], h['title'] or '无标题',
-                                     h['status']) for h in holders[:3])
-    if len(holders) > 3:
-        who += ' 等 %d 个' % len(holders)
-    return RuntimeError(
-        '会话 %s 正被未关闭任务占用：%s——先关闭占用任务，或改用 fork 副本接手'
-        % (kimiSessionId, who))
+def _holdersError(kimiSessionId, holders, retry=None):
+    """点名占用者的错误（接管前判定与清场后重试两条路径合用这一个构造）。
 
-
-def _retryHoldersError(kimiSessionId, excludeTaskId, original):
-    """DR-S2：清场后重试仍 in use——点名占用者（closed/cancelled 也算，
-    节点侧进程可能没退），不再只抛节点原文。"""
-    holders = holdersOf(kimiSessionId, excludeTaskId, includeClosed=True)
+    retry=None：接管前就有未关闭任务在用——先关闭占用任务，或改用 fork 副本；
+    retry=重试时的异常：DR-S2 清场后仍 in use——占用者含 closed/cancelled
+    （节点侧进程可能没退）；一条占用记录都没有时附节点原文，不只抛原文。
+    """
     who = '、'.join('%s（%s，%s）' % (h['id'], h['title'] or '无标题',
                                      h['status']) for h in holders[:3])
     if len(holders) > 3:
         who += ' 等 %d 个' % len(holders)
+    if retry is None:
+        return RuntimeError(
+            '会话 %s 正被未关闭任务占用：%s——先关闭占用任务，或改用 fork 副本接手'
+            % (kimiSessionId, who))
     if holders:
         return RuntimeError(
             '会话 %s 清场后重试仍 in use：节点侧进程未退出（占用任务：%s）——'
             '稍后重试，或先关闭这些任务' % (kimiSessionId, who))
     return RuntimeError(
         '会话 %s 清场后重试仍 in use，且没有任务占用记录（节点侧残留进程，'
-        '原文：%s）——稍后重试' % (kimiSessionId, original))
+        '原文：%s）——稍后重试' % (kimiSessionId, retry))
 
 
 def ensureSessionFree(nodeName, kimiSessionId, excludeTaskId='', waitSec=None):
@@ -101,5 +98,8 @@ def startSession(client, task):
         except Exception as retry:
             if 'in use' not in str(retry):
                 raise
-            raise _retryHoldersError(kimiSessionId, task.get('id') or '',
-                                     retry)
+            raise _holdersError(
+                kimiSessionId,
+                holdersOf(kimiSessionId, task.get('id') or '',
+                          includeClosed=True),
+                retry)
