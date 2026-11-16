@@ -1,55 +1,38 @@
 // 反馈面板：右下角悬浮按钮 + 半屏浮层（截图标注 / 一句话 / 联系方式）+「我的反馈」。
 // 只在浮层里操作，绝不路由跳转（§3.2）；截图与标注就是最终上传的内容（所见即所传）。
-// 「我的反馈」页签的内容在 feedback-mine.js（批次 F1：按身份过滤 + 未读红点 +
-// 评论线程 + 确认/重开）；本文件只管采集与画布。
+// 「我的反馈」页签在 feedback-mine.js（批次 F1）；本文件只管采集面板与画布装订。
+// FB-5：截图改 DOM 静默快照（feedback-capture.snapViewport，零授权、http 可用），拿不到/
+// 终端投屏类内容走手动上传（WPFeedback.uploadManualShot → attachments），
+// 快照失败不阻断提交；桌面面板 1080px/90vh，画布滚轮缩放+拖拽平移（视图数学在
+// feedback-canvas.js，纯函数有 node 单测）；FAB 桌面滚动隐藏、静置避开可交互元素。
 window.WPFeedbackPanel = (function () {
     var root = null;
     var panel = null;
     var maskEl = null;
     var canvas = null;
-    var retryBtn = null;
+    var viewEl = null;
+    var shotTip = null;
     var messageEl = null;
     var contactEl = null;
     var hintEl = null;
     var submitBtn = null;
-    var shotTip = null;
+    var uploadInput = null;
+    var zoomLabel = null;
     var tabs = {};
+    var canvasApi = null;
     var baseImage = null;
     var ops = [];
     var tool = 'pen';
-    var drawing = null;
+    var uploadedFileId = '';
     var onSubmit = null;
     var busy = false;
+    var fabApi = null;
 
     function el(tag, cls, text) {
         var node = document.createElement(tag);
         if (cls) { node.className = cls; }
         if (text) { node.textContent = text; }
         return node;
-    }
-
-    // 底部有工具条（文件多选、收件箱操作栏、终端控制键、控制台 FAB）时把按钮抬上去，别压住别人的按钮
-    function placeFab() {
-        // 控制键条的容器是 #control-keys（旧选择器 .term-vkeys 根本不存在，等于没抬过——
-        // 手机反馈「反馈按钮挡住了到底部的按钮」就是它压在控制键条上）
-        var raise = document.querySelector('.bottombar:not([hidden]), .inbox-actionbar:not([hidden]), #control-keys:not(.hidden), .ctl-fab');
-        // 壳（/app）里终端与 SSH 是 iframe：控制键条在 iframe 里面，外层选择器看不见它，
-        // 但浮按钮画在壳文档上、永远盖在 iframe 之上，所以按"当前视图"判断
-        var frame = document.querySelector('iframe');
-        var src = frame ? (frame.getAttribute('src') || '') : '';
-        if (/\/terminal|\/ssh/.test(src)) { raise = raise || document.body; }
-        document.body.classList.toggle('fb-raise', !!raise);
-        // 全屏浮层（移动端 SFTP 面板铺满整屏）打开时直接收起：那时抬起来也会压在
-        // 浮层底部的操作行（新建/上传/删除）上，用户报过"挡住到底部的按钮"
-        var covered = false;
-        ['sftp-panel'].forEach(function (id) {
-            var node = document.getElementById(id);
-            if (node && node.offsetParent !== null && getComputedStyle(node).display !== 'none') {
-                covered = true;
-            }
-        });
-        if (document.querySelector('.more-sheet:not([hidden])')) { covered = true; }
-        document.body.classList.toggle('fb-hide', covered);
     }
 
     function buildFab() {
@@ -72,17 +55,24 @@ window.WPFeedbackPanel = (function () {
             Array.prototype.forEach.call(panel.querySelectorAll('.fb-tool'), function (node) {
                 node.classList.toggle('is-on', node.getAttribute('data-tool') === id);
             });
+            if (viewEl) { viewEl.classList.toggle('is-pan', id === 'move'); }
         });
         if (name === tool) { btn.classList.add('is-on'); }
+        return btn;
+    }
+
+    function toolAction(label, title, fn) {
+        var btn = el('button', 'fb-tool', label);
+        btn.type = 'button';
+        if (title) { btn.title = title; }
+        btn.addEventListener('click', fn);
         return btn;
     }
 
     function buildPanel() {
         maskEl = el('div', 'fb-mask');
         maskEl.hidden = true;
-        maskEl.addEventListener('pointerdown', function (ev) {
-            if (ev.target === maskEl) { close(); }
-        });
+        maskEl.addEventListener('pointerdown', function (ev) { if (ev.target === maskEl) { close(); } });
         panel = el('div', 'fb-panel');
         panel.setAttribute('role', 'dialog');
         panel.setAttribute('aria-modal', 'true');
@@ -107,33 +97,36 @@ window.WPFeedbackPanel = (function () {
 
         var write = el('div', 'fb-body fb-write');
         var shot = el('div', 'fb-shot');
+        viewEl = el('div', 'fb-shot-view');
         canvas = document.createElement('canvas');
         canvas.className = 'fb-canvas';
+        canvas.hidden = true;
+        viewEl.appendChild(canvas);
+        shot.appendChild(viewEl);
         shotTip = el('div', 'fb-shot-tip', '正在截取当前画面…');
-        shot.appendChild(canvas);
         shot.appendChild(shotTip);
-        retryBtn = el('button', 'fb-retry', '重新截图');
-        retryBtn.type = 'button';
-        retryBtn.hidden = true;
-        retryBtn.addEventListener('click', function () {
-            window.WPFeedbackCapture.forgetStream();
-            retryBtn.hidden = true;
-            captureShot();
-        });
-        shot.appendChild(retryBtn);
 
         var tools = el('div', 'fb-tools');
         tools.appendChild(toolButton('pen', '画笔', 'pen'));
         tools.appendChild(toolButton('rect', '框选', 'rect'));
         tools.appendChild(toolButton('black', '打码', 'black'));
-        var undo = el('button', 'fb-tool', '撤销');
-        undo.type = 'button';
-        undo.addEventListener('click', function () { ops.pop(); paint(); });
-        var clear = el('button', 'fb-tool', '清空标注');
-        clear.type = 'button';
-        clear.addEventListener('click', function () { ops = []; paint(); });
-        tools.appendChild(undo);
-        tools.appendChild(clear);
+        tools.appendChild(toolButton('move', '移动'));
+        tools.appendChild(toolAction('撤销', '', function () { ops.pop(); canvasApi.paint(); }));
+        tools.appendChild(toolAction('清空标注', '', function () { ops.length = 0; canvasApi.paint(); }));
+        tools.appendChild(toolAction('复位', '缩放回适配大小，平移回居中', function () { canvasApi.reset(); }));
+        zoomLabel = el('span', 'fb-zoom', '');
+        zoomLabel.title = '滚轮缩放（以光标为中心）；移动工具/空格/右键拖拽平移；100% = 1:1 精批';
+        tools.appendChild(zoomLabel);
+        // 手动上传兜底：快照拿不到（终端/投屏/画不出来）时选一张图随反馈提交
+        var uploadLabel = el('label', 'fb-tool fb-upload', '上传截图');
+        uploadLabel.title = '快照拿不到时，选一张图片随反馈提交';
+        uploadInput = document.createElement('input');
+        uploadInput.type = 'file';
+        uploadInput.accept = 'image/png,image/jpeg,image/webp';
+        uploadInput.hidden = true;
+        uploadInput.addEventListener('change', onUploadPick);
+        uploadLabel.appendChild(uploadInput);
+        tools.appendChild(uploadLabel);
         shot.appendChild(tools);
 
         messageEl = el('textarea', 'fb-message');
@@ -143,8 +136,7 @@ window.WPFeedbackPanel = (function () {
             // 手机键盘会把下半屏顶掉：等视口稳定后把输入框滚到中间
             setTimeout(function () {
                 var vv = window.visualViewport;
-                var shrunk = vv && vv.height < window.innerHeight * 0.75;
-                if (shrunk || window.innerWidth <= 640) {
+                if ((vv && vv.height < window.innerHeight * 0.75) || window.innerWidth <= 640) {
                     messageEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 }
             }, 260);
@@ -182,118 +174,79 @@ window.WPFeedbackPanel = (function () {
         root.appendChild(maskEl);
     }
 
-    // ---- 画布标注：底图 + 操作序列重绘（撤销就是弹掉最后一步）----
-    function paint() {
-        if (!canvas) { return; }
-        var ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (baseImage) { ctx.drawImage(baseImage, 0, 0); }
-        for (var i = 0; i < ops.length; i++) {
-            var op = ops[i];
-            ctx.save();
-            ctx.strokeStyle = op.type === 'black' ? '#111827' : '#DC2626';
-            ctx.fillStyle = '#111827';
-            ctx.lineWidth = Math.max(2, Math.round(canvas.width / 400));
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            if (op.type === 'pen' && op.points.length > 1) {
-                ctx.beginPath();
-                ctx.moveTo(op.points[0][0], op.points[0][1]);
-                for (var j = 1; j < op.points.length; j++) {
-                    ctx.lineTo(op.points[j][0], op.points[j][1]);
-                }
-                ctx.stroke();
-            } else if (op.type === 'rect' || op.type === 'black') {
-                var x = Math.min(op.x1, op.x2);
-                var y = Math.min(op.y1, op.y2);
-                var w = Math.abs(op.x2 - op.x1);
-                var h = Math.abs(op.y2 - op.y1);
-                if (op.type === 'black') { ctx.fillRect(x, y, w, h); } else { ctx.strokeRect(x, y, w, h); }
-            }
-            ctx.restore();
-        }
+    // ---- 截图：打开面板时静默快照一帧当前视口（§3.2）----
+    function isStreamingPage() {
+        var route = (window.WPFeedbackCapture.context().route) || location.pathname;
+        return /\/terminal|\/ssh|\/screen/.test(route);
     }
 
-    function pointOf(ev) {
-        var rect = canvas.getBoundingClientRect();
-        var sx = canvas.width / (rect.width || 1);
-        var sy = canvas.height / (rect.height || 1);
-        return [Math.round((ev.clientX - rect.left) * sx), Math.round((ev.clientY - rect.top) * sy)];
+    function setShotTip(text) {
+        shotTip.hidden = !text;
+        shotTip.textContent = text || '';
     }
 
-    function onCanvasDown(ev) {
-        if (!baseImage) { return; }
-        ev.preventDefault();
-        var point = pointOf(ev);
-        if (tool === 'pen') {
-            drawing = { type: 'pen', points: [point] };
-        } else {
-            drawing = { type: tool, x1: point[0], y1: point[1], x2: point[0], y2: point[1] };
-        }
-        ops.push(drawing);
-        paint();
-        try {
-            if (canvas.setPointerCapture) { canvas.setPointerCapture(ev.pointerId); }
-        } catch (e) { /* 合成事件没有真实 pointerId，忽略 */ }
+    function setBase(img) {
+        baseImage = img || null;
+        if (canvasApi) { canvasApi.setImage(baseImage); }
     }
 
-    function onCanvasMove(ev) {
-        if (!drawing) { return; }
-        var point = pointOf(ev);
-        if (drawing.type === 'pen') {
-            drawing.points.push(point);
-        } else {
-            drawing.x2 = point[0];
-            drawing.y2 = point[1];
-        }
-        paint();
-    }
-
-    function onCanvasUp() {
-        drawing = null;
-    }
-
-    // ---- 截图：打开面板时抓一帧（§3.2）----
-    function captureFailed(capture) {
-        shotTip.hidden = false;
-        shotTip.textContent = capture.canGrabScreen()
-            ? '这次没拿到截图（可能拒绝了共享），可以重试，或只提交文字。'
-            : '这个浏览器不支持截屏，你仍可以只提交文字。';
-        if (retryBtn) { retryBtn.hidden = !capture.canGrabScreen(); }
+    function captureFailed(reason) {
+        // 终端/投屏是实时画面（xterm/MJPEG）：明说走手动上传，不静默失败（验收 5）
+        setShotTip(isStreamingPage()
+            ? '终端/投屏画面抓不全——请手动上传截图，或只提交文字。'
+            : (reason || '没抓到画面，可以手动上传截图，或只提交文字。'));
     }
 
     function captureShot() {
-        var capture = window.WPFeedbackCapture;
-        shotTip.hidden = false;
-        shotTip.textContent = '正在截取当前画面…';
-        baseImage = null;
-        ops = [];
-        canvas.hidden = true;
-        if (retryBtn) { retryBtn.hidden = true; }
+        setShotTip('正在截取当前画面…');
+        setBase(null);
+        uploadedFileId = '';
+        uploadInput.value = '';
         var settled = false;
-        // 兜底：共享授权/播放偶尔会一直 pending（尤其手机上），4 秒后按失败处理，别让面板卡在“正在截取”
+        // 兜底：重页面画得慢，6 秒还拿不到就按失败走手动上传，别把面板卡在"正在截取"
         var guard = setTimeout(function () {
             if (settled) { return; }
             settled = true;
-            captureFailed(capture);
-        }, 4000);
-        capture.ensureStream().then(function (ok) {
+            captureFailed('这次没抓到画面，等太久了。');
+        }, 6000);
+        window.WPFeedbackCapture.snapViewport().then(function (res) {
             if (settled) { return; }
             settled = true;
             clearTimeout(guard);
-            var grabbed = ok ? capture.grabCanvas() : null;
-            if (!grabbed) { return captureFailed(capture); }
-            baseImage = grabbed;
-            canvas.width = grabbed.width;
-            canvas.height = grabbed.height;
-            canvas.hidden = false;
-            shotTip.hidden = true;
-            paint();
+            if (!res || !res.shot) { return captureFailed(); }
+            setBase(res.shot);
+            if (isStreamingPage()) {
+                setShotTip('终端/投屏画面可能不全，需要的话请再手动上传一张。');
+            } else if (res.partial) {
+                setShotTip('部分内容没抓到（比如内嵌视图），需要的话可以手动上传截图补充。');
+            } else {
+                setShotTip('');
+            }
         }).catch(function () {
             if (settled) { return; }
             settled = true;
             clearTimeout(guard);
-            captureFailed(capture);
+            captureFailed();
+        });
+    }
+
+    function onUploadPick(ev) {
+        var input = ev.target;
+        var file = input.files && input.files[0];
+        input.value = '';
+        if (!file) { return; }
+        if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')) {
+            setShotTip('只支持 png / jpg / webp 图片。');
+            return;
+        }
+        setShotTip('正在处理上传的截图…');
+        window.WPFeedback.uploadManualShot(file).then(function (res) {
+            uploadedFileId = res.file_id;
+            setBase(res.canvas);   // 上传的图也进画布，可以直接接着标注
+            setShotTip('');
+            setHint('截图已上传，会随这条反馈一起提交；画布上也能直接标注。');
+        }).catch(function (err) {
+            setShotTip(((err && err.message) || '上传失败') + '。可以重试，或只提交文字。');
         });
     }
 
@@ -308,21 +261,17 @@ window.WPFeedbackPanel = (function () {
 
     function open(tab) {
         if (!root) { return; }
-        placeFab();
+        if (fabApi) { fabApi.place(); }
         maskEl.hidden = false;
         document.body.classList.add('fb-open');
         switchTab(tab || 'write');
-        if (!tab || tab === 'write') {
-            captureShot();
-            setTimeout(function () { messageEl.focus(); }, 60);
-        }
+        if (!tab || tab === 'write') { captureShot(); setTimeout(function () { messageEl.focus(); }, 60); }
     }
 
     function close() {
         if (!maskEl) { return; }
         maskEl.hidden = true;
         document.body.classList.remove('fb-open');
-        drawing = null;
     }
 
     function toast(text) {
@@ -350,18 +299,28 @@ window.WPFeedbackPanel = (function () {
             return;
         }
         setBusy(true);
-        var blob = null;
-        var capture = window.WPFeedbackCapture;
-        if (baseImage && canvas.width) {
-            capture.compress(canvas, 1024 * 1024).then(function (out) {
-                blob = out;
-                onSubmit({ message: text, contact: contactEl.value.trim(), blob: blob,
-                           hasAnnotations: ops.length > 0 });
+        var annotated = ops.length > 0;
+        // 有标注就连画布一起传（含上传图的标注版，uploadedFileId 已让位）；纯手动
+        // 上传且没标注就直接用已传的 file_id，不重复上传
+        var needBlob = !!baseImage && !canvas.hidden && !!canvas.width
+            && (annotated || !uploadedFileId);
+        var finish = function (blob) {
+            onSubmit({
+                message: text,
+                contact: contactEl.value.trim(),
+                blob: blob || null,
+                hasAnnotations: annotated,
+                uploadedFileId: annotated ? '' : uploadedFileId,
+                attachmentSource: uploadedFileId ? 'upload' : 'page',
+                captureNote: (shotTip && shotTip.textContent) || ''
             });
+        };
+        if (needBlob) {
+            window.WPFeedbackCapture.compress(canvas, 1024 * 1024)
+                .then(finish, function () { finish(null); });
             return;
         }
-        onSubmit({ message: text, contact: contactEl.value.trim(), blob: null,
-                   hasAnnotations: false, captureNote: shotTip && shotTip.textContent || '' });
+        finish(null);
     }
 
     function setHint(text, isError) {
@@ -375,16 +334,37 @@ window.WPFeedbackPanel = (function () {
         root.appendChild(buildFab());
         buildPanel();
         document.body.appendChild(root);
-        // 点一下就可能切换出底部工具条（多选模式等）：跟着重排，不做轮询
-        document.addEventListener('pointerdown', function () { setTimeout(placeFab, 0); }, true);
-        document.addEventListener('click', function () { setTimeout(placeFab, 0); }, true);
-        window.addEventListener('resize', placeFab);
-        window.addEventListener('orientationchange', placeFab);
-        setTimeout(placeFab, 400);
-        canvas.addEventListener('pointerdown', onCanvasDown);
-        canvas.addEventListener('pointermove', onCanvasMove);
-        canvas.addEventListener('pointerup', onCanvasUp);
-        canvas.addEventListener('pointercancel', onCanvasUp);
+        // 画布模块（feedback-canvas.js）挂在同一全局上，这里装订交互
+        var canvasMod = window.WPFeedbackPanel && window.WPFeedbackPanel.canvas;
+        if (canvasMod && canvasMod.mount) {
+            canvasApi = canvasMod.mount({
+                wrap: viewEl,
+                canvas: canvas,
+                getBase: function () { return baseImage; },
+                setBase: function (img) { baseImage = img || null; },
+                getOps: function () { return ops; },
+                getTool: function () { return tool; },
+                onView: function (view) {
+                    zoomLabel.textContent = baseImage ? canvasMod.zoomPercent(view.scale) + '%' : '';
+                    zoomLabel.classList.toggle('is-11', !!baseImage && Math.abs(view.scale - 1) < 0.005);
+                }
+            });
+        }
+        // FAB 落位/避让/滚动让位在 feedback-fab.js；点一下就可能切换出底部工具条
+        // （多选模式等）：跟着重排，不做轮询
+        fabApi = window.WPFeedbackPanel && window.WPFeedbackPanel.fab;
+        if (fabApi) {
+            document.addEventListener('pointerdown', function () { setTimeout(fabApi.place, 0); }, true);
+            document.addEventListener('click', function () { setTimeout(fabApi.place, 0); }, true);
+            window.addEventListener('resize', function () {
+                fabApi.place();
+                if (canvasApi) { canvasApi.onResize(); }
+            });
+            window.addEventListener('orientationchange', fabApi.place);
+            window.addEventListener('scroll', fabApi.onScroll, { passive: true });
+            fabApi.watch();
+            setTimeout(fabApi.place, 400);
+        }
         document.addEventListener('keydown', function (ev) {
             if (ev.key === 'Escape' && maskEl && !maskEl.hidden) { close(); }
         });
@@ -397,12 +377,14 @@ window.WPFeedbackPanel = (function () {
         toast: toast,
         setBusy: setBusy,
         setHint: setHint,
+        canvasView: function () { return canvasApi ? canvasApi.view() : null; },
         reset: function () {
             messageEl.value = '';
             contactEl.value = '';
             ops = [];
-            baseImage = null;
-            canvas.hidden = true;
+            setBase(null);
+            uploadedFileId = '';
+            if (uploadInput) { uploadInput.value = ''; }
             setBusy(false);
             setHint('截图与页面信息会自动附带；密码框内容不会采集，手机号/证件号/邮箱会自动打码。');
         }

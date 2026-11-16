@@ -15,10 +15,7 @@ window.WPFeedbackCapture = (function () {
     var clicks = {};          // callId 之类不需要；这里只留最后一个点击的组件
     var lastTarget = '';
     var inFrame = window.self !== window.top;   // 壳（/app）里每页一个 iframe：只上报轨迹，别出按钮
-    var stream = null;        // getDisplayMedia 的流：一次授权，本次会话复用
-    var streamDenied = false;
     var appVersion = 'dev';
-    var videoEl = null;
 
     function nowMs() {
         return Math.round((window.performance && performance.now ? performance.now() : Date.now()) - t0);
@@ -234,77 +231,89 @@ window.WPFeedbackCapture = (function () {
         }
     }
 
-    // ---- 截图：getDisplayMedia 一次授权，之后随时取帧；拿不到就如实标记 ----
-    function canGrabScreen() {
-        return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
-    }
-
-    // 等第一帧真的到（videoWidth 有值）再算成功：固定 sleep 在慢机器/手机上会偶发拿不到
-    function waitFirstFrame(timeoutMs) {
-        return new Promise(function (resolve) {
-            var settled = false;
-            var started = Date.now();
-            function finish(ok) {
-                if (!settled) { settled = true; resolve(ok); }
-            }
-            if (videoEl.requestVideoFrameCallback) {
-                try { videoEl.requestVideoFrameCallback(function () { finish(true); }); } catch (e) { /* 老浏览器 */ }
-            }
-            (function poll() {
-                if (settled) { return; }
-                if (videoEl.videoWidth > 0) { return finish(true); }
-                if (Date.now() - started > (timeoutMs || 2000)) { return finish(false); }
-                setTimeout(poll, 60);
-            })();
+    // ---- 截图：DOM 静默快照一帧当前视口（FB-5；零授权，http 非安全上下文可用）----
+    // 壳顶层 document 整页快照；当前可见 iframe 同源时再截它的内容合成上去，
+    // 取不到就只截壳（partial 标记告知上层）。
+    function snapFrame(frame) {
+        var doc = null, win = null;
+        try {
+            doc = frame.contentDocument;
+            win = frame.contentWindow;
+        } catch (e) { return Promise.reject(e); }
+        if (!doc || !doc.body) { return Promise.reject(new Error('frame document unavailable')); }
+        var rect = frame.getBoundingClientRect();
+        var width = Math.max(1, Math.round(rect.width));
+        var height = Math.max(1, Math.round(rect.height));
+        var snap = window.WPFeedbackCapture && window.WPFeedbackCapture.snap;
+        if (!snap || !snap.snapDocument) { return Promise.reject(new Error('snapshot module missing')); }
+        return snap.snapDocument(doc, {
+            width: width, height: height,
+            scrollX: win.scrollX || 0, scrollY: win.scrollY || 0
         });
     }
 
-    function attachStream(got) {
-        videoEl = document.createElement('video');
-        videoEl.muted = true;
-        videoEl.playsInline = true;
-        videoEl.setAttribute('playsinline', '');
-        videoEl.srcObject = got;
-        var playing = videoEl.play ? videoEl.play() : Promise.resolve();
-        // play() 在部分浏览器里会一直 pending（等手势），别让它把捕获卡死
-        var playSettled = Promise.race([
-            Promise.resolve(playing).catch(function () { return null; }),
-            new Promise(function (resolve) { setTimeout(resolve, 800); })
-        ]);
-        return playSettled.then(function () { return waitFirstFrame(2000); });
+    // 壳快照 + iframe 内容合成到同一张画布上（坐标即视口坐标，scale=1）
+    function compositeShot(shell, frame, inner) {
+        if (!inner || !inner.shot) { return; }
+        var rect = frame.getBoundingClientRect();
+        var ctx = shell.getContext('2d');
+        ctx.drawImage(inner.shot, rect.left, rect.top, rect.width, rect.height);
     }
 
-    function ensureStream() {
-        if (!canGrabScreen()) { return Promise.resolve(false); }
-        if (stream) { return Promise.resolve(videoEl && videoEl.videoWidth > 0); }
-        if (streamDenied) { return Promise.resolve(false); }
-        return navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false })
-            .then(function (got) {
-                stream = got;
-                return attachStream(got);
-            })
-            .catch(function () {
-                streamDenied = true;      // 用户拒绝/不支持：这次会话不再骚扰
-                return false;
-            });
-    }
-
-    function forgetStream() {
-        streamDenied = false;
-        if (stream && stream.getTracks) {
-            stream.getTracks().forEach(function (track) { track.stop(); });
+    // 空白检测：整张图几乎纯色 = 没画出来（foreignObject 被拦、终端/投屏类内容），
+    // 别把一张白图当截图传给用户。取不到像素（污染画布）时不当空白。
+    function looksBlank(shot) {
+        try {
+            var ctx = shot.getContext('2d');
+            var w = shot.width, h = shot.height;
+            if (!w || !h || !ctx.getImageData) { return false; }
+            var data = ctx.getImageData(0, 0, w, h).data;
+            var step = Math.max(4, Math.floor(Math.min(w, h) / 80));
+            var first = [data[0], data[1], data[2], data[3]];
+            var total = 0, same = 0;
+            for (var y = 0; y < h; y += step) {
+                for (var x = 0; x < w; x += step) {
+                    var i = (y * w + x) * 4;
+                    total += 1;
+                    if (Math.abs(data[i] - first[0]) + Math.abs(data[i + 1] - first[1])
+                        + Math.abs(data[i + 2] - first[2]) + Math.abs(data[i + 3] - first[3]) < 12) {
+                        same += 1;
+                    }
+                }
+            }
+            return total > 0 && same / total > 0.995;
+        } catch (e) {
+            return false;
         }
-        stream = null;
-        videoEl = null;
     }
 
-    function grabCanvas() {
-        if (!stream || !videoEl || !videoEl.videoWidth) { return null; }
-        var canvas = document.createElement('canvas');
-        canvas.width = videoEl.videoWidth;
-        canvas.height = videoEl.videoHeight;
-        canvas.getContext('2d').drawImage(videoEl, 0, 0);
-        return canvas;
+    // 面板打开时调：静默快照当前视口 → {shot, partial}；失败/空白给 null（不阻断提交）
+    function snapViewport() {
+        var snap = window.WPFeedbackCapture && window.WPFeedbackCapture.snap;
+        if (!snap || !snap.snapDocument) { return Promise.resolve(null); }
+        var width = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 0);
+        var height = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 0);
+        var frame = inFrame ? null : visibleFrame();
+        var partial = false;
+        var shellJob = snap.snapDocument(document, {
+            width: width, height: height,
+            scrollX: window.scrollX || 0, scrollY: window.scrollY || 0
+        });
+        var frameJob = frame
+            ? snapFrame(frame).then(function (res) { return res; }, function () {
+                partial = true;   // 跨源/取不到：只截壳，告知上层
+                return null;
+            })
+            : Promise.resolve(null);
+        return Promise.all([shellJob, frameJob]).then(function (res) {
+            var shell = res[0], inner = res[1];
+            if (inner && inner.degraded) { partial = true; }
+            if (!shell || !shell.shot || looksBlank(shell.shot)) { return null; }
+            if (frame && inner && inner.shot) { compositeShot(shell.shot, frame, inner); }
+            return { shot: shell.shot, partial: partial };
+        }).catch(function () {
+            return null;
+        });
     }
 
     function toBlob(canvas, quality) {
@@ -412,12 +421,8 @@ window.WPFeedbackCapture = (function () {
         maskText: maskText,
         pageId: pageId,
         refOf: refOf,
-        ensureStream: ensureStream,
-        canGrabScreen: canGrabScreen,
         isFrame: function () { return inFrame; },
-        grabCanvas: grabCanvas,
         compress: compress,
-        streamDenied: function () { return streamDenied; },
-        forgetStream: forgetStream,
+        snapViewport: snapViewport,
     };
 })();
