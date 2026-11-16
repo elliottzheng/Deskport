@@ -36,8 +36,8 @@ body { padding-bottom: 0 !important; overflow: hidden; }
 .sidebar-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
 .sidebar-head-btns { display: flex; gap: 6px; }
 #sidebar-close, #sidebar-add {
-    width: 26px;
-    height: 26px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border-radius: var(--radius-s);
     font-size: 15px;
@@ -210,6 +210,9 @@ body { padding-bottom: 0 !important; overflow: hidden; }
 }
 .session-terminal { position: absolute; inset: 0; padding: 6px 8px; }
 .session-terminal .xterm { height: 100%; }
+/* xterm 隐藏输入框（聚焦落点）：字号 ≥16px，避免 iOS 聚焦时整页放大（批次 M1 #2）。
+   该 textarea 恒为 0×0 不可见，改字号只影响 iOS 聚焦行为，不改变终端渲染 */
+.xterm .xterm-helper-textarea { font-size: 16px; }
 /* 回放期间隐藏终端: 服务端补发历史输出时 xterm 逐行渲染会自动跟随滚动,
    表现为"恢复会话时从头滚到尾"; 写入完成后再一次性呈现(视口已在底部) */
 .session-terminal.is-replaying .xterm { opacity: 0; }

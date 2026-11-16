@@ -25,7 +25,7 @@
 .settings-dir code {
     font-family: var(--mono); overflow-wrap: anywhere; color: var(--text-2);
 }
-.settings-dir-remove { flex: 0 0 auto; height: 32px; padding: 0 10px; font-size: 12px; }
+.settings-dir-remove { flex: 0 0 auto; min-height: 44px; padding: 0 10px; font-size: 12px; }
 .device-row { flex: 1; min-width: 0; }
 .device-name { font-size: 13px; font-weight: 600; color: var(--text-1); }
 .device-meta { display: block; margin-top: 2px; color: var(--text-3); overflow-wrap: anywhere; }
@@ -41,12 +41,12 @@
 /* 多机联邦 */
 .settings-subhead { margin: var(--sp-4) 0 var(--sp-3); font-size: 14px; font-weight: 600; color: var(--text-1); }
 .fed-token-row { display: flex; gap: 8px; align-items: stretch; }
-.fed-token-row .input { margin-bottom: var(--sp-2); flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; }
+.fed-token-row .input { margin-bottom: var(--sp-2); flex: 1; min-width: 0; font-family: var(--mono); font-size: 16px; }
 .fed-token-row .btn { flex: 0 0 auto; height: 44px; }
 .fed-remote { border: 1px solid var(--border-ctrl); border-radius: var(--radius-s); padding: var(--sp-3); margin-bottom: var(--sp-3); background: var(--surface); }
 .fed-remote-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-2); }
 .fed-remote-idx { font-size: 12px; color: var(--text-3); font-family: var(--mono); }
-.fed-remote .input { margin-bottom: var(--sp-2); font-size: 13px; }
+.fed-remote .input { margin-bottom: var(--sp-2); font-size: 16px; }
 .fed-check { display: flex; align-items: center; gap: 8px; margin-bottom: var(--sp-2); font-size: 13px; color: var(--text-1); cursor: pointer; }
 .fed-check input { width: 15px; height: 15px; accent-color: var(--accent, #4a7dff); }
 
@@ -79,6 +79,9 @@
 .agent-token-plain { margin-top: var(--sp-3); }
 .agent-token-plain-title { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-1); line-height: 1.6; }
 .agent-token-plain .input { font-family: var(--mono); }
+/* 权限下拉选项文案过长，固有宽度在 320/375/390 超出视口（M0 走查存量，
+   M1 补修卡验收 #4：各页 320 宽无横向溢出）；430 起本就容得下 */
+#agent-token-scope { max-width: 100%; }
 .agent-token-plain .settings-submit { margin-top: var(--sp-3); }
 
 /* 我的权限（批次 L）：规则行 + 示例判定 ✓/✗ 两列 */
@@ -96,7 +99,8 @@
 
 /* 主管卡片（批次 S）：行结构复用 agent-token-row 的计量，仅补主管特有的
    头部/令牌 chips/动作排布；行内按钮用专用类 .leads-action-btn（44px，
-   S4/ui-rules R11 触控底线）——不动存量 .settings-dir-remove 的全局样式 */
+   S4/ui-rules R11 触控底线）——批次 M1 起存量 .settings-dir-remove 也已
+   min-height:44px，两类按钮现在同规格 */
 .leads-row {
     padding: 10px; margin-bottom: 8px; border-radius: var(--radius-s);
     background: var(--bg-2);
