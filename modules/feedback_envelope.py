@@ -12,6 +12,8 @@
 import json
 import re
 
+from modules import textio
+
 PLATFORMS = ('web', 'desktop', 'mobile', 'agent')
 MAX_MESSAGE_CHARS = 500
 MAX_CONTACT_CHARS = 100
@@ -24,32 +26,23 @@ MAX_ROUTE_CHARS = 500
 _FILE_ID_RE = re.compile(r'^att_[0-9a-f]{16}$')
 
 
-def _str(value, limit=None):
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    if limit is not None:
-        value = value[:limit]
-    return value
-
-
 def validate(envelope):
     """校验信封。返回 (规范化信封, 错误说明)；错误时空串说明字段名（规格 §4.1）。"""
     if not isinstance(envelope, dict):
         return None, '请求体必须是 JSON 对象'
     env = json.loads(json.dumps(envelope))      # 深拷贝，避免调用方后续改动
-    key = _str(env.get('idempotency_key'), MAX_KEY_CHARS)
+    key = textio.cleanText(env.get('idempotency_key'), MAX_KEY_CHARS)
     if not key:
         return None, '缺少 idempotency_key'
     client = env.get('client') if isinstance(env.get('client'), dict) else {}
     if client.get('platform') not in PLATFORMS:
         return None, 'client.platform 必须是 web/desktop/mobile/agent'
-    if not _str(client.get('app_version'), MAX_APP_VERSION_CHARS):
+    if not textio.cleanText(client.get('app_version'), MAX_APP_VERSION_CHARS):
         return None, '缺少 client.app_version'
     ctx = env.get('context') if isinstance(env.get('context'), dict) else {}
-    if not _str(ctx.get('route'), MAX_ROUTE_CHARS):
+    if not textio.cleanText(ctx.get('route'), MAX_ROUTE_CHARS):
         return None, '缺少 context.route'
-    message = _str(env.get('message'), MAX_MESSAGE_CHARS + 1) or ''
+    message = textio.cleanText(env.get('message'), MAX_MESSAGE_CHARS + 1) or ''
     if not message:
         return None, 'message 不能为空'
     if len(message) > MAX_MESSAGE_CHARS:
@@ -84,7 +77,7 @@ def validate(envelope):
         return None, 'capture 必须是对象'
     if env.get('refs') is not None and not isinstance(env.get('refs'), dict):
         return None, 'refs 必须是对象'
-    env['schema_version'] = _str(env.get('schema_version'), 20) or '1.0'
+    env['schema_version'] = textio.cleanText(env.get('schema_version'), 20) or '1.0'
     env['message'] = message
     env['contact'] = contact.strip() if isinstance(contact, str) else ''
     # 客户端自报的 user 一律无效：服务端按会话/令牌写 submitter（规格 §1/§2）
