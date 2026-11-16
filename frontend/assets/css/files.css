@@ -97,7 +97,7 @@
     border: none;
     color: var(--text-2);
     font-size: 13px;
-    padding: 3px 6px;
+    padding: 8px 8px; min-height: 36px;
     border-radius: 6px;
     cursor: pointer;
     flex-shrink: 0;
@@ -110,7 +110,7 @@
     border: none;
     outline: none;
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 16px;
     background: transparent;
     color: var(--text-1);
 }
@@ -140,7 +140,7 @@
 }
 .fm-head .col { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; padding: 8px 0; }
 .fm-head .col:hover { color: var(--brand); }
-.fm-head .col .arrow { font-size: 10px; }
+.fm-head .col .arrow { font-size: 12px; }
 .fm-row {
     min-height: 40px; border-bottom: 1px solid var(--border); cursor: default;
     /* 移动端长按不能被系统文本选择/长按菜单打断 */
@@ -232,7 +232,7 @@
     .fm-row .mobile-meta {
         grid-area: meta;
         display: block;
-        font-size: 11px;
+        font-size: 12px;
         color: var(--text-3);
     }
     .fm-list:not(.icons) .fm-row { border-radius: var(--radius-s); }
@@ -320,7 +320,7 @@
 .preview-img { display: block; max-width: 100%; max-height: 68vh; margin: 10px auto 0; border: 1px solid var(--border); border-radius: var(--radius-s); background: #fff; }
 .preview-text {
     width: 100%; height: 60vh; margin-top: 10px;
-    font-family: var(--mono); font-size: 13px; line-height: 1.55;
+    font-family: var(--mono); font-size: 16px; line-height: 1.55;
     background: var(--surface); color: var(--text-1);
     border: 1px solid var(--border-ctrl); border-radius: var(--radius-s);
     padding: 10px 12px; resize: vertical; outline: none;
@@ -363,13 +363,13 @@
 /* 收件箱虚拟位置与来源徽标 */
 .fm-nav .nav-entry.is-active { background: var(--brand-bg); color: var(--brand); }
 .fm-nav .nav-count {
-    margin-left: auto; font-size: 11px; color: var(--text-3);
+    margin-left: auto; font-size: 12px; color: var(--text-3);
     background: var(--bg-2); border-radius: 999px; padding: 1px 7px;
 }
 .fm-badge {
     display: inline-block; margin-left: 6px; padding: 0 6px;
     border-radius: 6px; background: var(--bg-2); color: var(--text-3);
-    font-size: 10px; vertical-align: 1px;
+    font-size: 12px; vertical-align: 1px;
 }
 .fm-badge.dup { color: var(--warn); }
 /* 上传到 SSH 服务器：主机选择 */
@@ -395,14 +395,14 @@
 .upload-quick-chip {
     flex: 0 0 auto; padding: 3px 9px; border: 1px solid var(--border);
     border-radius: 999px; background: var(--surface); color: var(--text-2);
-    font-family: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
+    font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
 }
 .upload-quick-chip:hover { border-color: var(--brand); color: var(--brand); }
 .upload-quick-chip.active {
     border-color: var(--brand); background: var(--brand-bg); color: var(--brand);
 }
 @media (max-width: 640px) {
-    .fm-mobile-tip { display: inline; margin-left: auto; font-size: 11px; }
+    .fm-mobile-tip { display: inline; margin-left: auto; font-size: 12px; }
 }
 /* ====== Markdown 渲染预览 ====== */
 .preview-md {
@@ -477,7 +477,7 @@
 .preview-modal.is-fullscreen .preview-img { cursor: zoom-out; }
 .preview-modal .preview-md,
 .preview-modal .preview-text { flex: 1; min-height: 0; height: auto; }
-.preview-modal .preview-text { font-size: 14px; line-height: 1.6; }
+.preview-modal .preview-text { font-size: 16px; line-height: 1.6; }
 .preview-modal.is-fullscreen .preview-md,
 .preview-modal.is-fullscreen .preview-text { height: auto; }
 

@@ -47,7 +47,7 @@
 }
 .inbox-badge {
     background: var(--bg-2); color: var(--text-2); border-radius: 6px;
-    padding: 1px 7px; font-size: 11px;
+    padding: 1px 7px; font-size: 12px;
 }
 .inbox-dup { color: var(--warn); }
 
@@ -81,6 +81,8 @@
     font-size: 17px; font-weight: 600; margin-bottom: var(--sp-3);
 }
 .inbox-x {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; padding: 0;
     border: 0; background: transparent; font-size: 24px; line-height: 1;
     color: var(--text-3); cursor: pointer;
 }
@@ -101,7 +103,7 @@
     padding: var(--sp-3) var(--sp-4); margin: var(--sp-4) 0;
 }
 .inbox-dest-head { display: flex; align-items: center; gap: var(--sp-2); font-size: 13px; color: var(--text-2); }
-.inbox-conf { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.inbox-conf { margin-left: auto; font-size: 12px; color: var(--text-3); }
 .inbox-dest-path {
     font-family: var(--mono); font-size: 13px; color: var(--text-1);
     background: var(--bg-2); border-radius: var(--radius-s);
@@ -165,13 +167,13 @@
     background: var(--surface);
 }
 .fm-filter-row { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; }
-.fm-filter-label { flex: 0 0 auto; font-size: 11px; color: var(--text-3); }
+.fm-filter-label { flex: 0 0 auto; font-size: 12px; color: var(--text-3); }
 .fm-filter-chip {
     flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
     height: 26px; padding: 0 9px; border-radius: 999px;
     border: 1px solid var(--border); background: var(--surface);
     color: var(--text-2); font-size: 12px; cursor: pointer; white-space: nowrap;
 }
-.fm-filter-chip em { font-style: normal; font-size: 10px; color: var(--text-3); }
+.fm-filter-chip em { font-style: normal; font-size: 12px; color: var(--text-3); }
 .fm-filter-chip.active { border-color: var(--brand); color: var(--brand); background: var(--brand-bg); }
 .fm-filter-chip.active em { color: var(--brand); }

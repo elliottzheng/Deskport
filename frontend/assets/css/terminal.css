@@ -77,11 +77,14 @@ body { padding-bottom: 0 !important; overflow: hidden; }
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.session-state { flex-shrink: 0; font-size: 11px; color: var(--text-3); }
+.session-state { flex-shrink: 0; font-size: 12px; color: var(--text-3); }
 .session-close {
     flex-shrink: 0;
-    width: 20px;
-    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
     padding: 0;
     background: transparent;
     color: var(--text-3);
@@ -111,8 +114,8 @@ body { padding-bottom: 0 !important; overflow: hidden; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     background: var(--surface);
     color: var(--text-2);
@@ -129,8 +132,8 @@ body { padding-bottom: 0 !important; overflow: hidden; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     background: var(--surface);
     color: var(--text-2);
@@ -156,7 +159,7 @@ body { padding-bottom: 0 !important; overflow: hidden; }
 }
 .preset-command:hover { border-color: var(--brand); color: var(--brand); }
 .preset-tag {
-    font-size: 10px;
+    font-size: 12px;
     color: #fff;
     background: var(--brand);
     border-radius: 999px;
