@@ -14,11 +14,13 @@ KILL_WAIT_SEC = 2.0      # 进程终止后等锁释放的秒数（kimi 锁随进
 UNCLOSED = ('closed', 'cancelled')   # 这两个状态不算占用
 
 
-def holdersOf(kimiSessionId, excludeTaskId=''):
-    """还在占用该 kimi 会话的未关闭任务（close/cancelled 不算占用）。
+def holdersOf(kimiSessionId, excludeTaskId='', includeClosed=False):
+    """还在占用该 kimi 会话的任务（默认 close/cancelled 不算占用）。
 
     excludeTaskId：接回任务自己的卡——start() 重试路径上任务卡已建，
     不排除会把自己当成占用者，永远接不回来。
+    includeClosed：DR-S2 重试仍失败时点名用——节点侧进程可能没随任务
+    关闭而退出，已关闭/已取消的任务也算占用者，一并列出来。
     """
     wanted = str(kimiSessionId or '').strip()
     if not wanted:
@@ -27,7 +29,9 @@ def holdersOf(kimiSessionId, excludeTaskId=''):
     with store.repo.lock:
         out = []
         for t in store.repo.list():
-            if t.get('id') == excludeTaskId or t.get('status') in UNCLOSED:
+            if t.get('id') == excludeTaskId:
+                continue
+            if not includeClosed and t.get('status') in UNCLOSED:
                 continue
             if wanted in ((t.get('sessionId') or ''),
                           (t.get('kimiSessionId') or '')):
@@ -48,6 +52,23 @@ def _holdersError(kimiSessionId, holders):
         % (kimiSessionId, who))
 
 
+def _retryHoldersError(kimiSessionId, excludeTaskId, original):
+    """DR-S2：清场后重试仍 in use——点名占用者（closed/cancelled 也算，
+    节点侧进程可能没退），不再只抛节点原文。"""
+    holders = holdersOf(kimiSessionId, excludeTaskId, includeClosed=True)
+    who = '、'.join('%s（%s，%s）' % (h['id'], h['title'] or '无标题',
+                                     h['status']) for h in holders[:3])
+    if len(holders) > 3:
+        who += ' 等 %d 个' % len(holders)
+    if holders:
+        return RuntimeError(
+            '会话 %s 清场后重试仍 in use：节点侧进程未退出（占用任务：%s）——'
+            '稍后重试，或先关闭这些任务' % (kimiSessionId, who))
+    return RuntimeError(
+        '会话 %s 清场后重试仍 in use，且没有任务占用记录（节点侧残留进程，'
+        '原文：%s）——稍后重试' % (kimiSessionId, original))
+
+
 def ensureSessionFree(nodeName, kimiSessionId, excludeTaskId='', waitSec=None):
     """接回前清场：有未关闭任务在用 → 抛错（不强杀）；没有 → 经节点结束该
     会话的残留进程，等锁释放后返回，供调用方重试。"""
@@ -64,14 +85,21 @@ def ensureSessionFree(nodeName, kimiSessionId, excludeTaskId='', waitSec=None):
 
 def startSession(client, task):
     """会话线程的 client.start() 包装：遇节点 "in use"（残留持锁进程）→
-    按未关闭占用判定清场（经节点结束会话）后重试一次；仍有占用 → 抛错点名。
+    按未关闭占用判定清场（经节点结束会话）后重试一次；仍失败 → 抛错点名
+    占用者（DR-S2：含已关闭/已取消，节点进程可能没退）。
     非接回场景（无 kimiSessionId）原样放行。"""
     try:
         return client.start(session_id=task.get('sessionId') or None)
     except Exception as e:
         if 'in use' not in str(e) or not getattr(client, 'kimi_session_id', ''):
             raise
-        ensureSessionFree(task.get('node') or 'local',
-                          getattr(client, 'kimi_session_id', ''),
+        kimiSessionId = getattr(client, 'kimi_session_id', '')
+        ensureSessionFree(task.get('node') or 'local', kimiSessionId,
                           excludeTaskId=task.get('id') or '')
-        return client.start(session_id=task.get('sessionId') or None)
+        try:
+            return client.start(session_id=task.get('sessionId') or None)
+        except Exception as retry:
+            if 'in use' not in str(retry):
+                raise
+            raise _retryHoldersError(kimiSessionId, task.get('id') or '',
+                                     retry)

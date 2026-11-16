@@ -21,6 +21,7 @@ from flask import Blueprint, jsonify, request
 
 from modules import command_activity, command_tree, leads_inbox, leads_store, task_title
 from modules import tasks_store as store
+from modules import workitem_store, workitem_state
 
 blueprint = Blueprint('command_view', __name__)
 
@@ -269,6 +270,28 @@ def _leadRow(lead, tasks, unread, hasApproval, tasksById, now):
     return row      # 树的 lead 节点由 command_tree.leadNode 从这行长出来
 
 
+def _workitemPending(now):
+    """批次 G2：needs_judgment 的工作项 → 「等你处理」行。
+
+    行 shape 与其它 pending 行一致（kind/workItemId/title/detail/at/leadId），
+    前端按 kind='workitem' 出决策按钮（continue/rework/integrate/cancel）。
+    终态与排队中的不进——排队只是在等别的工作项，不需要人。
+    """
+    rows = []
+    for wi in workitem_store.repo.list():
+        if (wi.get('state') or '') != workitem_state.NEEDS_JUDGMENT:
+            continue
+        rows.append({
+            'kind': 'workitem', 'at': _int(wi.get('updatedAt')) or _int(wi.get('createdAt')),
+            'workItemId': wi.get('id') or '', 'leadId': wi.get('lead') or '',
+            'title': _firstLine(wi.get('title') or wi.get('id'), TITLE_MAX) or '工作项',
+            'detail': _firstLine(wi.get('judgmentReason'), REASON_MAX * 2),
+            'attempt': _int(wi.get('attempt')),
+            'maxAttempts': _int(wi.get('maxAttempts')),
+            'stage': workitem_state.stageOf(wi.get('state') or '')})
+    return rows
+
+
 def overview():
     """指挥台一屏数据（路由只做 jsonify；测试可直接调）。"""
     now = time.time()
@@ -304,6 +327,7 @@ def overview():
         if row:
             pending.append(row)
     pending += _problemPending(tasks, now)
+    pending += _workitemPending(now)
     pending.sort(key=lambda p: _int(p.get('at')), reverse=True)
 
     unassigned = byLead.get('', [])

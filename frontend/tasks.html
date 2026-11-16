@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/tasks.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/tasks-result.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/workitems.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/feedback.css?v=__BUILD__">
 </head>
 <body>
@@ -67,6 +68,16 @@
                             <button type="button" class="btn btn-ghost"
                                     @click="speakToLead(p.leadId)">回复</button>
                         </template>
+                        <template v-else-if="p.kind === 'workitem'">
+                            <button type="button" class="btn btn-secondary"
+                                    @click="wiDecidePending(p, 'continue')">继续</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="wiDecidePending(p, 'rework')">返工</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="wiDecidePending(p, 'integrate')">集成</button>
+                            <button type="button" class="btn btn-ghost"
+                                    @click="wiDecidePending(p, 'cancel')">取消</button>
+                        </template>
                         <template v-else>
                             <button type="button" class="btn btn-ghost"
                                     @click="openTask(p.taskId, p)">查看</button>
@@ -75,6 +86,81 @@
                         </template>
                     </div>
                     <p class="cmd-row-error" v-if="rowErrors[p.key]">{{ rowErrors[p.key] }}</p>
+                </div>
+            </section>
+
+            <section class="cmd-workitems">
+                <div class="cmd-sec-title">工作项<span class="cmd-sec-side">开发类活：平台推着走，只在要判断时叫你</span></div>
+                <p class="load-error cmd-load-error" v-if="workItemsError && !workItems.length">
+                    没加载出来：{{ workItemsError }}
+                    <button type="button" class="btn btn-secondary" @click="loadWorkItems">重试</button>
+                </p>
+                <p class="empty-tip" v-if="!workItemsError && !workItems.length">
+                    还没有工作项——派开发类活用右上角「新建」或技能包
+                    <code>deskport.py wi new …</code>。
+                </p>
+                <div class="cmd-wi-rows">
+                    <div class="cmd-wi" v-for="row in workItemRows" :key="row.id"
+                         :class="{open: row.open, judging: row.state === 'needs_judgment'}">
+                        <button type="button" class="cmd-wi-caret" :class="{open: row.open}"
+                                :title="row.open ? '折叠' : '展开名下任务'"
+                                :aria-label="row.open ? '折叠' : '展开名下任务'"
+                                @click.stop="toggleWorkItem(row)">&#9662;</button>
+                        <div class="cmd-wi-main" @click="toggleWorkItem(row)">
+                            <div class="cmd-wi-line1">
+                                <span class="cmd-wi-title">{{ row.title }}</span>
+                                <span class="cmd-badge" :class="'cmd-badge-' + wiStateClass(row.state)">{{ row.stateText }}</span>
+                                <span class="cmd-wi-attempt" :title="'第几次实施交付'">{{ row.attemptText }}</span>
+                                <span class="cmd-badge cmd-badge-result" v-if="row.verdictText"
+                                      :title="row.lastImplSummary">{{ row.verdictText }}</span>
+                            </div>
+                            <div class="cmd-wi-line2">
+                                <span class="cmd-wi-stages" :title="'阶段：' + row.stageText">
+                                    <span class="cmd-wi-stage" v-for="s in row.stageBar" :key="s.key"
+                                          :class="'is-' + s.state">{{ s.label }}</span>
+                                </span>
+                                <span class="cmd-wi-commit" v-if="row.lastImplCommit">{{ row.lastImplCommit }}</span>
+                                <span class="cmd-wi-time" v-if="row.updatedText">{{ row.updatedText }}</span>
+                            </div>
+                            <div class="cmd-wi-line2" v-if="row.queueHint">
+                                <span class="cmd-wi-queue">{{ row.queueHint }}</span>
+                            </div>
+                            <div class="cmd-wi-line2" v-if="row.state === 'needs_judgment'">
+                                <span class="cmd-wi-reason">待判断：{{ row.judgmentReason }}</span>
+                            </div>
+                            <div class="cmd-wi-line2" v-if="row.integration && row.integration.commit">
+                                <span class="cmd-wi-merged">已合并 {{ row.integration.commit.slice(0, 12) }}</span>
+                            </div>
+                        </div>
+                        <div class="cmd-wi-actions" v-if="row.state === 'needs_judgment'" @click.stop>
+                            <button type="button" class="btn btn-secondary"
+                                    :disabled="row.busy" @click="wiDecide(row, 'continue')">继续</button>
+                            <button type="button" class="btn btn-ghost"
+                                    :disabled="row.busy" @click="wiDecide(row, 'rework')">返工</button>
+                            <button type="button" class="btn btn-ghost"
+                                    :disabled="row.busy" @click="wiDecide(row, 'integrate')">集成</button>
+                            <button type="button" class="btn btn-ghost"
+                                    :disabled="row.busy" @click="wiCancel(row)">取消</button>
+                        </div>
+                        <div class="cmd-wi-detail" v-if="row.open">
+                            <p class="cmd-wi-detail-empty" v-if="!row.tasks.length">名下任务加载中…</p>
+                            <div class="cmd-wi-task" v-for="t in row.tasks" :key="t.id"
+                                 @click="openTask(t.id)">
+                                <span class="cmd-dot" :class="'task-dot is-' + t.status"></span>
+                                <span class="cmd-wi-task-name">{{ t.title || t.id }}</span>
+                                <span class="cmd-wi-task-sub">{{ wiTaskStatusText(t.status) }}
+                                    <template v-if="t.expects"> · {{ t.expects }}</template>
+                                    <template v-if="t.resultLabel"> · {{ t.resultLabel }}</template>
+                                </span>
+                            </div>
+                            <p class="cmd-wi-log" v-if="row.detail && row.detail.integrateLogTail">
+                                <details>
+                                    <summary>集成日志（尾部）</summary>
+                                    <pre>{{ row.detail.integrateLogTail }}</pre>
+                                </details>
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -510,6 +596,7 @@
 <script src="/assets/js/settings-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-leads.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-result.js?v=__BUILD__"></script>
+<script src="/assets/js/workitems.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-overview.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-tree.js?v=__BUILD__"></script>
 <script src="/assets/js/tasks-events.js?v=__BUILD__"></script>

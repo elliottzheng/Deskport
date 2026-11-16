@@ -676,8 +676,10 @@ def _waitTask(task, seconds, allow, deny):
 if __name__ == "__main__":
     import argparse, sys
 
-    for s in (sys.stdout, sys.stderr):   # Windows 控制台默认 GBK
-        getattr(s, "reconfigure", lambda **k: None)(encoding="utf-8")
+    for s in (sys.stdout, sys.stderr): getattr(s, "reconfigure", lambda **k: None)(encoding="utf-8")   # Windows 控制台默认 GBK
+    if len(sys.argv) > 1 and sys.argv[1] == "wi":   # 工作项子命令在 wi.py（本文件在行数存量上限内）
+        import wi
+        sys.exit(wi.main(sys.argv[2:]))
 
     ap = argparse.ArgumentParser(description="Deskport Agent API CLI（默认读 .deskport.json）")
     ap.add_argument("--url")
@@ -762,9 +764,7 @@ if __name__ == "__main__":
             sys.exit(0)
         if a.cmd in ("lead", "inbox", "report", "close", "approve"):
             cfg = _load_config()
-            dp = Deskport(a.url or cfg.get("url"),
-                          insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")),
-                          cafile=cfg.get("cafile"))
+            dp = Deskport(a.url or cfg.get("url"), insecure=a.insecure if a.insecure is not None else bool(cfg.get("insecure")), cafile=cfg.get("cafile"))
             if a.cmd == "lead":
                 if a.register:
                     try:

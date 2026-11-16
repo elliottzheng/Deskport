@@ -490,5 +490,6 @@ app.mixin(WPTasksOverview.mixin());
 app.mixin(WPTasksOverview.tree.mixin());   // 批次 U2：指挥树（tasks-tree.js）
 app.mixin(WPTasksOverview.events.mixin());   // 批次 U3：事件流说人话（tasks-events.js）
 app.mixin(WPTasksResult.mixin());   // 批次 G1：结果卡片与行内标签（tasks-result.js）
+app.mixin(WPWorkItems.mixin());   // 批次 G2：工作区面板（workitems.js）
 app.mount('#app');
 })();

@@ -201,16 +201,19 @@ def register(app):
             # 没令牌 → 落到下方 /api/ 统一 401（与网页未登录一致）
         if path.startswith('/api/agent/') or path.startswith('/api/tasks') \
                 or path.startswith('/api/worklines') \
+                or path.startswith('/api/workitems') \
                 or path.startswith('/api/capability/'):
             # 智能体令牌通道: 无 Cookie 登录时, 长效令牌可放行。
             # /api/tasks、/api/worklines 放行后外部智能体可建任务/收事件/回权限
+            # /api/workitems 同档（批次 G2：主管派/看/决策工作项）
             # /api/capability/me 是只读自述(主体+规则+示例判定), 任何有效令牌
             # (含设备令牌) 都该能问"我能干什么", 所以不跟着要 full scope
             from modules import agent_api as agentModule
             agent = agentModule.agentFromRequest()
             if agent is not None:
-                if path.startswith('/api/tasks') or path.startswith('/api/worklines'):
-                    # 这两组前缀没有逐端点守卫, 在入口统一要求全权 scope
+                if path.startswith('/api/tasks') or path.startswith('/api/worklines') \
+                        or path.startswith('/api/workitems'):
+                    # 这几组前缀没有逐端点守卫, 在入口统一要求全权 scope
                     # （受限令牌如手机上传 scope 在这里 403, 不进任务端点）
                     denied = agentModule.scopeDenied(agent, agentModule.SCOPE_FULL)
                     if denied is not None:

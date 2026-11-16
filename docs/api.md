@@ -251,3 +251,68 @@ MJPEG 长响应，`Content-Type: multipart/x-mixed-replace; boundary=frame`。�
 
 前端按这些字段 + 树上索引渲染成「任务标题 · 主管/派活者 · 命令 · 用途」，
 不再把 command 与其它参数糊成一行、也不再直接显示原始 JSON。
+
+## 工作项（批次 G2：流水线）
+
+开发类工作的推进单元：平台建 worktree/分支 → 派实施 → 同步 main → 派独立验收 →
+返工回同一实施会话 → 主仓门禁+全量后合并。主管只在 `needs_judgment` 被叫醒。
+鉴权同任务：网页会话全看；绑了主管的令牌只看自己的、只能决策/取消自己的。
+
+### `POST /api/workitems`
+
+创建（主管/网页）。请求体：`{projectId, specPath 或 specText, implModel,
+verifyModel（必须与 implModel 不同）, title?, footprint[]（必填，glob）,
+maxAttempts?（缺省 3）, lead?, forceParallel?}`。平台先在工作节点建
+worktree 与分支（`git worktree add <worktreeRoot>/<id> -b wi/<id> <main>`），
+再建实施任务（`expects=impl`、cwd=worktree、策略=项目写边界）；同项目足迹
+相交的在跑工作项会挡住它——直接进 `queued`（响应里带 `queuedFor`）。
+
+```json
+{"ok": true, "project": "deskport",
+ "workItem": {"id": "wi-ab12cd", "state": "implementing", "stage": "impl",
+              "attempt": 1, "branch": "wi/wi-ab12cd", "worktree": "E:/…/.wt/wi-ab12cd",
+              "implTask": "…", "footprint": ["modules/*.py"]}}
+```
+
+### `GET /api/workitems`
+
+列表（主管只返自己的）。响应 `{workItems: [brief…], count, byState}`；
+brief 带 `state`/`stage`（impl/verify/integrate/queue/done/judge/fail/cancelled）、
+`attempt`/`maxAttempts`、`lastVerdict`/`mustFix`、`queuedFor`/`queuedShare`、
+`integration{commit,gates,tests,log}`、`judgmentReason`、`history`（最近 20 条）。
+
+### `GET /api/workitems/<id>`
+
+详情：brief + `tasks`（名下任务 brief）+ `integrateLogTail`（集成日志尾部 8KB）。
+
+### `POST /api/workitems/<id>/decision`
+
+主管判断（仅 `needs_judgment` 可调，否则 409）。`{action: continue|rework|
+integrate|cancel, text?}`：continue 回到进来前的状态（text 作为主管说明发给
+当前任务）；rework 按 text 返工（算一次 attempt）；integrate 直接进集成；
+cancel 取消并收尾。
+
+### `POST /api/workitems/<id>/cancel`
+
+取消（任何非终态）：关名下所有任务、拆 worktree（分支保留）。
+
+### `GET/POST /api/settings/projects` · `DELETE /api/settings/projects/<id>`
+
+项目配置（只认网页会话）。字段：`{id, name, node（暂只支持 local）, repoPath,
+mainBranch, worktreeRoot, gatesCmd, testCmd, setupNotes, fallbackModels[],
+policy}`；命令支持 `{repo}`/`{tmp}` 占位符。首次访问种一条内置项目
+`deskport`（本仓库副本；门禁/测试命令取 `.drive/merge_branch.py` 与
+`tools/run_tests.py` 的做法），内置项可改参数、不可删除。
+
+### 状态机（文字图）
+
+```text
+queued ──▶ implementing ──▶ verifying ──┬─▶ integrating ──▶ integrated
+  ▲             ▲   ▲                    │      │
+  │             │   └── rework ──────────┘      └── 同步冲突/集成失败
+  │             │                                （回 implementing）
+  │             └── 任务起不来/卡死/提前收工/换手失败/结束无结果
+  └── needs_judgment ◀── 实施有 questions / 验收 needs_judgment /
+                         attempt 超限 / 主管叫停
+failed / cancelled 为旁路终态；每次迁移写 history（时间、原因、关联任务/提交）。
+```

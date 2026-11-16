@@ -273,6 +273,29 @@ def test_status_change_marks_unread_even_for_own_item(both):
     assert both.owner.get('/api/feedback/mine').get_json()['unread'] == 1   # 自己的评论不叠加
 
 
+def test_f1b_own_confirm_and_reopen_do_not_relight_unread(both):
+    """F1-b：提交者自己的 confirm/reopen 不点亮自己的红点（主控拍板：动作
+    执行者 == 反馈提交者时不点灯）；处理者/别人的动作照旧 +1。"""
+    fid = submitAgent(both, _n='f1b').get_json()['feedback_id']
+    patchOwner(both, fid, status='acknowledged')
+    patchOwner(both, fid, status='processing', reason='查一下')
+    patchOwner(both, fid, status='resolved', reason='已修复')
+    assert agentGet(both, '/api/feedback/mine').get_json()['unread'] == 1  # 处理者流转 → 亮
+    agentPost(both, '/api/feedback/mine/read')
+    assert agentGet(both, '/api/feedback/mine').get_json()['unread'] == 0
+    # 提交者自己的 reopen：不点自己的灯（打开即清的那种复亮不再出现）
+    reopen = agentPost(both, '/api/feedback/%s/reopen' % fid,
+                       json={'reason': '还是有问题'})
+    assert reopen.status_code == 200
+    assert agentGet(both, '/api/feedback/mine').get_json()['unread'] == 0
+    # 处理者再流转一次 → 照旧 +1；清掉后提交者自己的 confirm 也不点
+    patchOwner(both, fid, status='resolved', reason='又好了')
+    assert agentGet(both, '/api/feedback/mine').get_json()['unread'] == 1
+    agentPost(both, '/api/feedback/mine/read')
+    assert agentPost(both, '/api/feedback/%s/confirm' % fid).status_code == 200
+    assert agentGet(both, '/api/feedback/mine').get_json()['unread'] == 0
+
+
 def test_mine_lists_only_own(both):
     owner_fid = submitOwner(both, _n='mo').get_json()['feedback_id']
     agent_fid = submitAgent(both, _n='ma').get_json()['feedback_id']

@@ -129,6 +129,35 @@ def test_required_fields_are_reported(env):
         assert needle in resp.get_json()['error'], (over, resp.get_json())
 
 
+def test_f1a_malformed_submitted_at_is_400_not_500(env):
+    """F1-a：畸形 submitted_at（非字符串）→ 400 并点名字段（规格 §4.1），
+    不再 AttributeError 500；缺省/空值仍按 v1 兜底为服务端时间。"""
+    bad = submit(env, idempotency_key='bad-at', submitted_at=123)
+    assert bad.status_code == 400
+    assert 'submitted_at' in bad.get_json()['error']
+    for empty in ('', '   ', None):
+        ok = submit(env, idempotency_key='no-at-%s' % (empty or 'none'),
+                    submitted_at=empty)
+        assert ok.status_code == 200, empty
+        item = env.client.get('/api/feedback/' + ok.get_json()['feedback_id']) \
+                   .get_json()['feedback']
+        assert item['submitted_at']                 # 服务端补当前时间，不 500
+
+
+def test_f1a_over_long_free_text_columns_truncated_to_40(env):
+    """F1-a 顺带：该文件内同类自由文本列（submitted_at / feedback_id /
+    page_id）超长按 v1 口径截 40——原无上限，5000 字也能整条落库。"""
+    resp = submit(env, idempotency_key='long-at', feedback_id='fb-' + 'x' * 100,
+                  submitted_at='2' * 5000,
+                  context={'route': '/settings', 'page_id': 'p' * 5000})
+    assert resp.status_code == 200
+    item = env.client.get('/api/feedback/' + resp.get_json()['feedback_id']) \
+               .get_json()['feedback']
+    assert item['submitted_at'] == '2' * 40
+    assert item['page_id'] == 'p' * 40
+    assert item['feedback_id'] == 'fb-' + 'x' * 37      # 全列 40 字符
+
+
 def test_agent_platform_envelope(env):
     """v2 允许 client.platform=agent（规格 §2）。"""
     resp = submit(env, idempotency_key='k-agent-platform',
