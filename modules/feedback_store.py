@@ -175,16 +175,35 @@ def sameSubmitter(recordSubmitter, identity):
 
 # ---------------------------------------------------------------- 提交
 
+def _str(value, limit=None):
+    """自由文本口径（v1 同款）：非字符串返回 None；strip 后按上限截断。
+
+    服务端补写/兜底的展示列（submitted_at / feedback_id / page_id）走这里——
+    客户端爱传什么都不能让落库路径 500，超长也不能无上限整条落库（规格 §4.1）。
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if limit is not None:
+        value = value[:limit]
+    return value
+
+
 def submit(envelope, submitter):
     """落一条反馈。返回 (item, created, err)。
 
-    err 为 (httpCode, 说明)：feedback_id 撞号 409；附件不存在/被占用 400。
+    err 为 (httpCode, 说明)：feedback_id 撞号 409；附件不存在/被占用 400；
+    submitted_at 传了但不是字符串 400（规格 §4.1：指出字段名，不 500）。
     幂等：同 (submitter.id, idempotency_key) 重复提交返回首次记录（created=False）；
     不同身份用同一个键各落一条（规格 §4.2，v1 的全局键会静默吞反馈）。
     """
     sid = submitter.get('id') or ''
     key = envelope['idempotency_key']
-    fid = envelope.get('feedback_id') or ''
+    fid = _str(envelope.get('feedback_id'), 40) or ''
+    submittedAt = _str(envelope.get('submitted_at'), 40)
+    if submittedAt is None and envelope.get('submitted_at') is not None:
+        return None, False, (400, 'submitted_at 必须是字符串（ISO 8601，'
+                                   '如 2026-11-16T10:30:00+08:00）')
     with _LOCK:
         data = load()
         for item in data['items']:
@@ -211,7 +230,7 @@ def submit(envelope, submitter):
             'feedback_id': fid or uuid.uuid4().hex,
             'idempotency_key': key,
             'received_at': now,
-            'submitted_at': (envelope.get('submitted_at') or '').strip() or now,
+            'submitted_at': submittedAt or now,
             'status': 'submitted',
             'status_note': '',
             'submitter': envelope['submitter'],
@@ -219,7 +238,7 @@ def submit(envelope, submitter):
             'role': 'agent' if submitter.get('kind') == 'agent' else 'owner',
             'anonymous': False,
             'route': ctx.get('route') or '',
-            'page_id': ctx.get('page_id') or '',
+            'page_id': _str(ctx.get('page_id'), 40) or '',
             'message': envelope.get('message') or '',
             'comments': [],
             'unread': False,
