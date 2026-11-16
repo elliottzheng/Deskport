@@ -1,17 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Deskport 本机作为内置主机（node/host='local'）——与 SSH 主机全等价（反馈 §7b）。
-
-原则：能 exec、能开会话、能 SFTP 的目标不区分本机与远端，接口、参数、
-响应格式、鉴权、审计完全一致，只换 node/host 名与默认 shell。
-
-shell:
-    bash        Git Bash（默认）——智能体写的命令多为 POSIX 风格
-    powershell  Windows PowerShell 5.1（服务端统一转 UTF-8 / 统一退出码）
-    pwsh        PowerShell 7
-    会话（常驻通道）目前只支持 bash；powershell/pwsh 用单发 exec。
-
-路径: `E:\事项` 与 `/e/事项` 双向接受，响应统一返回 Windows 原生写法。
-边界: agentLocalEnabled=false 时 local 从 hosts 消失且所有调用 404。
+"""Deskport 本机作为内置主机（node/host='local'）——与 SSH 主机全等价（反馈 §7b）：
+接口、参数、响应格式、鉴权、审计与远端一致，只换 node/host 名与默认 shell。
+shell：bash（Git Bash 默认）/ powershell（5.1，服务端统一转 UTF-8 与退出码）/
+pwsh（7）；常驻会话只支持 bash，其余单发 exec。路径 `E:\事项` 与 `/e/事项`
+双向接受，响应统一 Windows 原生写法；agentLocalEnabled=false 时 local 消失且 404。
 """
 import base64
 import hashlib
@@ -33,7 +25,6 @@ from modules.agent_sftp import mapSftpError
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 CREATE_NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
-BASH_CANDIDATES = ('bash',)
 _LOCAL_SESSES = {}
 _LOCAL_SESS_LOCK = threading.Lock()
 LOCAL_SESSION_MAX = 8
@@ -78,9 +69,21 @@ def normalizeLocalPath(path):
     return text
 
 
+def _bashFallbackPaths():
+    """Windows 惯例路径：Git for Windows 默认只把 Git\cmd（git.exe）加进 PATH，
+    bash.exe 在 Git\bin——服务进程 which('bash') 因此永远失败（反馈 ced9ad57）。"""
+    return [r'C:\Program Files\Git\bin\bash.exe',
+            r'C:\Program Files (x86)\Git\bin\bash.exe',
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Git\bin\bash.exe'),
+            os.path.expandvars(r'%PROGRAMFILES%\Git\bin\bash.exe')]
+
+
 def _findBash():
     import shutil
-    return shutil.which('bash')
+    found = shutil.which('bash')
+    if found or os.name != 'nt':
+        return found
+    return next((c for c in _bashFallbackPaths() if os.path.isfile(c)), None)
 
 
 # ---------------------------------------------------------------- exec
@@ -97,12 +100,9 @@ _PS_SUFFIX = '\nif ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE } else { exit 
 
 def _buildLocalCmd(command, shell):
     """本地子进程参数。bash 直接传；PS 走 -EncodedCommand 免引号地狱。
-
-    PowerShell 5.1 在输出重定向时：默认把进度流序列化成 CLIXML 噪音进
-    stderr（ProgressPreference 压掉）；且 exit 语句会终止在对象格式化器
-    之前——`Get-Location` 这类对象输出被整个吞掉（字符串没事）。因此命令
-    包进 `& { ... } | Out-Default`：格式化在管道内同步完成，exit 前已落盘；
-    `$LASTEXITCODE` 仍穿透为进程退出码。"""
+    PS 5.1 重定向时进度流序列化成 CLIXML 噪音进 stderr，且 exit 早于对象
+    格式化器（Get-Location 等对象输出被吞）；故命令包进 `& { ... } | Out-Default`
+    让格式化先落盘，$LASTEXITCODE 仍穿透为退出码。"""
     if shell == 'bash':
         bash = _findBash()
         if not bash:
@@ -132,8 +132,8 @@ def execLocal(command, timeoutSec, cwd='', shell='bash'):
     if nativeCwd and not os.path.isdir(nativeCwd):
         return {'exit': 1, 'out': b'', 'err': ('cd: %s: No such file or directory'
                                                % nativeCwd).encode('utf-8'),
-                'timedOut': False, 'reason': '', 'pid': None,
-                'truncated': False, 'durationMs': 0}
+                'timedOut': False, 'reason': '', 'pid': None, 'truncated': False,
+                'durationMs': 0}
     argv, err = _buildLocalCmd(command, shell)
     if err:
         return {'exit': 1, 'out': b'', 'err': err.encode('utf-8'),
@@ -164,10 +164,8 @@ def execLocal(command, timeoutSec, cwd='', shell='bash'):
 # ---------------------------------------------------------------- 会话通道
 
 class LocalBashSession:
-    """本机常驻 bash（与 SSH 会话同一套哨兵协议，duck-typing 通道）。
-
-    实现与 tests/test_agent_sessions.LocalBashChannel 相同的接口约定，
-    让 agent_sessions 的命令投递/游标/哨兵逻辑原样复用。
+    """本机常驻 bash（与 SSH 会话同一套哨兵协议，duck-typing 通道）；接口约定
+    与 tests/test_agent_sessions.LocalBashChannel 相同，复用其投递/游标/哨兵逻辑。
     """
 
     def __init__(self, bootCwd=''):
