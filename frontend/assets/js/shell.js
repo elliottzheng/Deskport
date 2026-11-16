@@ -315,7 +315,12 @@ window.AppShellV2 = (function () {
             + PLUGIN_EXTERNAL.map(function (p) {
                 return '<a class="more-item" href="' + escapeAttr(p.href) + '" target="_blank" rel="noopener">'
                     + svg(p.icon) + '<span>' + escapeHtml(p.label) + '</span></a>';
-            }).join('');
+            }).join('')
+            // 横屏矮屏隐掉整条 .shell-top（shell.css 横屏查询）后顶栏的退出不可达，
+            // 更多面板补一个退出（M4 S2）；与顶栏同一 href，逻辑不复制
+            + '<a class="more-item" href="/logout">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>'
+            + '<span>退出</span></a>';
         document.getElementById('shell-more').hidden = true;
 
         document.getElementById('shell-nav').addEventListener('click', function (e) {
