@@ -37,6 +37,10 @@ def waitWhileDraining(task=None):
 
     返回 True = 等待期间任务已被关闭/终态，调用方不要开这一轮
     （_promptOnce 直接返回，交回会话循环走 close 收尾）。
+
+    DR-S1：排空结束与 close 撞毫秒级窗口时，循环条件先于关闭标志被观测到
+    （wait 返回 → active 已 False → 退出），会对已关闭任务开一轮、把终态
+    由 cancelled 翻成 failed——while 退出后补查一次关闭标志再返回。
     """
     with _cond:
         while _state['active']:
@@ -45,6 +49,10 @@ def waitWhileDraining(task=None):
                                      in ('closed', 'cancelled')):
                 return True
             _cond.wait(0.5)
+        if task is not None and (task.get('closedByUser')
+                                 or (task.get('status') or '')
+                                 in ('closed', 'cancelled')):
+            return True
     return False
 
 

@@ -35,16 +35,19 @@ def _isSelf(item, actorId):
 def _apply(item, target, reason, actor):
     """落一次流转：状态 + 最后一句说明 + history + 未读。调用方持锁。
 
-    未读规则（规格 §6.3 / 批次 F1 第 6 项）：**状态变化一律**点亮提交者红点——
-    含处理者对待自己提的那条（设置页与反馈面板是两个界面，流转完该在「我的反馈」
-    里看到结果）。提交者自己的评论不点亮（ops.addComment 里判）。
+    未读规则（规格 §6.3 / 批次 F1 第 6 项 / 本批 F1-b 主控拍板）：状态变化
+    点亮提交者红点，但**提交者自己的动作不加**（他自己知道）——confirm/reopen
+    的执行者只能是提交者本人（入口 403 挡着），actor='submitter' 即本人，
+    不点灯；处理者流转（含主人对待自己提的那条：两个界面，流转完该在
+    「我的反馈」里看到结果）与系统自动确认照旧 +1。
     """
     current = item.get('status') or 'submitted'
     now = store.nowStamp()
     item['status'] = target
     item['status_note'] = reason
     store.appendHistory(item, current, target, actor, reason, now)
-    store.markUnread(item)
+    if actor != 'submitter':
+        store.markUnread(item)
 
 
 def _owned(item, identity):

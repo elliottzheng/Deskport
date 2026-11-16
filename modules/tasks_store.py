@@ -43,7 +43,7 @@ _JSONL_DONE = ('closed', 'cancelled', 'failed', 'interrupted')
 # ---- 批 PS2：1 秒粒度的后台 flush（削峰） ----
 # 进程内所有仓库共用一条 flush 线程（弱引用登记，仓库被回收即退出登记）：
 # 测试进程会建上百个仓库，每库一条常驻线程会拖住仓库与 jsonl 句柄不释放。
-_flushRepos = []            # weakref.ref(TaskRepository)
+_flushRepos = []            # weakref.ref(TaskRepository)，atexit 退出也冲这张表
 _flushLock = threading.Lock()
 _flushThread = None
 
@@ -71,13 +71,13 @@ def _ensureFlushThread():
 
 
 def _flushAtExit():
-    """进程退出（atexit）：最后一次 flush + 关全部 jsonl 句柄。
-
-    只冲已物化的仓库（_LazyRepo 上没建过就是空操作）。kill -9 / 硬终止不进
-    atexit——那正是规格接受的 ≤1 秒元数据丢失窗口；正常退出与 Ctrl+C
-    （KeyboardInterrupt 让解释器走 atexit）都覆盖。
-    """
-    repo.shutdown()
+    """进程退出（atexit）：冲全部已注册仓库的最后一次 flush + 关 jsonl 句柄
+    （批 PS2：不只模块级单例；幂等，已 shutdown 的仓库重复冲是空操作）。"""
+    for repo in [r for r in (ref() for ref in _flushRepos) if r is not None]:
+        try:
+            repo.shutdown()
+        except Exception:
+            log.warning('flush tasks failed', exc_info=True)
 
 
 atexit.register(_flushAtExit)
@@ -470,8 +470,8 @@ class _LazyRepo:
         return getattr(self._target(), name)
 
     def flush(self):
-        """仓库还没物化（import 即退出的脚本）时是空操作——不能为退出把
-        仓库建出来（atexit 钩子走这里）。"""
+        """仓库还没物化（import 即退出的脚本）时是空操作——不能为一次 flush
+        把仓库建出来；atexit 退出 flush 走 _flushRepos 登记表，不经这里。"""
         if self._value is not None:
             self._value.flush()
 
