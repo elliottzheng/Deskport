@@ -65,3 +65,22 @@
 }
 .status-ok { background: var(--brand-bg); color: var(--brand); }
 .status-err { background: var(--err-bg); color: var(--err); }
+
+/* ====== 移动端页面头部压缩 (批次 M6) ======
+   screen 副标题是操作说明（点击=左键等），不舍弃：压到 12px 单行 ellipsis；
+   其余页副标题在 app.css 同断点默认隐藏。p 默认 1em 上边距要显式清掉。
+   左块 min-width:0 必须给：副标题 nowrap 后 flex 左块按 min-content 取值，
+   会把右侧 status-pill 挤出视口（横向溢出）。头部下边距再紧一档，让画面尽早开始。 */
+@media (max-width: 640px) {
+    .screen-container .page-sub {
+        display: block;
+        font-size: 12px;
+        line-height: 1.3;
+        margin-top: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .screen-container .page-head > div { min-width: 0; }
+    .screen-container .page-head { margin-bottom: var(--sp-1); }
+}

@@ -141,3 +141,9 @@
     .share-ways { grid-template-columns: repeat(3, 1fr); }
     .share-way { padding: var(--sp-3); }
 }
+
+/* ====== 批次 M6: 分享页头部随全站移动端头部一并收紧 ====== */
+@media (max-width: 640px) {
+    .share-head { margin: var(--sp-1) 0 var(--sp-3); }
+    .share-brand { font-size: 18px; }
+}
