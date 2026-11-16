@@ -28,7 +28,16 @@ test('recentList: 空命令/坏数据原样带回，不写坏状态', () => {
                      ['1', '2', '3', '4', '5']);
 });
 
-test('recentList: 存储键名与上限符合规格（cmd.recent / 5）', () => {
-    assert.equal(RECENT_KEY, 'cmd.recent');
+test('recentList: 去重置顶不制造重复条目（未触顶时的直接断言，S3 补测）', () => {
+    // 封顶会掩没重复（验收实验 4），下面用未超上限的短列表直接锁死去重
+    assert.deepEqual(recentList(['a', 'b'], 'a'), ['a', 'b']);
+    assert.deepEqual(recentList(['a', 'b', 'c'], 'b'), ['b', 'a', 'c']);
+    assert.deepEqual(recentList(['x', 'a', 'b'], 'x'), ['x', 'a', 'b']);
+    // 同一命令连续执行两次也不叠加
+    assert.deepEqual(recentList(recentList([], 'go'), 'go'), ['go']);
+});
+
+test('recentList: 存储键名与上限符合规格（wp.cmd.recent / 5，S2 对齐 wp.* 惯例）', () => {
+    assert.equal(RECENT_KEY, 'wp.cmd.recent');
     assert.equal(RECENT_MAX, 5);
 });

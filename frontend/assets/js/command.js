@@ -2,7 +2,7 @@
 (function () {
     'use strict';
 
-    var RECENT_KEY = 'cmd.recent';   // 最近执行列表的本地存储键（规格 M3 #6）
+    var RECENT_KEY = 'wp.cmd.recent';   // 最近执行列表的本地存储键（规格 M3 #6；wp.* 项目惯例，先例 wp.shell.recent）
     var RECENT_MAX = 5;              // 首屏只摆 3–5 条，取上限 5
 
     // 纯函数：执行成功后更新「最近执行」——去重、新的在前、封顶。

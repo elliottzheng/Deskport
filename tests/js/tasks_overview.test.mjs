@@ -6,7 +6,7 @@ import overview from '../../frontend/assets/js/tasks-overview.js';
 const {
     taskStatusText, taskModeText, stateText, firstLine, countsText,
     taskRowView, pendingRows, mergeMoreTasks, newLeadKindChoices,
-    splitPermissionOptions,
+    splitPermissionOptions, menuFlipUp,
 } = overview;
 
 test('taskStatusText: 九态映射，未知/空原样兜底', () => {
@@ -198,4 +198,20 @@ test('pendingRows: 审批行带 primaryOptions/moreOptions（M3 #4）', () => {
     // 非审批行也有这两个键（空数组），模板按 kind 分支不读它们
     assert.deepEqual(rows[1].primaryOptions, []);
     assert.deepEqual(rows[1].moreOptions, []);
+});
+
+test('menuFlipUp: 向下放越界（底栏顶/下一行 ··· 顶）才翻，向上不出顶栏（M3 返工 P1/P2）', () => {
+    // 390×640 实测几何：四项菜单向下放到 606；下一行 ··· 顶 540、底栏顶 580
+    // ——越过更紧的 540，翻转后顶 2*410-606=214 不出顶栏（56）→ 翻
+    assert.equal(menuFlipUp(410, 606, 540, 56), true);
+    // P1 末行：只有底栏一条线（606 > 580）→ 翻
+    assert.equal(menuFlipUp(500, 606, 580, 56), true);
+    // 向下放不越界（520 ≤ 540 / 570 ≤ 580）→ 不翻
+    assert.equal(menuFlipUp(410, 520, 540, 56), false);
+    assert.equal(menuFlipUp(500, 570, 580, 56), false);
+    // 向上翻会钻到顶栏上（翻转后顶 4 < 56）→ 不翻，保持向下（极限几何退让）
+    assert.equal(menuFlipUp(200, 396, 300, 56), false);
+    // 恰好贴线不翻（bottom == limit）
+    assert.equal(menuFlipUp(410, 540, 540, 56), false);
+    assert.equal(menuFlipUp(410, 606, 214, 56), true);
 });

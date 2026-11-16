@@ -313,14 +313,15 @@ task-back { display: none; }
 }
 .cmd-pending-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex-shrink: 1; }
 .cmd-pending-actions .btn { min-height: 44px; }
-/* 审批行「更多」菜单（M3 #4）：次级动作收进 ··· 弹出，320 宽主操作仍单行 */
+/* 审批行「更多」菜单（M3 #4）：次级动作收进 ··· 弹出，320 宽主操作仍单行；
+   z-index 120 高于移动端底栏 100（先例 inbox.css:71），越界时 .up 向上翻转 */
 .cmd-menu-wrap { position: relative; display: inline-flex; }
 .cmd-menu {
-    position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 120;
     display: flex; flex-direction: column; gap: 2px; min-width: 128px; padding: 6px;
-    border: 1px solid var(--border); border-radius: var(--radius-m);
-    background: var(--surface); box-shadow: var(--shadow-float);
+    border: 1px solid var(--border); border-radius: var(--radius-m); background: var(--surface); box-shadow: var(--shadow-float);
 }
+.cmd-menu.up { top: auto; bottom: calc(100% + 4px); }
 .cmd-menu .btn { width: 100%; justify-content: flex-start; min-height: 44px; }
 /* 行动失败的就地错误条（U 返工）：占满一行，几秒后或下次成功时消失 */
 .cmd-row-error {

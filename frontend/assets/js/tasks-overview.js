@@ -66,6 +66,12 @@
         return {primary: primary, more: more};
     }
 
+    // 「更多」菜单翻转判定（M3 返工 P1/P2，纯函数供单测）：top/bottom 是菜单默认向下
+    // 放的矩形；向下越过 limit（底栏顶/下一行动作区顶，取更紧者）且向上翻不出顶栏就翻
+    function menuFlipUp(top, bottom, limit, headBottom) {
+        return bottom > limit && (2 * top - bottom) >= headBottom;
+    }
+
     // overview 的 summaryBrief → 行视图。agoText 由调用方给（WPCommon.fmtAgo 的产物，
     // 相对时间格式全站只许 common.js 一份）。resultLabel（批次 G1）：纯函数在
     // tasks-result.js，node 单测环境没有该全局时按空处理。
@@ -180,6 +186,9 @@
                     speakBusy: false,
                     speakError: '',
                     rowMenus: {},          // M3 #4：哪一待办行的「更多」菜单开着（同时只开一个）
+                    // S4：≤640px 窄屏才把次级动作收进 ··· 菜单，桌面宽屏内联
+                    menuNarrow: typeof window !== 'undefined'
+                        && window.matchMedia('(max-width: 640px)').matches,
                     rowErrors: {}, leadErrors: {},
                 };
             },
@@ -210,10 +219,27 @@
                     }
                 };
                 document.addEventListener('keydown', this.escCloseSheet);
+                // M3 返工 P2：菜单外点击/页面滚动收起（先例 files.js 点空白关右键
+                // 菜单）；S4：跨 640px 断点切换内联/菜单两套排布（beforeUnmount 摘）
+                this.onRowMenuOutside = (e) => {
+                    if (Object.keys(this.rowMenus).length
+                        && !e.target.closest('.cmd-menu-wrap')) { this.rowMenus = {}; }
+                };
+                this.onRowMenuScroll = () => { this.closeRowMenu(); };
+                this.syncMenuNarrow = () => {
+                    var narrow = window.matchMedia('(max-width: 640px)').matches;
+                    if (narrow !== this.menuNarrow) { this.menuNarrow = narrow; this.closeRowMenu(); }
+                };
+                document.addEventListener('click', this.onRowMenuOutside);
+                window.addEventListener('scroll', this.onRowMenuScroll, true);
+                window.addEventListener('resize', this.syncMenuNarrow);
             },
             beforeUnmount() {
                 clearInterval(this.overviewTimer);
                 document.removeEventListener('keydown', this.escCloseSheet);
+                document.removeEventListener('click', this.onRowMenuOutside);
+                window.removeEventListener('scroll', this.onRowMenuScroll, true);
+                window.removeEventListener('resize', this.syncMenuNarrow);
             },
             methods: {
                 // 模板直接调的纯函数：复用同一实现，不复制
@@ -360,9 +386,25 @@
                         if (row) { WPCommon.flashError(this, 'rowErrors', row.key, err.message); }
                     }
                 },
-                // M3 #4：「更多」菜单——同时只开一个；点开的行再点一次收起
-                toggleRowMenu(row) {
-                    this.rowMenus = this.rowMenus[row.key] ? {} : {[row.key]: true};
+                // M3 #4：「更多」菜单——同时只开一个；点开的行再点一次收起。M3 返工：
+                // 渲染后量几何，向下放越界（底栏顶/下一行动作区顶）就向上翻（menuFlipUp）
+                toggleRowMenu(row, ev) {
+                    if (this.rowMenus[row.key]) { this.rowMenus = {}; return; }
+                    this.rowMenus = {[row.key]: true};
+                    var btn = ev.currentTarget;
+                    this.$nextTick(function () {
+                        var menu = btn.closest('.cmd-menu-wrap').querySelector('.cmd-menu');
+                        if (!menu) { return; }
+                        var r = menu.getBoundingClientRect();
+                        // 翻转线取更紧的：底栏顶（P1）与下一行动作区顶（P2）
+                        var tab = document.querySelector('.tabbar').getBoundingClientRect();
+                        var limit = tab.bottom > 0 ? tab.top : window.innerHeight;
+                        var next = btn.closest('.cmd-pending-row').nextElementSibling;
+                        var nextBtn = next && next.querySelector('.cmd-menu-wrap .btn, .cmd-pending-actions');
+                        if (nextBtn) { limit = Math.min(limit, nextBtn.getBoundingClientRect().top); }
+                        var head = document.querySelector('.topbar').getBoundingClientRect().bottom;
+                        if (menuFlipUp(r.top, r.bottom, limit, head)) { menu.classList.add('up'); }
+                    });
                 },
                 closeRowMenu() {
                     if (Object.keys(this.rowMenus).length) { this.rowMenus = {}; }
@@ -438,7 +480,8 @@
             taskRowView: taskRowView,
             pendingRows: pendingRows, mergeMoreTasks: mergeMoreTasks,
             newLeadKindChoices: newLeadKindChoices,
-            splitPermissionOptions: splitPermissionOptions, mixin: mixin,
+            splitPermissionOptions: splitPermissionOptions, menuFlipUp: menuFlipUp,
+            mixin: mixin,
         };
     }
     if (typeof module !== 'undefined' && module.exports) {
@@ -448,7 +491,7 @@
             taskRowView: taskRowView,
             pendingRows: pendingRows, mergeMoreTasks: mergeMoreTasks,
             newLeadKindChoices: newLeadKindChoices,
-            splitPermissionOptions: splitPermissionOptions,
+            splitPermissionOptions: splitPermissionOptions, menuFlipUp: menuFlipUp,
         };
     }
 })();
