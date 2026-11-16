@@ -25,9 +25,21 @@ log = logging.getLogger('tasks')
 _handleAcpPermission = task_permission.handleAcpPermission
 
 def maxRunning():
-    """并发 running 上限（R4-9）：config.taskMaxRunning，缺省 8，0=不限。
-    每次判定现读（config.load 按 mtime 热读），改 config.json 不重启即生效。"""
+    """缺省并发 running 上限（R4-9）：config.taskMaxRunning，缺省 8，0=不限。
+    每次判定现读（config.load 按 mtime 热读），改 config.json 不重启即生效。
+    批次 P 起它只是「未声明执行点的缺省值」，按节点的上限见 limitFor。"""
     return config.getTaskMaxRunning()
+
+def limitFor(node):
+    """该执行点的并发 running 上限（批次 P）：节点声明 maxRunning → 缺省
+    config.taskMaxRunning（8）→ 0=不限。名字经 task_node.normalize() 归一后
+    再比，host/旧别名换写法绕不过上限；声明来源 agentNodes[] / remotes[] /
+    localAgentNodeMaxRunning（config 侧已归一成整数 ≥0 或 None）。"""
+    from modules import agent_nodes
+    name = task_node.normalize(node)
+    entry = agent_nodes.findNode(name) or agent_nodes.findFederationMember(name)
+    declared = (entry or {}).get('maxRunning')
+    return maxRunning() if declared is None else declared
 
 def _appendAssistantText(task, text):
     """回合内的 chunk 只累积缓冲（log 留完整流水），不写事件流。
@@ -67,11 +79,9 @@ def _argsText(args):
 def _rememberLateArgs(task, update):
     """参数后到（R5-9）：真实 Kimi 的流式形状是先来不带 rawInput 的
     tool_call，参数随后在 tool_call_update 的 content 文本里补，rawInput
-    对象甚至晚于 request_permission 才到。
-
-    按 callId 记下这两条线索，供审批回查 policy、给已落卡的 tool 事件补参
-    数；返回 (callId, 可落盘的参数文本)，拿不到完整参数时文本为空。
-    """
+    对象甚至晚于 request_permission 才到。按 callId 记下这两条线索，供审批
+    回查 policy、给已落卡的 tool 事件补参数；返回 (callId, 可落盘的参数
+    文本)，拿不到完整参数时文本为空。"""
     callId = update.get('toolCallId') or ''
     if not callId:
         return '', ''

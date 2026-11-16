@@ -14,6 +14,7 @@ from functools import wraps
 from flask import (Blueprint, Response, g, jsonify, request, send_file,
                    stream_with_context)
 
+import config
 from modules.kimi_acp import KimiAcp
 from modules import kimi_acp
 from modules import task_events
@@ -86,7 +87,24 @@ def listTasks():
              for t in items[:50]]
     return jsonify({'tasks': tasks, 'running': running, 'queued': queued,
                     'limit': runner.maxRunning(), 'truncated': len(items) > 50,
-                    'countScope': 'all callers (全局)'})
+                    'nodes': _nodeLoads(items), 'countScope': 'per-node：并发上限按执行点各自计数，nodes[] 为实况，limit 为缺省上限'})
+
+
+def _nodeLoads(items):
+    """各执行点当前 running 数与生效上限（批次 P）：覆盖已声明 + 有任务的执行点。"""
+    running, seen = {}, []
+    for t in items:
+        name = task_node.normalize(t.get('node'))
+        if name not in seen:
+            seen.append(name)
+        if t.get('status') == 'running':
+            running[name] = running.get(name, 0) + 1
+    names = [n['name'] for n in config.getAgentNodes()]
+    local = config.getLocalAgentNode()
+    names.append(local['name'] if local is not None else task_node.LOCAL)
+    names += [m['name'] for m in config.getRemotes()]
+    names += [n for n in seen if n not in names]
+    return [{'name': n, 'running': running.get(n, 0), 'limit': runner.limitFor(n)} for n in names]
 
 
 def _mergeWorklineDefaults(data, wl):
@@ -279,15 +297,15 @@ def createTaskResponse(data, start=True):
     # 实际生效的模型：用户没传就落执行点默认（可追溯"这个结论是哪个模型给的"）
     modelEffective = model or decl['default']
     with store.repo.lock:
-        limit = runner.maxRunning()
-        running = [t for t in store.repo.list() if t.get('status') == 'running']
+        limit = runner.limitFor(node)
+        running = [t for t in store.repo.list() if t.get('status') == 'running'
+                   and task_node.normalize(t.get('node')) == node]
         if limit > 0 and len(running) >= limit:
-            # 429 带占用明细（R4-9）：调用方不必再查一轮就知道是谁占着名额
-            holders = [{'id': t['id'], 'owner': t.get('owner') or '未知',
-                        'title': task_title.titleFor(t)} for t in running]
-            return ({'error': '并发任务已达上限 %d，请稍后再试' % limit,
-                            'limit': limit, 'running': len(running),
-                            'holders': holders}), 429
+            # 429 带占用明细（R4-9）；批次 P 起按执行点各自计数——满的只是这个执行点，holders 也只列该节点任务
+            holders = [{'id': t['id'], 'owner': t.get('owner') or '未知', 'title': task_title.titleFor(t)} for t in running]
+            return ({'error': '执行点 %s 并发任务已达上限 %d，请稍后再试' % (node, limit),
+                     'node': node, 'limit': limit, 'running': len(running),
+                     'holders': holders}), 429
         taskId = uuid.uuid4().hex[:12]
         workspace = os.path.join(store.taskRoot(),
                                  datetime.datetime.now().strftime('%Y%m%d-%H%M%S')

@@ -24,15 +24,13 @@ DEFAULTS = {'port': 6789, 'password': '', 'stateDirName': 'web-platform',
 
 
 def getRemotes():
-    """联邦远端 Deskport 列表: [{id, name, base, token, terminal, apps}]。
-
-    base 指向远端 web 根 (如 http://127.0.0.1:6790)；token 须与远端
-    config 的 federationToken 一致。消费策略由 A 机自己决定:
-    - terminal (缺省 true): 是否合并该机终端会话 (拉取/合并/WS 路由)
-    - apps (缺省 [] = 一律不接): 接受该机哪些外部应用, ["*"] 全收;
-      接受/拒绝某个 app 就是有没有它的 id
-    - files (缺省 false): 是否允许在文件页浏览该机的文件 (只读转发)
-    - filesWrite (缺省 false): 是否允许把写操作转发给该机; files=true 仍只读
+    """联邦远端 Deskport 列表: [{id, name, base, token, terminal, apps, files,
+    filesWrite, models, model, maxRunning}]。base 指向远端 web 根 (如
+    http://127.0.0.1:6790)；token 须与远端 config 的 federationToken 一致。
+    消费策略由 A 机自己决定: terminal (缺省 true) 合并终端会话; apps (缺省
+    [] = 一律不接, ["*"] 全收); files (缺省 false) 只读浏览该机文件,
+    filesWrite (缺省 false) 才允许转发写操作; maxRunning (批次 P, 缺省
+    None) = 该执行点并发 running 上限 (0=不限), 未声明继承 taskMaxRunning。
     """
     raw = load().get('remotes')
     if not isinstance(raw, list):
@@ -45,10 +43,8 @@ def getRemotes():
         base = str(item.get('base') or '').strip().rstrip('/')
         if not re.match(r'^[a-z0-9_-]{1,20}$', rid) or not base.startswith(('http://', 'https://')):
             continue
-        apps = item.get('apps')
-        apps = [str(a).strip() for a in apps if str(a).strip()] if isinstance(apps, list) else []
-        models = item.get('models')
-        models = [str(a).strip() for a in models if str(a).strip()] if isinstance(models, list) else []
+        apps = _strList(item.get('apps'))
+        models = _strList(item.get('models'))
         out.append({'id': rid,
                     'name': str(item.get('name') or rid)[:24],
                     'base': base,
@@ -58,7 +54,8 @@ def getRemotes():
                     'files': item.get('files', False) is True,
                     'filesWrite': item.get('files', False) is True and item.get('filesWrite', False) is True,
                     'models': models,
-                    'model': str(item.get('model') or '').strip()})
+                    'model': str(item.get('model') or '').strip(),
+                    'maxRunning': _nodeMaxRunning(item.get('maxRunning'))})
     return out
 
 
@@ -134,8 +131,7 @@ def setAgentTokens(tokens):
 
 def getBrandName():
     r"""界面品牌名；缺省 Deskport，最长 24 字符。"""
-    name = str(load().get('brandName') or 'Deskport').strip()
-    return name[:24] or 'Deskport'
+    return str(load().get('brandName') or 'Deskport').strip()[:24] or 'Deskport'
 
 
 def setBrandName(name):
@@ -198,11 +194,12 @@ def getSessiondUrl(kind='local'):
 
 
 def getAgentNodes():
-    """远端智能体节点列表: [{name, url, token, via, remote}]。
+    """远端智能体节点列表: [{name, url, token, via, remote, models, model, maxRunning}]。
 
-    name 显示用；url 是 agent node 的 base；token 为 node 的 X-Agent-Token。
-    via 是 SSH 主机 id：给出时请求经 SSH 隧道转发到 remote（缺省
-    127.0.0.1:<url端口>），用于 node 端口被防火墙过滤的内网机器。
+    name 显示用；url 是 agent node 的 base；token 为 node 的 X-Agent-Token；
+    maxRunning（批次 P，缺省 None）= 该执行点并发 running 上限（0=不限），
+    未声明继承 taskMaxRunning。via 是 SSH 主机 id：给出时请求经 SSH 隧道
+    转发到 remote（缺省 127.0.0.1:<url端口>），用于端口被防火墙过滤的内网机器。
     """
     raw = load().get('agentNodes')
     if not isinstance(raw, list):
@@ -221,7 +218,8 @@ def getAgentNodes():
                     'via': str(item.get('via') or '').strip(),
                     'remote': str(item.get('remote') or '').strip(),
                     'models': _strList(item.get('models')),
-                    'model': str(item.get('model') or '').strip()})
+                    'model': str(item.get('model') or '').strip(),
+                    'maxRunning': _nodeMaxRunning(item.get('maxRunning'))})
     return out
 
 
@@ -235,6 +233,17 @@ def _strList(raw):
         if text and text not in seen:
             seen.append(text)
     return seen
+
+
+def _nodeMaxRunning(raw):
+    """执行点声明的并发 running 上限（批次 P）：整数 ≥0 才认，否则 = 不声明（继承缺省）。"""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
 
 
 def getSessiondPort(kind='local'):
@@ -284,10 +293,8 @@ def getAgentNodeToken():
 
 
 def getLocalAgentNode():
-    """本机智能体节点（本机执行点 local 任务的托管者）；localAgentNodePort=0 表示未启用。
-
-    返回与 agentNodes 条目同构的 dict（无 via，本机直连），None = 未启用。
-    """
+    """本机智能体节点（local 任务的托管者）；localAgentNodePort=0 表示未启用。
+    返回与 agentNodes 条目同构的 dict（无 via，本机直连），None = 未启用。"""
     try:
         port = int(load().get('localAgentNodePort') or 0)
     except (TypeError, ValueError):
@@ -297,7 +304,8 @@ def getLocalAgentNode():
     return {'name': 'local', 'url': 'http://127.0.0.1:%d' % port,
             'token': getAgentNodeToken(), 'via': '', 'remote': '',
             'models': _strList(load().get('localAgentNodeModels')),
-            'model': str(load().get('localAgentNodeModel') or '').strip()}
+            'model': str(load().get('localAgentNodeModel') or '').strip(),
+            'maxRunning': _nodeMaxRunning(load().get('localAgentNodeMaxRunning'))}
 
 
 def getLocalAgentNodePort():
@@ -319,19 +327,11 @@ def getTaskPermissionTimeoutSec():
 
 
 def getTaskMaxRunning():
-    """并发 running 任务上限（R4-9）：缺省 8，0=不限；load 按 mtime 热读，
-    改 config.json 即时生效无需重启。负数视为非法回退缺省（避免手滑 -1
-    变成"不限"）。"""
-    value = load().get('taskMaxRunning')
-    if value is None:
-        return 8
-    try:
-        value = int(value)
-    except (TypeError, ValueError):
-        return 8
-    if value < 0:
-        return 8
-    return value
+    """并发 running 任务上限（R4-9）：缺省 8，0=不限；load 按 mtime 热读，改
+    config.json 即时生效。负数/非法回退缺省（避免手滑 -1 变成"不限"）。批次 P
+    起它是「未声明执行点的缺省值」，按节点上限见 tasks_runner.limitFor。"""
+    value = _nodeMaxRunning(load().get('taskMaxRunning'))
+    return 8 if value is None else value
 
 
 def getLeadWakeMergeSec():
