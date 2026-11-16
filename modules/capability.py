@@ -184,18 +184,35 @@ def rulesForToken(agent):
     有 capabilities 字段就用它（新字段，scopes 的超集；畸形项丢弃）；
     没有就按 scopes 走 SCOPE_CAPABILITIES 映射（不认识的 scope 名不贡献
     规则）；两者都没有/为空 = 全权（向后兼容老行为）。
+
+    规则从哪来（展示用）见 tokenRuleTable——判定逻辑只有这一份，
+    调用方别照抄"capabilities 优先、再 scopes、都没有=全权"的判序。
+    """
+    return [rule for rule, _source in tokenRuleTable(agent)]
+
+
+def tokenRuleTable(agent):
+    """令牌条目 → [(rule, source)]：rulesForToken 的带来源版（同一处逻辑）。
+
+    source 只说这条规则从哪来，不参与判定：
+        'capabilities'  新字段（scopes 的超集）逐条；
+        'scope:<名>'    老 scopes 经 SCOPE_CAPABILITIES 逐条映射；
+        'default-full'  两者都没有/为空 = 全权（向后兼容）。
+    消费者：GET /api/capability/me 的规则表展示（批次 L）。
     """
     entry = agent if isinstance(agent, dict) else {}
     caps = entry.get('capabilities')
     if isinstance(caps, list):
-        return [rule for rule in caps if _validRule(rule)]
+        return [(rule, 'capabilities') for rule in caps if _validRule(rule)]
     scopes = entry.get('scopes')
     if isinstance(scopes, list) and scopes:
-        rules = []
+        out = []
         for item in scopes:
-            rules.extend(SCOPE_CAPABILITIES.get(str(item).strip(), ()))
-        return rules
-    return list(SCOPE_CAPABILITIES['full'])
+            name = str(item).strip()
+            for rule in SCOPE_CAPABILITIES.get(name, ()):
+                out.append((rule, 'scope:' + name))
+        return out
+    return [(rule, 'default-full') for rule in SCOPE_CAPABILITIES['full']]
 
 
 def scopeQuery(scope):

@@ -80,6 +80,24 @@ def test_default_mode_is_default_not_auto(env):
     assert resp.get_json()['task']['mode'] == 'auto'
 
 
+def test_auto_mode_with_deny_commands_is_400(env):
+    """P0-1（2026-11-14 反馈，已复现）：auto/yolo 下节点自行批准一切，denyCommands
+    被静默作废（实测 default 弹审批、auto 直接放行）——建卡时拒绝这对组合。"""
+    policy = {'allowPaths': [], 'allowCommands': [], 'denyCommands': ['git\\s+push'],
+              'default': 'ask', 'timeoutSec': 0}
+    for mode in ('auto', 'yolo'):
+        resp = create(env, {'prompt': 'x', 'mode': mode, 'policy': policy})
+        assert resp.status_code == 400, mode
+        error = resp.get_json()['error']
+        assert 'denyCommands' in error and 'default' in error
+    resp = create(env, {'prompt': 'x', 'mode': 'auto',
+                        'policy': {'allowPaths': ['/srv'], 'allowCommands': ['.']}})
+    assert resp.status_code == 202
+    # default + denyCommands 正常（闸门在 hub 侧生效）
+    resp = create(env, {'prompt': 'x', 'policy': policy})
+    assert resp.status_code == 202
+
+
 def test_prompt_limit_in_error_message(env):
     resp = create(env, {'prompt': 'x' * 4001})
     assert resp.status_code == 400
@@ -936,6 +954,31 @@ def test_wait_blocks_until_wake_not_busy_timeout(env):
     assert elapsed < 10   # timeout=15 没等满 → 条件变量唤醒生效
 
 
+def test_wait_timeout_does_not_leapfrog_unfinished_turn(env):
+    """2026-11-14 外部主管调查 §8 实测：终稿→WAITING 有结构性间隙（P90 2.8s），
+    窗口在隙里超时时快照 lastSeq 会推过终稿，下次 wait 跳过终稿 → 主控拿到空
+    finalText 把健康任务当丢稿 close（实测 b025c78c2f85，约 2% 轮次踩中）。
+    修法：超时不推进游标，带原 after 再来终稿还在。"""
+    tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task['status'] = 'running'
+        store.repo.append_event(task, 'assistant', text='最终报告全文', full='最终报告全文')
+    body = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
+                          headers=H).get_json()
+    assert body['status'] == 'running'
+    assert body['lastSeq'] == 0, '超时未等到结束点：游标不得推过还没判结束的窗口'
+    with env.repo.lock:
+        task = env.repo.get(tid)
+        task_state.transition(task, task_state.TaskState.WAITING)
+        store.repo.append_event(task, 'status', text='这轮结束，等你继续')
+        store.repo.save()
+    body2 = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
+                           headers=H).get_json()
+    assert body2['status'] == 'waiting'
+    assert body2['finalText'] == '最终报告全文'
+
+
 def test_wait_timeout_maps_running(env):
     resp = create(env, {'prompt': 'x'})   # _startTask 打桩 → 恒 queued
     tid = resp.get_json()['task']['id']
@@ -944,7 +987,47 @@ def test_wait_timeout_maps_running(env):
     body = env.client.get('/api/tasks/%s/wait?after=0&timeout=1' % tid,
                           headers=H).get_json()
     assert body['status'] == 'running'    # 规格：超时映射 running
-    assert body['lastSeq'] == seq
+    # 2026-11-14 起超时不推进游标（leapfrog 修复）：lastSeq 停在 after
+    assert body['lastSeq'] == 0
+
+
+def test_wait_timeout_zero_and_negative_return_running_fast(env):
+    """P3b 退回整改：/wait 的 timeout=0/负数保持老契约——约 1 秒返回
+    status=running（P3b 前 max(1, …)），不因 parseWaitSeconds 的「0=不
+    等待」被当成缺省 300 挂住调用方（0=不等待只是 wait 字段的语义）。
+    请求放后台线程 + join 上限：万一退化回 300s，测试 2s 内失败而不真等。"""
+    import time as _time
+    for query in ('timeout=0', 'timeout=-5'):
+        tid = create(env, {'prompt': 'x'}).get_json()['task']['id']
+        box = {}
+
+        def call(tid=tid, query=query):
+            box['body'] = env.client.get(
+                '/api/tasks/%s/wait?after=0&%s' % (tid, query),
+                headers=H).get_json()
+        th = threading.Thread(target=call, daemon=True)
+        t0 = _time.monotonic()
+        th.start()
+        th.join(timeout=2)
+        elapsed = _time.monotonic() - t0
+        assert not th.is_alive(), (query, 'wait 端点挂住：timeout 被当成缺省 300s')
+        assert elapsed < 2, (query, elapsed)
+        assert box['body']['status'] == 'running'
+        assert box['body']['lastSeq'] == 0
+
+
+def test_wait_timeout_parse_table(env):
+    """timeout 解析全表：0/负数 1s（老契约）、缺省/非数字 300、正常值透传、
+    超上限截 600。与 wait 字段的「0=不等待」是两套语义（P3b 退回整改）。"""
+    assert tasks_api._waitTimeoutSec(None) == 300
+    assert tasks_api._waitTimeoutSec('') == 300
+    assert tasks_api._waitTimeoutSec('abc') == 300
+    assert tasks_api._waitTimeoutSec('5.5') == 300
+    assert tasks_api._waitTimeoutSec('0') == 1
+    assert tasks_api._waitTimeoutSec('-5') == 1
+    assert tasks_api._waitTimeoutSec('1') == 1
+    assert tasks_api._waitTimeoutSec('5') == 5
+    assert tasks_api._waitTimeoutSec('1000') == 600
 
 
 def test_wait_reports_pending_permission_with_args(env):
@@ -975,14 +1058,18 @@ def test_wait_resume_from_old_seq_no_loss(env):
         task = env.repo.get(tid)
         store.repo.append_event(task, 'tool', name='Bash', args='pwd', callId='c1')
         store.repo.append_event(task, 'auto_approved', callId='c1', rule='allowCommands')
+        store.repo.append_event(task, 'auto_denied', callId='c2', rule='orphan')
         store.repo.append_event(task, 'error', text='一次报错示例')
-        seqAfter = 1   # 跳过建卡事件；后续 3 条都计入
+        seqAfter = 1   # 跳过建卡事件；后续 4 条都计入
         total = task['seq']
     body = env.client.get('/api/tasks/%s/wait?after=%d&timeout=1' % (tid, seqAfter),
                           headers=H).get_json()
     assert body['stats']['events'] == total - seqAfter
     assert body['stats']['errors'] == 1 and body['stats']['autoApproved'] == 1
-    assert body['lastSeq'] == total
+    # P0-2（2026-11-14 反馈）：自动拒绝在执行方眼里无声无息，轮末统计要能看见
+    assert body['stats']['autoDenied'] == 1
+    # 超时未等到结束点：游标停在 after（2026-11-14 leapfrog 修复），不推进展
+    assert body['lastSeq'] == seqAfter
 
 
 def test_message_wait_returns_waiting(env):
@@ -1067,7 +1154,7 @@ def test_create_wait_maps_running_when_queued(env):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body['status'] == 'running'
-    assert body['lastSeq'] >= 1
+    assert body['lastSeq'] == 0   # 超时不推进游标（2026-11-14 leapfrog 修复）
 
 
 # ---- R4 验收回归：真实事件形状（JSON 字符串 rawInput + 权限请求缺 rawInput）----
@@ -1530,3 +1617,4 @@ def test_health_models_refresh_retries_until_all_answer(monkeypatch):
     nodesMod._refreshHealthModels(rounds=3, interval=0.01)
     cached = nodesMod._healthModels['data']
     assert cached['ai-xmyz']['models'] == ['m1']
+

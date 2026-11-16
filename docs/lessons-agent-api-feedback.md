@@ -128,11 +128,16 @@ f649e18（选模型）→ c0647cd（本机全等价）→ 75cae14（文档）。
   输出因此丢失）。规则：部署窗口放在任务回合落定之后（`waiting` 态可跨重启）；
   部署流程应加「有无 running/waiting 任务」预检，重启中断的回合要能被
   `message` 显式续跑。
-- **重启后续聊死锁（待修，已复现）**：重启窗口内 node 侧会话发起的
-  permission_request web 收不到——node 权限挂起（900s）、`running=true` 不变，
-  web 侧 `message` 永远 409「远端会话正在执行」并把任务转 failed；`canResume`
-  再续仍撞同一堵墙。规则方向：node 对未决权限做留存并在客户端重连后重推；
-  web 对「远端忙」提供探测/强制取消出口，不允许无限 409 循环。
+- **重启后续聊死锁（web 侧已修：批次 R；node 侧重推待修）**：重启窗口内
+  node 侧会话发起的 permission_request web 收不到——node 权限挂起
+  （900s）、`running=true` 不变，web 侧 `message` 曾永远 409「远端会话正在
+  执行」并把任务转 failed，`canResume` 再续仍撞同一堵墙。批次 R 起 web 侧
+  对「远端忙」有了出口：409 时查节点会话状态，`running` 为真就落一条
+  status 事件并等旧回合结束（`turn_end` 事件或 2s 轮询转假）再重投，最多
+  3 次；等待期间旧回合事件照常落卡、live 审批正常挂起可批，close/cancel
+  立刻跳出（不再卡住关闭）。仍未修：node 对未决权限的留存与重连后重推——
+  重启窗口里挂起的权限要等 900s 超时或手动取消，旧回合才结束（等待即
+  在此期间，任务不再 failed）。
 - **session/load 回放污染事件流（待修）**：resume 时 update 事件已有
   `replay` 过滤，但 `session/load` 回放的历史（旧 assistant 文本、旧
   permission_request）仍被当新事件落卡；审批历史请求必然 409「授权请求已

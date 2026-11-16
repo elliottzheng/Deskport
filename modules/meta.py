@@ -17,6 +17,7 @@ from flask import jsonify, send_file
 
 import config
 import modules.internal_api as internal_api
+from modules import task_events
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STARTED_AT = time.time()
@@ -156,4 +157,6 @@ def register(app):
             'sessions': sessions,
             'logs': logs,
             'stateDir': config.stateDir(),
+            # 批 PS1：jsonl 是事件唯一真相——写失败（重试后仍败）在此计数
+            'taskLogWriteFailures': task_events.logWriteFailures(),
         })

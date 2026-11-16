@@ -20,21 +20,23 @@ def test_pack_requires_token(env):
 
 
 def test_pack_contains_whole_skill(env):
-    """手册 + 三个附件 + 现成配置，都在 <技能>/ 前缀下（解压即得技能目录）。"""
+    """手册 + 四个附件 + 现成配置，都在 <技能>/ 前缀下（解压即得技能目录）。"""
     resp = env.client.get(PACK, headers=HEADERS)
     assert resp.status_code == 200
     assert resp.mimetype == 'application/zip'
     assert 'deskport-skill.zip' in resp.headers['Content-Disposition']
     names = sorted(openPack(resp).namelist())
     assert names == ['deskport/.deskport.json', 'deskport/COLLABORATION.md',
-                     'deskport/SKILL.md', 'deskport/deskport.py', 'deskport/driver.py']
+                     'deskport/SKILL.md', 'deskport/deskport.py',
+                     'deskport/driver.example.json', 'deskport/driver.py']
     assert int(resp.headers['X-Skill-Files']) == len(names)
 
 
 def test_pack_files_are_byte_identical(env):
     """包里就是仓库里的原文件，不是副本。"""
     z = openPack(env.client.get(PACK, headers=HEADERS))
-    for name in ('SKILL.md', 'COLLABORATION.md', 'deskport.py', 'driver.py'):
+    for name in ('SKILL.md', 'COLLABORATION.md', 'deskport.py', 'driver.py',
+                 'driver.example.json'):
         assert z.read('deskport/' + name) == readPack(name), name
 
 

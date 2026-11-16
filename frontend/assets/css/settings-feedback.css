@@ -1,0 +1,83 @@
+/* 设置页「反馈」处理卡片（批次 F1，规格 §6.1）。只在本页加载；
+   徽章/评论/回复等与反馈面板共用的类在 feedback.css。 */
+.fb-filter {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin: 10px 0 12px;
+}
+.fb-filter .input { flex: 1 1 140px; width: auto; }
+.fb-filter .select { flex: 0 0 auto; width: auto; }
+.fb-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; }
+
+.fb-rows { display: flex; flex-direction: column; gap: 6px; }
+.fb-row {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border); border-radius: var(--radius-m);
+    padding: 8px 10px; background: var(--surface);
+}
+.fb-row.is-overdue { border-color: var(--err); background: var(--err-bg); }
+.fb-row-main {
+    flex: 1 1 auto; display: flex; align-items: baseline; gap: 10px;
+    border: 0; background: transparent; cursor: pointer; text-align: left;
+    font-size: 13px; color: var(--text-1); min-width: 0;
+}
+.fb-row-main:hover { color: var(--brand); }
+.fb-row-submitter { color: var(--text-2); font-weight: 600; white-space: nowrap; }
+.fb-row-route { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.fb-row-msg {
+    flex: 1 1 auto; color: var(--text-1); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fb-row-date { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.fb-row-overdue {
+    color: #fff; background: var(--err); font-size: 11px; font-weight: 600;
+    padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+}
+.fb-batch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+/* 详情：信封全文只读 + 截图 + trace + errors + history + 评论 + 流转 */
+.fb-detail {
+    margin-top: 14px; border: 1px solid var(--border);
+    border-radius: var(--radius-m); padding: 12px 14px; background: var(--bg-2);
+}
+.fb-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fb-detail-submitter { color: var(--text-2); font-size: 13px; font-weight: 600; }
+.fb-detail-date { color: var(--text-3); font-size: 12px; }
+.fb-detail-head .btn { margin-left: auto; }
+.fb-detail-msg {
+    color: var(--text-1); font-size: 15px; line-height: 1.6;
+    margin: 10px 0 6px; word-break: break-word; white-space: pre-wrap;
+}
+.fb-detail-shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.fb-detail-shot {
+    max-width: 320px; max-height: 220px; border: 1px solid var(--border);
+    border-radius: var(--radius-s); background: var(--surface);
+}
+.fb-trace, .fb-errors {
+    border: 1px solid var(--border); border-radius: var(--radius-s);
+    background: var(--surface); padding: 8px 10px; max-height: 220px; overflow: auto;
+}
+.fb-trace-row, .fb-error-row {
+    color: var(--text-2); font-size: 12px; line-height: 1.7;
+    font-family: var(--mono); word-break: break-all;
+}
+.fb-error-row { color: var(--err); }
+.fb-detail-comments { display: flex; flex-direction: column; gap: 8px; }
+.fb-move { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fb-move .select { width: auto; flex: 0 0 auto; }
+.fb-move .input { flex: 1 1 220px; width: auto; }
+.fb-raw { margin-top: 10px; }
+.fb-raw summary { color: var(--text-3); font-size: 12px; cursor: pointer; }
+.fb-raw pre {
+    max-height: 260px; overflow: auto; font-size: 12px; line-height: 1.5;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-s); padding: 8px 10px; color: var(--text-2);
+    white-space: pre-wrap; word-break: break-all;
+}
+
+/* 手机：筛选与行内信息换行不撑破 */
+@media (max-width: 640px) {
+    .fb-row { flex-wrap: wrap; }
+    .fb-row-main { flex-basis: 100%; flex-wrap: wrap; }
+    .fb-row-msg { flex-basis: 100%; white-space: normal; }
+    .fb-detail-shot { max-width: 100%; }
+}

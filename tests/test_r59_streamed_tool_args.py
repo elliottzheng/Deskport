@@ -188,6 +188,25 @@ def test_permission_rawinput_not_shadowed_by_empty_call_record(env):
     assert 'permission_request' not in [e['type'] for e in task['events']]
 
 
+def test_first_frame_shard_does_not_shadow_complete_stream(env):
+    """例 11 实测形状（glm-5.3-flash）：tool_call 的首帧 content 就是 "{"（流式
+    残片），完整快照在同 callId 的 tool_call_update 里、先于 request_permission
+    到——残片不能挡住完整快照，否则 policy 拿到 "{" 判不了，边界内的命令也会
+    挂起等人工（一键托管主管的无人干预链就是这么断的）。"""
+    from modules.tasks_runner import _handleAcpPermission, _handleAcpUpdate
+    tid = create(env, {'allowCommands': [r'^echo\b'], 'default': 'ask',
+                       'timeoutSec': 1})
+    task, agent = adopt(env, tid)
+    # 真实形状：tool_call 自带 content "{"（残片），随后流式补全
+    shardCall = dict(TOOL_CALL, content=_content('{'))
+    for update in (shardCall, STREAM_2):
+        _handleAcpUpdate(task, dict(update))
+    assert task['_toolArgs']['call-1'] == '{'          # 首帧残片照记
+    assert _handleAcpPermission(task, agent, permParams(), 'req-4') == 'opt-allow'
+    types = [e['type'] for e in task['events']]
+    assert 'auto_approved' in types and 'permission_request' not in types
+
+
 # 真实 Edit 审批形状（2026-11-13 kimi 2.5.3 探针实测）：toolCall 既没有
 # rawInput 也没有 locations，目标路径只在 content[] 的 diff 块里。
 EDIT_PATH = 'E:/事项/远程/web-platform-dev/modules/tasks_api.py'

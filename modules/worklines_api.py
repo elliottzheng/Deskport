@@ -202,7 +202,9 @@ def _routeOf(task):
 
 def _dispatchNew(wl, data, prompt):
     body = {'prompt': prompt, 'workline': wl['id']}
-    for key in ('node', 'cwd', 'model', 'mode', 'policy', 'wait'):
+    # title（批次 T）：派活可显式给标题；没给由 createTaskResponse 按
+    # 「工作线标题 · 默认标题」规则生成（workline 已随 body 带上）
+    for key in ('node', 'cwd', 'model', 'mode', 'policy', 'title', 'wait'):
         if key in data and data.get(key) not in (None, ''):
             body[key] = data[key]
     payload, code = tasks_api.createTaskResponse(body)

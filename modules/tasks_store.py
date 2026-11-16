@@ -2,7 +2,13 @@
 """任务状态层：任务字典、持久化、事件流水、工作区复制与汇总。
 
 不 import Flask / 不启动线程；只做状态与文件系统。
+
+批 PS2（削峰）：append_event 不再每事件 save——seq/lastActiveAt/lastText
+等非关键变更只置脏，由 1 秒粒度的后台 flush 线程合并落盘（有变更才写），
+进程退出（atexit）做最后一次 flush；关键变迁（status/pendingPermission/
+messageQueue/closedByUser/lead/title）仍走 save() 立即落盘。
 """
+import atexit
 import datetime
 import json
 import logging
@@ -11,22 +17,70 @@ import re
 import shutil
 import threading
 import time
+import weakref
 
 import config
-from modules import contracts, fsutil, task_state, task_cwd, task_node
+from modules import contracts, fsutil, store_io, state_owner, task_state, task_cwd, task_node, task_events, task_title
 from modules import sensitive_values
 from modules.staging import safeAttachmentName
+from modules.task_events import MAX_EVENTS, MAX_TEXT, MAX_TOOL_RESULT  # noqa: F401（store.MAX_* 兼容旧引用）
 
 log = logging.getLogger('tasks')
 
 MAX_FILE_MB = 200
 MAX_TASK_MB = 500
 MAX_TASK_FILES = 3000
-MAX_EVENTS = 2000
-MAX_TEXT = 8000
-MAX_TOOL_RESULT = 4000
 MAX_UPLOAD_MB = 32        # /api/tasks/files 单文件上限（§7b 过渡：智能体没有
                           # exec/sftp 之前的文件投递通道）
+
+FLUSH_INTERVAL_SEC = 1.0  # 批 PS2：非关键元数据的 flush 粒度（每秒一拍）
+
+# 终态任务的 jsonl 句柄可以关（Windows 上句柄不关，日志不能改名/删除）；
+# 之后若再追加（续跑 failed/interrupted）会重开，不影响正确性
+_JSONL_DONE = ('closed', 'cancelled', 'failed', 'interrupted')
+
+
+# ---- 批 PS2：1 秒粒度的后台 flush（削峰） ----
+# 进程内所有仓库共用一条 flush 线程（弱引用登记，仓库被回收即退出登记）：
+# 测试进程会建上百个仓库，每库一条常驻线程会拖住仓库与 jsonl 句柄不释放。
+_flushRepos = []            # weakref.ref(TaskRepository)
+_flushLock = threading.Lock()
+_flushThread = None
+
+
+def _flushTick():
+    while True:
+        time.sleep(FLUSH_INTERVAL_SEC)
+        with _flushLock:
+            live = [r for r in (ref() for ref in _flushRepos) if r is not None]
+            if len(live) != len(_flushRepos):
+                _flushRepos[:] = [weakref.ref(r) for r in live]
+        for repo in live:
+            try:
+                repo.flush()
+            except Exception:
+                log.warning('flush tasks failed', exc_info=True)
+
+
+def _ensureFlushThread():
+    global _flushThread
+    if _flushThread is None or not _flushThread.is_alive():
+        _flushThread = threading.Thread(target=_flushTick, name='tasks-flush',
+                                        daemon=True)
+        _flushThread.start()
+
+
+def _flushAtExit():
+    """进程退出（atexit）：最后一次 flush + 关全部 jsonl 句柄。
+
+    只冲已物化的仓库（_LazyRepo 上没建过就是空操作）。kill -9 / 硬终止不进
+    atexit——那正是规格接受的 ≤1 秒元数据丢失窗口；正常退出与 Ctrl+C
+    （KeyboardInterrupt 让解释器走 atexit）都覆盖。
+    """
+    repo.shutdown()
+
+
+atexit.register(_flushAtExit)
 
 
 def _saveAttachments(attachments, workspace):
@@ -98,7 +152,9 @@ class TaskRepository:
     def __init__(self, store_path, log_dir):
         self.store_path = store_path
         self.log_dir = log_dir
-        self.tasks = {}
+        # 批 PS1：tasks 直接按下标/.get 取值也触发事件回填（见 HydratingMap）
+        self.tasks = task_events.HydratingMap(
+            lambda task: task_events.hydrateEvents(task, self.log_path(task)))
         self.lock = threading.RLock()
         # 阻塞等待（R4-3）：以 repo.lock 为条件锁——append_event 在锁内
         # notify_all，等待方 wait() 期间整体放锁，追加方照常入队
@@ -106,6 +162,16 @@ class TaskRepository:
         self.running = {}
         self.agents = {}
         self.loaded = False
+        self._saveSeq = 0        # 落盘快照序号（捕获时发号，防旧快照覆新）
+        self._savedGate = store_io.SeqGate()   # 已落盘序号（锁内持有，P1）
+        self._keepLegacyShape = False   # 旧格式留原件失败：本进程按旧格式写，不剥离
+        # 批 PS2：非关键变更只置脏，等 flush 线程 1 秒一拍合并落盘
+        self._dirty = False
+        self._dirtySeq = 0       # 变更代号：flush 捕获后到达的新变更不丢
+        self._jsonl = task_events.JsonlWriter(self.log_dir)
+        with _flushLock:
+            _flushRepos.append(weakref.ref(self))
+        _ensureFlushThread()
 
     # ---- 公开访问器：上层不再直接摸私有容器 ----
     def get(self, taskId):
@@ -114,7 +180,7 @@ class TaskRepository:
 
     def list(self):
         with self.lock:
-            return list(self.tasks.values())
+            return [self.tasks[k] for k in self.tasks]   # 逐键取值：__getitem__ 触发回填
 
     def put(self, task):
         with self.lock:
@@ -158,15 +224,33 @@ class TaskRepository:
             if self.loaded:
                 return
             self.loaded = True
-            try:
-                with open(self.store_path, encoding='utf-8') as f:
-                    raw = json.load(f)
-            except (OSError, ValueError):
-                raw = {}
+            # L6：状态目录所有者锁——web 之外的进程探测身份（持锁者存活 →
+            # 只读；锁空闲照常）。判定在读之前，后面 save/append 才有闸门
+            state_owner.adopt()
+            # 瞬时共享冲突（并发 save 正在 replace）由 store_io 重试；文件
+            # 真缺失/损坏才按空处理——不能把锁冲突当"无状态"丢全部任务
+            raw = store_io.loadSnapshot(self.store_path)
             if isinstance(raw, dict):
                 self.tasks.update(raw)
+                if any('events' in t for t in raw.values() if isinstance(t, dict)):
+                    # 旧格式快照（批 PS1）：第一次 save 前留 .pre-migration-*.bak 原件
+                    self._keepLegacyShape = not task_events.backupLegacyStore(self.store_path)
             dirty = False
             for task in self.tasks.values():
+                # P0-3（外部智能体反馈 2026-11-14，已复现）：审批记录只在内存，
+                # 进程一死盘上的 pendingPermission 就是死标记——/wait 把它当活的
+                # 回报，driver 一 POST 就 409 再误判 STALE。启动时一律清掉。
+                if task.get('pendingPermission'):
+                    task['pendingPermission'] = ''
+                    dirty = True
+                # L 返工（主控追加·必须修）：resuming 唤醒标记同样会落盘——
+                # 重启正好落在「唤醒中」（如等节点上一轮结束）时，标记活过重启，
+                # 之后任何 message 都被 _resumeWithMessage 挡在 409「会话正在
+                # 唤醒，请稍候」（线上实测 5 个任务全卡死）。启动恢复一律清掉；
+                # L3 的自动续接在 60s 后的巡检里跑，那时标记早已清干净
+                if task.get('resuming'):
+                    task['resuming'] = False
+                    dirty = True
                 if task.get('status') in ('queued', 'running', 'waiting'):
                     canResume = bool(task.get('sessionId'))
                     task_state.transition(
@@ -177,38 +261,107 @@ class TaskRepository:
                     if not canResume:
                         task['error'] = '服务重启，任务中断'
                         task['endedAt'] = _now()
+                    else:
+                        # L3：只有启动恢复路径设这个标记——重启 60s 后的自动
+                        # 续接认它，用户主动暂停/线程猝停都不设（不续）
+                        task['pausedBy'] = 'restart'
                     dirty = True
-            if dirty:
+            if dirty and state_owner.writable():
+                # 只读进程（L6）：状态迁移只活在内存，不落盘也不抛——读要能用
                 self.save()
 
     def save(self):
-        # 序列化必须在锁内完成：json.dump 遍历活字典，任何无锁写入都会触发
-        # "dictionary changed size during iteration"。锁内只生成字符串，写盘放锁外。
+        """立即落盘（关键变迁与用户动作路径调用；批 PS2 起调了就写）。
+
+        序列化必须在锁内完成：json.dump 遍历活字典，任何无锁写入都会触发
+        "dictionary changed size during iteration"。锁内只生成字符串并发
+        序号；读 savedSeq→比较→写盘→更新 savedSeq 整段收在 store_io 的
+        _IO_LOCK 内完成（SeqGate），锁外不再读写 savedSeq——否则旧序号
+        save 拿锁外读到的旧值进门，把已落盘的新快照盖掉（验收-R P1）。
+        批 PS1：快照只存元数据（events/_ 键不落盘）；旧格式已由 load 留原件。
+        批 PS2：写盘漏斗收敛到 _writeNow；append_event 不再走这里（见 touch）。
+        L6：只读进程（状态目录属于 web）的任何快照写入一律明确异常——闸门
+        在 _writeNow 漏斗入口，save 与 flush 两条路都盖住。
+        """
+        self._writeNow()
+
+    def touch(self):
+        """标记一次非关键元数据变更（批 PS2）：不写盘，等 1 秒粒度的 flush
+        合并落盘。append_event 的 seq/lastActiveAt/lastText、runner 的
+        lastTurn/commands/contextHigh 等杂项字段都走这里；关键变迁
+        （status/pendingPermission/messageQueue/closedByUser/lead/title）
+        仍走 save() 立即落盘。"""
+        with self.lock:
+            self._dirty = True
+            self._dirtySeq += 1
+
+    def _writeNow(self):
+        """捕获快照并原子落盘（save 与 flush 的唯一写盘漏斗）；返回是否真写。
+
+        锁内只做捕获（序列化 + 发序号 + 记变更代号），写盘在锁外经 store_io
+        的 _IO_LOCK 串行（锁序固定为 调用方锁→_IO_LOCK，无反向等待）。
+        落盘成功且捕获后没有新变更到达，才清脏标记——捕获后来的新变更留给
+        下一拍，不会悄悄留在内存里（_dirtySeq 代号比对）。
+        L6：只读进程先抛（规格原文口径：状态目录属于 web 时本进程只读）。
+        """
+        state_owner.ensureWritable('agent_tasks.json')
         with self.lock:
             try:
-                payload = json.dumps(self.tasks, ensure_ascii=False)
+                payload = task_events.snapshotPayload(self.tasks,
+                                                       self._keepLegacyShape)
             except (TypeError, ValueError) as e:
                 log.warning('serialize tasks failed: %s', e)
-                return
+                return False
+            self._saveSeq += 1
+            seq = self._saveSeq
+            epoch = self._dirtySeq
+        if store_io.saveSnapshot(self.store_path, payload, seq,
+                                 self._savedGate) != seq:
+            return False        # 序号门拦下（更快的快照已落）：这一份作废
+        with self.lock:
+            if self._dirtySeq == epoch:
+                self._dirty = False
+            self._closeIdleJsonl()
+        return True
+
+    def flush(self):
+        """批 PS2：把累积的非关键变更合并落盘（后台 1 秒一拍 + 退出前一次）。
+        有变更才写；没脏直接返回。"""
+        with self.lock:
+            if not self._dirty:
+                return False
+        return self._writeNow()
+
+    def shutdown(self):
+        """进程退出：最后一次 flush，然后关掉全部 jsonl 句柄。"""
         try:
-            os.makedirs(os.path.dirname(self.store_path), exist_ok=True)
-            tmp = self.store_path + '.tmp'
-            with open(tmp, 'w', encoding='utf-8') as f:
-                f.write(payload)
-            os.replace(tmp, self.store_path)
-        except OSError as e:
-            log.warning('save tasks failed: %s', e)
+            self.flush()
+        finally:
+            self._jsonl.closeAll()
+
+    def _closeIdleJsonl(self):
+        """关掉终态/已删任务的 jsonl 句柄（批 PS2，规格例 5）。
+
+        只核对开着句柄的任务：Windows 上句柄不关，日志文件不能改名/删除
+        （leads_hosted 的建卡回滚要 unlink 刚建任务的流水）。dict.get 直取
+        不触发回填——有句柄的任务不一定被读过，回填要读 jsonl 尾部。
+        """
+        for taskId in self._jsonl.openTaskIds():
+            task = dict.get(self.tasks, taskId)
+            if task is None or task.get('status') in _JSONL_DONE:
+                self._jsonl.close(taskId)
 
     def log_path(self, task):
         return os.path.join(self.log_dir, task['id'] + '.jsonl')
 
-    def log_write(self, task, entry):
-        try:
-            os.makedirs(self.log_dir, exist_ok=True)
-            with open(self.log_path(task), 'a', encoding='utf-8') as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-        except OSError as e:
-            log.warning('append task log failed: %s', e)
+    def log_write(self, task, entry):   # 重试与失败计数见 task_events.JsonlWriter
+        # L6：只读进程的事件追加（append）同样明确异常（规格原文口径）
+        state_owner.ensureWritable('agent_logs/%s.jsonl' % task['id'])
+        # 批 PS2：长开句柄追加（锁内写 + flush）；写完即关终态任务的句柄
+        line = json.dumps(entry, ensure_ascii=False) + '\n'
+        if self._jsonl.append(task['id'], line) \
+                and task.get('status') in _JSONL_DONE:
+            self._jsonl.close(task['id'])
 
     def append_event(self, task, etype, **payload) -> contracts.TaskEvent:
         full = payload.pop('full', None)
@@ -218,18 +371,21 @@ class TaskRepository:
             task['lastActiveAt'] = _now()   # 每次事件都刷新（R4-8：轮中可见活跃）
             event = {'seq': task['seq'], 'at': _now(), 'type': etype}
             event.update(payload)
+            entry = dict(event)
+            if full is not None:
+                entry['text'] = full
+            self.log_write(task, entry)   # 批 PS1：先写 jsonl（真相先落地），再进窗口/置脏
             events = task.setdefault('events', [])
             events.append(event)
             if len(events) > MAX_EVENTS:
                 del events[:len(events) - MAX_EVENTS]
             if etype == 'assistant' and payload.get('text'):
                 task['lastText'] = payload['text'][:300]
-            self.save()
+            # 批 PS2：不再每事件 save——seq/lastActiveAt/lastText 是非关键
+            # 变更，等 1 秒粒度的 flush 合并落盘（154/s 爆发下写盘从每事件
+            # 一次降到约每秒一次）；关键变迁在各自 save 点立即落盘
+            self.touch()
             self.evCond.notify_all()   # 唤醒 /wait 阻塞订阅者（R4-3）
-        entry = dict(event)
-        if full is not None:
-            entry['text'] = full
-        self.log_write(task, entry)
         return event
 
     def summaryBrief(self, task):
@@ -237,9 +393,10 @@ class TaskRepository:
         默认只给索引/判态所需字段，完整摘要用 summary()。"""
         lastText = task.get('lastText') or ''
         return {
-            'id': task['id'], 'title': task.get('title', ''),
+            'id': task['id'], 'title': task_title.titleFor(task),
             'status': task.get('status', ''),
             'owner': task.get('owner') or '',
+            'lead': task.get('lead') or '',   # 批次 Q：派活的主管（老任务没有这个键时为 ''）
             'node': task_node.of(task),
             'model': task.get('model') or '',
             'modelEffective': task.get('modelEffective') or '',
@@ -249,6 +406,10 @@ class TaskRepository:
             'createdAt': task.get('createdAt', 0), 'endedAt': task.get('endedAt', 0),
             'error': task.get('error', ''),
             'lastText': lastText[:200], 'lastTextTruncated': len(lastText) > 200,
+            # 上一轮形态（2026-11-13 中招验收方三次早夭）：emptyTurn=0 工具 0 文本
+            # 就结束轮次；silentTurn=调了工具却一句终稿都没落（2026-11-14 P1-4）
+            'emptyTurn': bool((task.get('lastTurn') or {}).get('empty')),
+            'silentTurn': bool((task.get('lastTurn') or {}).get('silent')),
         }
 
     def summary(self, task) -> contracts.TaskSummary:
@@ -257,9 +418,10 @@ class TaskRepository:
         remote = not task_node.isLocal(node)
         cwd = task_node.cwdOf(task)
         return {
-            'id': task['id'], 'title': task.get('title', ''), 'prompt': task.get('prompt', ''),
+            'id': task['id'], 'title': task_title.titleFor(task), 'prompt': task.get('prompt', ''),
             'status': status, 'createdAt': task.get('createdAt', 0),
             'owner': task.get('owner') or '',
+            'lead': task.get('lead') or '',   # 批次 Q：派活的主管（老任务没有这个键时为 ''）
             'createdLabel': _iso(task.get('createdAt', 0)),
             'startedAt': task.get('startedAt', 0), 'endedAt': task.get('endedAt', 0),
             # 非本机任务展示执行目录（本机 workspace 目录对调用方毫无意义）
@@ -305,6 +467,16 @@ class _LazyRepo:
 
     def __getattr__(self, name):
         return getattr(self._target(), name)
+
+    def flush(self):
+        """仓库还没物化（import 即退出的脚本）时是空操作——不能为退出把
+        仓库建出来（atexit 钩子走这里）。"""
+        if self._value is not None:
+            self._value.flush()
+
+    def shutdown(self):
+        if self._value is not None:
+            self._value.shutdown()
 
 
 repo = _LazyRepo(lambda: TaskRepository(storePath(), logDir()))
@@ -401,6 +573,11 @@ def _promptFor(task, manifest, block=''):
     if note:
         lines.append(note)
     lines.append('关键信息不足、需要用户拍板时，先停下来用一句话问，不要猜。')
+    if task.get('expects'):
+        # 批次 G1：有 expects 的任务，交付 = 一次 submit_result 工具调用
+        lines.append('本任务要求结构化交付：完成后必须调用 submit_result 工具提交'
+                     '（字段见工具入参说明，expects=%s）；自由文本报告只作补充，'
+                     '不算交付。' % task.get('expects'))
     lines.append('')
     if block:
         lines.append(block)

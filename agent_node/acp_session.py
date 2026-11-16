@@ -316,7 +316,7 @@ class AcpSession:
                           'stderr': '\n'.join(self.stderr_lines[-8:])})
 
     # ---- lifecycle ----
-    def start(self, resume_session_id=None):
+    def start(self, resume_session_id=None, mcp_servers=None):   # mcp_servers：批 G1 submit_result 注入（hub 透传）
         cmd = [self.kimi_bin]
         if self.model:
             cmd += ['--model', self.model]
@@ -338,7 +338,7 @@ class AcpSession:
             try:
                 self._request('session/load', {
                     'sessionId': resume_session_id, 'cwd': self.cwd,
-                    'mcpServers': [], 'additionalDirectories': [],
+                    'mcpServers': mcp_servers or [], 'additionalDirectories': [],
                 }, timeout=90)
             finally:
                 self._loading = False
@@ -349,7 +349,7 @@ class AcpSession:
                                    if e.get('type') == 'update' and e.get('replay'))
         else:
             session = self._request('session/new', {
-                'cwd': self.cwd, 'mcpServers': [], 'additionalDirectories': [],
+                'cwd': self.cwd, 'mcpServers': mcp_servers or [], 'additionalDirectories': [],
             }, timeout=30)
             self.kimi_session_id = session.get('sessionId')
             if not self.kimi_session_id:

@@ -6,13 +6,17 @@
 #   ... -DryRun          only prechecks, no sync/restart
 #   ... -SkipWebRestart  sync + daemons only
 #   ... -SkipSmoke       skip smoke test (not recommended)
+#   ... -NoDrain         skip the pre-sync task drain (default: drain)
+#   ... -DrainTimeoutSec N   drain wait budget in seconds (default 300)
 #
 param(
     [switch]$DryRun,
     [switch]$SkipWebRestart,
     [switch]$SkipSmoke,
     [switch]$SkipDaemonRestart,
-    [switch]$ForceDaemonRestart
+    [switch]$ForceDaemonRestart,
+    [switch]$NoDrain,
+    [int]$DrainTimeoutSec = 300
 )
 
 $ErrorActionPreference = 'Continue'
@@ -180,6 +184,39 @@ if ($daemonDiff -and (Test-InsideSessiond) -and -not $ForceDaemonRestart -and -n
     Say 'REFUSE: sessiond/termcore 有改动, 重启守护进程会杀死当前承载本进程的终端会话。'
     Say '请从平台会话之外部署, 或确认后加 -ForceDaemonRestart (或 -SkipDaemonRestart 保留会话)。'
     exit 2
+}
+
+# ---------------- 0.5 排空（批次 DR）：部署不打断正在进行的一轮 ----------------
+# 同步代码前让中枢停止接受新的一轮开始（新消息/新任务照常排队），等在飞回合
+# 自然结束；超时不阻塞部署——仍在跑的任务标记 pausedBy=restart，web 重启后
+# 由批次 L3 自动续接。只认本机回环或网页会话，无需密码；web 不在跑时调用
+# 失败也不阻塞部署（旧行为）。
+if (-not $NoDrain) {
+    $drainUrl = "http://127.0.0.1:$webPort/api/system/drain"
+    try {
+        $probe = Invoke-RestMethod -Uri $drainUrl -Method Post -TimeoutSec 10 `
+            -Body (@{timeoutSec = 0} | ConvertTo-Json) -ContentType 'application/json'
+        $inflight = [int]$probe.count
+        if ($inflight -gt 0) {
+            Say ("等待 $inflight 个任务的当前一轮结束……（timeout $DrainTimeoutSec s；-NoDrain 可跳过）")
+            $drain = Invoke-RestMethod -Uri $drainUrl -Method Post `
+                -TimeoutSec ($DrainTimeoutSec + 30) `
+                -Body (@{timeoutSec = $DrainTimeoutSec} | ConvertTo-Json) `
+                -ContentType 'application/json'
+            if ($drain.drained) {
+                Say ("排空完成：$inflight 个任务的当前一轮全部结束（等待 $($drain.waitedSec)s）")
+            } else {
+                Say ("排空超时：$(@($drain.remaining).Count) 个任务仍在执行，已标记 pausedBy=restart，继续部署")
+                foreach ($t in $drain.remaining) {
+                    Say ("  仍在执行: $($t.id) $($t.title)（$($t.node)）")
+                }
+            }
+        } else {
+            Say '排空：无进行中的任务'
+        }
+    } catch {
+        Say ("drain 调用失败（不阻塞部署）: " + $_.Exception.Message)
+    }
 }
 
 # ---------------- 1. backup ----------------

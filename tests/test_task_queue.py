@@ -257,14 +257,20 @@ def test_queued_message_survives_restart_and_delivers_on_resume(env, monkeypatch
                         lambda t: makeClient(record2, sid='sess-r2'))
     r = msg(env, tid, {'text': '重启后续聊'})
     assert r.status_code == 202, r.get_json()
-    for _ in range(100):
+    # 轮询预算 30s：全量跑时 CPU 争抢下 resume 线程（session/load + 清积压）
+    # 可能超过 10s——2026-11-14 全量里这个断言 flakes 过一次，单独跑 5/5 过
+    for _ in range(300):
         if len(record2) >= 2:
             break
         time.sleep(0.1)
     assert record2 == ['重启前排队', '重启后续聊'], \
         'resume 先清重启前的积压，再执行本次续聊'
-    with store.repo.lock:
-        assert repo2.get(tid).get('status') == 'waiting'
+    # 终态异步落定：record2 第二条在 prompt 进入时即记上，runner 还要
+    # flush/markTurnKind/scanResults 之后才转 waiting——直接断言会踩中这个
+    # 结构性小窗（2026-11-14 全量与单独连跑都 flakes 过）。等到为止，
+    # 断言本身不放宽：任务仍必须回到 waiting
+    assert waitStatus(repo2.get(tid), 'waiting'), \
+        'resume 完两条消息后任务应回到 waiting'
 
 
 # ---- 挂起审批：入队放行，审批落定前不投递 ----

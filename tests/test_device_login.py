@@ -3,10 +3,11 @@
 
 覆盖: 登录 ok / 错密码 401 / 坏设备名 400 不计失败 / 每 IP 限速 429 /
 全局锁 20 次/10 分钟（触发记 device.lockout, 网页登录不受影响）/
-设备令牌上传 200 + exec 与 tasks 403 / 同设备名重登替换旧令牌 /
+设备令牌上传 200 + exec 与 tasks 403 /
 logout 自吊销后旧令牌 401 / 智能体令牌不能 logout / 设置页列表(无哈希)
 与按 id 吊销 / touch 节流写盘 / 令牌签发后任何接口不回显 /
-旧 agentTokens 不受影响。全部桩化, 不碰真实主机与真实配置。
+旧 agentTokens 不受影响。并发登录窗口(批次 DL)的覆盖在同目录
+test_device_login_burst.py。全部桩化, 不碰真实主机与真实配置。
 """
 import datetime
 import hashlib
@@ -120,15 +121,6 @@ def test_bad_device_name_400_not_counted(env):
     # 坏设备名不进失败计数: 再错 4 次密码仍是 401(若计数早已 429)
     for _ in range(4):
         assert login(env.client, password='wrong').status_code == 401
-
-
-def test_same_device_relogin_replaces_token(env):
-    old = login(env.client).get_json()['token']
-    new = login(env.client).get_json()['token']
-    assert old != new
-    assert len(devicesFile()) == 1
-    assert upload(env.client, old).status_code == 401   # 旧令牌即刻失效
-    assert upload(env.client, new).status_code == 200
 
 
 # ---- 防爆破: 每 IP / 全局 ----

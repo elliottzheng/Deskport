@@ -80,3 +80,32 @@
 .agent-token-plain-title { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-1); line-height: 1.6; }
 .agent-token-plain .input { font-family: var(--mono); }
 .agent-token-plain .settings-submit { margin-top: var(--sp-3); }
+
+/* 我的权限（批次 L）：规则行 + 示例判定 ✓/✗ 两列 */
+.capability-decision {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; margin-bottom: 6px; border-radius: var(--radius-s);
+    background: var(--bg-2); font-size: 12px;
+}
+.capability-decision code { font-family: var(--mono); overflow-wrap: anywhere; color: var(--text-2); }
+.capability-verdict { flex: 0 0 auto; width: 16px; text-align: center; font-weight: 700; }
+.capability-allow { color: var(--ok); }
+.capability-deny { color: var(--text-3); }
+.capability-deny-text { flex: 0 0 auto; margin-left: auto; color: var(--text-3); }
+.capability-source { flex: 0 0 auto; color: var(--text-3); }
+
+/* 主管卡片（批次 S）：行结构复用 agent-token-row 的计量，仅补主管特有的
+   头部/令牌 chips/动作排布；行内按钮用专用类 .leads-action-btn（44px，
+   S4/ui-rules R11 触控底线）——不动存量 .settings-dir-remove 的全局样式 */
+.leads-row {
+    padding: 10px; margin-bottom: 8px; border-radius: var(--radius-s);
+    background: var(--bg-2);
+}
+.leads-action-btn { min-height: 44px; }
+.leads-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.leads-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text-1); overflow-wrap: anywhere; }
+.leads-tokens { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.leads-tokens .agent-token-scope { display: inline-flex; align-items: center; gap: 4px; }
+.leads-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.leads-row .select { flex: 1; min-width: 0; margin-bottom: 0; }
+.leads-row .settings-dir-add { margin: 8px 0 0; }

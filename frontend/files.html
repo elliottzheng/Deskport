@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/assets/css/tokens.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/app.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/files.css?v=__BUILD__">
+<link rel="stylesheet" href="/assets/css/files-mobile.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/inbox.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/upload.css?v=__BUILD__">
 <link rel="stylesheet" href="/assets/css/feedback.css?v=__BUILD__">
@@ -74,20 +75,20 @@
                     </button>
                     <button class="btn btn-secondary" v-if="loc !== 'inbox' && !machine" @click="startNewFolder">
                         <i data-icon="folderNew"></i>
-                        新建文件夹
+                        <span class="btn-text">新建文件夹</span>
                     </button>
                     <button class="btn btn-secondary" v-if="selCount && !machine" @click="openAskAI">
                         <i data-icon="star"></i>
-                        问 AI ({{ selCount }})
+                        <span class="btn-text">问 AI ({{ selCount }})</span>
                     </button>
                     <button class="btn btn-secondary" v-if="clipboard && loc !== 'inbox' && !machine" @click="pasteClipboard">
-                        粘贴到此处 ({{ clipboard.paths.length }})
+                        <span class="btn-text">粘贴到此处 ({{ clipboard.paths.length }})</span>
                     </button>
                     <button class="btn btn-primary" v-if="loc !== 'inbox' && !machine" @click="pickLocalFile"
                             :disabled="loading || !canUpload"
                             :title="canUpload ? '上传文件到当前目录' : '请先进入某个磁盘或文件夹再上传 (此电脑视图没有可保存的目录)'">
                         <i data-icon="upload"></i>
-                        本地上传
+                        <span class="btn-text">本地上传</span>
                     </button>
                     <input type="file" ref="fileInput" style="display:none" @change="uploadLocal">
                     <span class="sep"></span>
@@ -116,8 +117,18 @@
                          @touchstart.passive="addressPressStart" @touchmove.passive="addressPressMove"
                          @touchend.passive="addressPressEnd" @touchcancel.passive="addressPressEnd">
                         <template v-if="!addressEditing">
-                            <button class="crumb-seg" v-for="(c, i) in crumbs" :key="c.path"
-                                    @click="navigate(c.path)">{{ c.label }}</button>
+                            <!-- M2: 窄屏且层级深时折叠为「… + 当前目录名」; 点 … 弹上级跳转 -->
+                            <template v-if="narrow && crumbs.length > 3">
+                                <button class="crumb-seg crumb-more" title="跳到上级目录"
+                                        @click="crumbJumpOpen = !crumbJumpOpen">…</button>
+                                <button class="crumb-seg is-current"
+                                        @click="navigate(crumbs[crumbs.length - 1].path)">{{ crumbs[crumbs.length - 1].label }}</button>
+                            </template>
+                            <template v-else>
+                                <button class="crumb-seg" v-for="(c, i) in crumbs" :key="c.path"
+                                        :class="{ 'is-current': i === crumbs.length - 1 }"
+                                        @click="navigate(c.path)">{{ c.label }}</button>
+                            </template>
                             <button class="crumb-seg" title="编辑路径" @click="editAddress">
                                 <i data-icon="pencil"></i>
                             </button>
@@ -131,6 +142,16 @@
                     </div>
                     <input class="input search-input" v-model="searchQuery"
                            @keydown.enter="startSearch" placeholder="搜索…" spellcheck="false">
+                    <!-- M2: 「…」上级跳转: 列出全部上级目录, 点哪层跳哪层 -->
+                    <div class="crumb-jump-mask" v-if="crumbJumpOpen" @click="crumbJumpOpen = false"></div>
+                    <div class="crumb-jump" v-if="crumbJumpOpen">
+                        <div class="crumb-jump-title">{{ crumbs.length ? crumbs[crumbs.length - 1].label : '' }}</div>
+                        <button class="crumb-jump-item" v-for="(c, i) in crumbs.slice(0, -1)" :key="'jump-' + i"
+                                @click="jumpToCrumb(c)">
+                            <span class="crumb-jump-name">{{ c.label }}</span>
+                            <span class="crumb-jump-path">{{ c.path === '/' ? '根目录' : c.path }}</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 文件列表 (支持拖入上传) -->
@@ -362,19 +383,41 @@
         <div class="bottombar" v-if="selMode && selCount">
             <button class="btn btn-secondary" @click="downloadSelected">
                 <i data-icon="download"></i>
-                下载
+                <span class="btn-text">下载</span>
             </button>
-            <button class="btn btn-secondary" v-if="!machine" @click="startCompress">压缩</button>
-            <button class="btn btn-secondary" v-if="!machine" @click="openAskAI">问 AI</button>
-            <button class="btn btn-secondary" v-if="!machine" @click="openUploadHost(selectedPaths)">传到服务器</button>
-            <button class="btn btn-danger" v-if="!machine" @click="deleteSelected">删除</button>
-            <button class="btn btn-secondary" v-if="!machine" @click="batchCopyMove('copy')">复制</button>
-            <button class="btn btn-secondary" v-if="!machine" @click="batchCopyMove('move')">移动</button>
-            <button class="btn btn-secondary" v-if="selCount === 1" @click="openSelectedInTerminal">在终端打开</button>
-            <button class="btn btn-secondary" v-if="clipboard && !machine" @click="pasteClipboard">粘贴 ({{ clipboard.paths.length }})</button>
-            <button class="btn btn-secondary" @click="selectAll">全选</button>
-            <button class="btn btn-secondary" @click="invertSelect">反选</button>
-            <button class="btn btn-ghost" @click="exitSelMode">取消选择</button>
+            <button class="btn btn-secondary" v-if="!machine" @click="startCompress">
+                <span class="btn-text">压缩</span>
+            </button>
+            <button class="btn btn-secondary" v-if="!machine" @click="openAskAI">
+                <span class="btn-text">问 AI</span>
+            </button>
+            <button class="btn btn-secondary" v-if="!machine" @click="openUploadHost(selectedPaths)">
+                <span class="btn-text">传到服务器</span>
+            </button>
+            <button class="btn btn-danger" v-if="!machine" @click="deleteSelected">
+                <span class="btn-text">删除</span>
+            </button>
+            <button class="btn btn-secondary" v-if="!machine" @click="batchCopyMove('copy')">
+                <span class="btn-text">复制</span>
+            </button>
+            <button class="btn btn-secondary" v-if="!machine" @click="batchCopyMove('move')">
+                <span class="btn-text">移动</span>
+            </button>
+            <button class="btn btn-secondary" v-if="selCount === 1" @click="openSelectedInTerminal">
+                <span class="btn-text">在终端打开</span>
+            </button>
+            <button class="btn btn-secondary" v-if="clipboard && !machine" @click="pasteClipboard">
+                <span class="btn-text">粘贴 ({{ clipboard.paths.length }})</span>
+            </button>
+            <button class="btn btn-secondary" @click="selectAll">
+                <span class="btn-text">全选</span>
+            </button>
+            <button class="btn btn-secondary" @click="invertSelect">
+                <span class="btn-text">反选</span>
+            </button>
+            <button class="btn btn-ghost" @click="exitSelMode">
+                <span class="btn-text">取消选择</span>
+            </button>
         </div>
 
         <!-- 问 AI 任务面板 -->
@@ -544,6 +587,7 @@
 <script src="/assets/js/files.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-capture.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback-panel.js?v=__BUILD__"></script>
+<script src="/assets/js/feedback-mine.js?v=__BUILD__"></script>
 <script src="/assets/js/feedback.js?v=__BUILD__"></script>
 </body>
 </html>

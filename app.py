@@ -21,13 +21,19 @@ import config
 
 from modules import meta as metaModule  # noqa: E402
 from modules import system as systemModule  # noqa: E402
+from modules import state_owner as stateOwnerModule  # noqa: E402  L6：状态目录所有者锁
+from modules import task_health as taskHealthModule  # noqa: E402  批次 L：重启续接 + 卡住巡检
 from modules import files as filesModule  # noqa: E402
 from modules import command as commandModule  # noqa: E402
 from modules import screen as screenModule  # noqa: E402
 from modules import aihandoff as aiModule  # noqa: E402
 from modules import control as controlModule  # noqa: E402
 from modules import settings as settingsModule  # noqa: E402
+from modules import capability_api as capabilityApiModule  # noqa: E402
 from modules import agent_tokens as agentTokensModule  # noqa: E402
+from modules import leads_api as leadsApiModule  # noqa: E402
+from modules import leads_hosted as leadsHostedModule  # noqa: E402
+from modules import leads_inbox as leadsInboxModule  # noqa: E402
 from modules import ssh as sshModule  # noqa: E402
 from modules import tasks as tasksModule  # noqa: E402
 from modules import terminal as terminalModule  # noqa: E402
@@ -47,7 +53,12 @@ from modules import agent_tools as agentToolsModule  # noqa: E402  路由注册
 from modules import feedback as feedbackModule  # noqa: E402
 from modules import device_auth as deviceAuthModule  # noqa: E402  路由注册
 from modules import agent_nodes as agentNodesModule  # noqa: E402
+from modules import command_view as commandViewModule  # noqa: E402  指挥台聚合视图（批次 U）
 from modules import tasks_federation as tasksFederationModule  # noqa: E402  路由注册
+from modules import tasks_rename as tasksRenameModule  # noqa: E402  路由注册（PATCH 改名，批次 T）
+from modules import task_kimi_sessions as taskKimiSessionsModule  # noqa: E402  路由注册（接手候选，批 G1 拆出）
+from modules import task_result_api as taskResultApiModule  # noqa: E402  路由注册（结构化结果 HTTP，批 G1）
+from modules import task_result_mcp as taskResultMcpModule  # noqa: E402  路由注册（submit_result MCP，批 G1）
 from modules import worklines_api as worklinesModule  # noqa: E402  路由注册
 from modules import external_proxy as externalProxyModule  # noqa: E402
 from modules import federation as federationModule  # noqa: E402
@@ -216,14 +227,38 @@ def gzipText(resp):
     return resp
 
 
+def skillVersionHeaders(resp):
+    """技能包版本协商（2026-11-14 用户提议）：智能体面每个响应都带线上版本号，
+    客户端（driver.py/deskport.py）在请求头上报自己 SKILL.md 里的「技能版本」——
+    对不上就再附一个 stale 标记。更新频繁的节奏下，旧脚本不用等撞上 breaking
+    change（如 engine 字段移除）才知道自己落后，driver 在每轮 DONE 行提醒重拉
+    skill.zip。不带版本的客户端（更老的脚本）只收版本号，不被打标。"""
+    path = request.path or ''
+    if not (path.startswith('/api/agent/') or path.startswith('/api/tasks')
+            or path.startswith('/api/worklines') or path.startswith('/api/capability/')):
+        return resp
+    current = metaModule.BUILD
+    resp.headers['X-Deskport-Skill-Version'] = current
+    local = (request.headers.get('X-Deskport-Skill-Version') or '').strip()
+    if local and local != current:
+        resp.headers['X-Deskport-Skill-Stale'] = '1'
+    return resp
+
+
 # 显式注册表：蓝图模块与 register(app) 模块分开，新增模块必须在这里登记。
 BLUEPRINT_MODULES = (filesModule, commandModule, screenModule, aiModule,
                      controlModule, tasksModule, settingsModule,
-                     agentTokensModule,
+                     capabilityApiModule,
+                     agentTokensModule, leadsApiModule, leadsHostedModule,
+                    leadsInboxModule,
                      pluginsModule, agentApiModule, agentHandbookModule,
                      agentToolsModule,
                      agentNodesModule,
-                     tasksFederationModule, worklinesModule, feedbackModule)
+                     commandViewModule,
+                     tasksFederationModule, worklinesModule, feedbackModule,
+                     tasksRenameModule,
+                     taskKimiSessionsModule, taskResultApiModule,
+                     taskResultMcpModule)
 # agent_sessions / agent_sftp / agent_upload / agent_share / share_web / agent_skill_files 与 agent_api 共用同一蓝图对象：
 # 上面的 import 已把路由挂到该蓝图，随 agentApiModule 一次注册，无需重复登记。
 REGISTER_MODULES = (systemModule, metaModule, tasksModule,
@@ -257,6 +292,12 @@ def _registerModules(app, sock, pluginRoots=None, pluginNavDir=None):
 
     # 联邦: 刷新线程据此把远端广播、且 remotes[].apps 白名单允许的应用挂进来
     federationModule.bindApp(app)
+
+    # 主管收件箱: sweeper 据此唤醒托管主管（合并窗口内的未投递条目）并发无动静提示
+    leadsInboxModule.bindApp(app)
+
+    # 批次 L 任务巡检: 重启 60s 后自动续接（L3）+ 工具卡住报警（L4）
+    taskHealthModule.bindApp(app)
 
 
 def _installApiJsonErrors(app):
@@ -302,6 +343,9 @@ def create_app(pluginRoots=None, pluginNavDir=None):
     """装配一个独立 Flask 实例；测试可多次调用，互不共享路由状态。"""
     app = Flask(__name__)
     sock = Sock(app)
+    # L6：web 启动即取状态目录所有者锁——其它进程（探针脚本/locald/sshd）
+    # 再碰 TaskRepository/feedback/leads 等存储时只读；旧进程退出即释放
+    stateOwnerModule.acquire()
 
     auth.register(app)
     _installApiJsonErrors(app)
@@ -313,6 +357,7 @@ def create_app(pluginRoots=None, pluginNavDir=None):
         app.add_url_rule(route, endpoint='legacy_' + filename.replace('.', '_'),
                          view_func=_makeLegacyHandler(filename, target), methods=['GET'])
     app.after_request(gzipText)
+    app.after_request(skillVersionHeaders)
 
     _registerModules(app, sock, pluginRoots, pluginNavDir)
     sock.init_app(app)
