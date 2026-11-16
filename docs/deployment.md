@@ -120,3 +120,7 @@ $lnk.Save()
 在 dev 目录执行 `powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1`：precheck（py_compile / 结构 / 前端门禁）→ **排空** → 备份 → robocopy 同步 → 按需重启守护进程与 web → smoke，失败自动回滚。
 
 排空（批次 DR，缺省开启）：同步代码前调用本机 `POST /api/system/drain`，中枢停止接受新的一轮开始（新消息/新任务照常排队），等在飞回合自然结束（缺省 300s，`-DrainTimeoutSec N` 调整）；超时不阻塞部署——仍在跑的任务标记 `pausedBy=restart`，web 重启后由批次 L3 自动续接。`-NoDrain` 跳过排空恢复旧行为（会打断正在进行的一轮）。web 不在跑时排空调用失败不阻塞部署。
+
+公告两步（批次 BD 起强制，漏发 = 上线流程不合规）：部署流程一启动就向所有 active 主管发上线预告（`warn`），冒烟通过后发完成通告（`info`）。预告无条件触发——排空只是有在飞回合时的优雅等待，没任务就直接部署，两种路径都要预告；`-DryRun` 只做预检不部署故不发。令牌取 `-AnnounceToken` 参数或 prod config 的 `federationToken`；两者都没有只警告不阻塞。首句两个数字可调（`-AnnounceLeadMin` 缺省 1、`-AnnounceDurationMin` 缺省 6），完成通告摘要取 `-AnnounceSummary`。
+
+> 注：公告端点随本批上线。**首次部署**时旧代码还没有该路由，预告会发失败（不阻塞部署）——部署前用 `POST /api/settings/leads/<lid>/inbox` 给各 active 主管手动补一条即可，之后的部署全自动。
