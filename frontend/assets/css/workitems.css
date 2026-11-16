@@ -1,0 +1,82 @@
+/* 指挥台「工作项」面板（批次 G2）：一行一个 + 阶段进度条 + 展开名下任务。
+   口径同 tasks.css 的指挥树（44px 触控、--cmd-indent、徽标复用）；
+   390px 不横向滚动：标题/原因/提交号一律 ellipsis，阶段条三段固定宽。 */
+.cmd-wi {
+    --cmd-indent: 16px;
+    display: flex; align-items: flex-start; gap: 2px; flex-wrap: wrap;
+    min-height: 44px; padding: 4px 0;
+}
+.cmd-wi.judging { background: var(--err-bg); border-radius: var(--radius-s); }
+.cmd-wi.open { background: var(--bg-2); border-radius: var(--radius-s); }
+.cmd-wi-caret {
+    flex-shrink: 0; width: 44px; height: 44px; padding: 0;
+    border: 0; background: transparent; color: var(--text-3);
+    font-size: 12px; line-height: 1; cursor: pointer;
+    transition: transform .15s ease;
+}
+.cmd-wi-caret.open { transform: rotate(90deg); }
+.cmd-wi-main { flex: 1; min-width: 0; padding: 6px 4px 6px 0; }
+.cmd-wi-line1 {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    min-width: 0;
+}
+.cmd-wi-title {
+    font-weight: 600; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-wi-attempt { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.cmd-wi-line2 {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12px; color: var(--text-3); margin-top: 2px; min-width: 0;
+}
+.cmd-wi-stages { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.cmd-wi-stage {
+    padding: 1px 8px; border-radius: 999px; font-size: 11px;
+    background: var(--bg-2); color: var(--text-3); white-space: nowrap;
+}
+.cmd-wi-stage.is-active { background: var(--brand-bg); color: var(--brand); }
+.cmd-wi-stage.is-done { background: var(--ok-bg, var(--bg-2)); color: var(--text-2); }
+.cmd-wi-commit, .cmd-wi-time, .cmd-wi-merged {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-wi-queue, .cmd-wi-reason {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-wi-reason { color: var(--err); }
+.cmd-wi-actions {
+    display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0;
+    padding: 6px 0;
+}
+.cmd-wi-detail {
+    flex-basis: 100%; padding: 4px 0 8px 46px; min-width: 0;
+}
+.cmd-wi-detail-empty { font-size: 12px; color: var(--text-3); margin: 4px 0; }
+.cmd-wi-task {
+    display: flex; align-items: center; gap: 8px; min-height: 40px;
+    padding: 2px 4px; border-radius: var(--radius-s); cursor: pointer;
+    min-width: 0;
+}
+.cmd-wi-task:hover { background: var(--bg-2); }
+.cmd-wi-task-name {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 13px;
+}
+.cmd-wi-task-sub {
+    font-size: 11px; color: var(--text-3); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.cmd-wi-log { margin: 6px 0 0; font-size: 12px; color: var(--text-3); }
+.cmd-wi-log summary { cursor: pointer; }
+.cmd-wi-log pre {
+    max-height: 220px; overflow: auto; margin: 6px 0 0; padding: 8px;
+    background: var(--bg-2); border-radius: var(--radius-s);
+    font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+}
+.cmd-badge-ok { background: var(--ok-bg, var(--bg-2)); color: var(--text-2); }
+.cmd-badge-failed { background: var(--err-bg); color: var(--err); }
+
+@media (max-width: 720px) {
+    .cmd-wi { --cmd-indent: 12px; }
+    .cmd-wi-detail { padding-left: 12px; }
+}

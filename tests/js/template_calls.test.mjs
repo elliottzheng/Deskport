@@ -51,6 +51,7 @@ const PAGES = [
              'frontend/assets/js/tasks-overview.js',
              'frontend/assets/js/tasks-tree.js',
              'frontend/assets/js/tasks-events.js',
+             'frontend/assets/js/workitems.js',
              'frontend/assets/js/tasks.js'],
     },
 ];

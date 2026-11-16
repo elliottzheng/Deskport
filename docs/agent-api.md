@@ -411,6 +411,13 @@ DELETE /api/agent/ssh/sessions/<sid>
 | GET | /api/tasks/<id>/event/<seq> | 单条事件（按 seq 从流水里取，`assistant_chunk` 不返回；流式参数后到的 `tool.args` 按补丁行还原） |
 | GET | /api/tasks/<id>/log | 全量流水 jsonl（`application/x-ndjson`；`?download=1` 作为附件下载；无日志 404）。流式参数后到（真实 Kimi 形状）时会混入**不带 `seq`** 的 `tool_args_patch` 补丁行：`{"type":"tool_args_patch","targetSeq":<被补事件的 seq>,"args":...,"truncated":...,"at":...}`——它不是事件、不占序号，按 `targetSeq` 应用到对应 `tool` 事件（同目标多次补丁以最后一次为准）；`/events` 与 `/event/<seq>` 返回的已是应用后的形状，`/log` 原样透出，自建解析方按 `type` 跳过即可 |
 | GET | /api/tasks/<id>/download?path= | 取工作区里的结果文件（相对 `workspace` 解析；越界 403、不存在 404） |
+| POST | /api/workitems | 建工作项派开发活（平台建 worktree/分支+实施任务；足迹相交进 queued）。入参 `{projectId, specPath 或 specText, implModel, verifyModel≠implModel, footprint[]必填, title?, maxAttempts?, forceParallel?}` → 201 `{workItem}` |
+| GET | /api/workitems | 工作项列表 `{workItems, count, byState}`（主管令牌只返自己的） |
+| GET | /api/workitems/<id> | 工作项详情：brief + 名下任务 + 集成日志尾部 |
+| POST | /api/workitems/<id>/decision | 主管判断 `{action: continue/rework/integrate/cancel, text?}`（仅 needs_judgment；越权 403） |
+| POST | /api/workitems/<id>/cancel | 取消工作项（关任务、拆 worktree；幂等） |
+| GET/POST | /api/settings/projects | 项目配置列表 / 增改（仅网页会话；内置 deskport 不可删） |
+| DELETE | /api/settings/projects/<id> | 删项目配置 |
 | POST | /api/tasks/<id>/policy | 更新审批边界（整份替换 `policy`；本轮 `running` 时 409，挂起中的审批不重判） |
 | GET | /api/tasks/nodes/<node>/health | 执行点健康探测：本机/远端 node 直连 `/health`，联邦成员转发 `/health` |
 

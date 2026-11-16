@@ -69,6 +69,15 @@
    带了之后平台往会话注入 `submit_result` 工具，下属完成时必须调它提交（schema 见
    `SKILL.md`「结构化交付」节）；自由文本报告只作补充。没交就结束轮次会被平台追发一次，
    仍不交会给你投 `result_missing`（需要判断）。【平台强制】
+7. **派开发类工作必须用工作项**（`deskport.py wi new --project … --spec … --impl …
+   --verify … --footprint …`）：平台自动建 worktree/分支、派实施、派独立验收、把返工
+   发回**同一个实施会话**、主仓门禁+全量后合并——你只在需要判断时被叫醒
+   （收件箱 `workitem_judgment`，用 `wi decide continue|rework|integrate|cancel` 处理）。
+   直接建任务只用于调查类。【平台强制】
+   - 同项目足迹相交的工作项不并行实施：后来者排队，`wi ls` 会显示在等谁、共享什么；
+     确有把握并行才加 `--force-parallel`（记 history）。
+   - 实施交付后平台会先同步 main 再验收；集成时 main 又动了会回到同步而不是直接返工。
+   - `integrated` 即终态；上线部署不在本批。
 
 ---
 

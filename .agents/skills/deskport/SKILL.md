@@ -18,6 +18,7 @@ description: 通过 Deskport 智能体 API 操作已保存的远程主机和 Des
 - 错误全是 JSON：404/405/500 带 `error`/`code`（500 另有 `requestId`）
 - **机器参数用 `node`**（exec/sftp/会话与任务同一套词汇，缺省 `local`）：`host` 是旧名，仍接受；两个都给且不同 → 400
 - **提反馈**：`POST /api/feedback`（令牌通道，实名留痕，详见专节）——撞见平台 bug 时用，别只在报告里带一句
+- **派开发类活走工作项**：`deskport.py wi new …`（建 worktree→实施→验收→返工→集成全自动）；直接建任务只用于调查类
 - **技能版本**：`deskport.py` 自带版本常量（装配技能包时盖成本次构建号），每个请求自动带上；响应带回线上版本号，对不上时附 `X-Deskport-Skill-Stale: 1`——driver.py 每轮 DONE 行提醒重拉 skill.zip（旧脚本不用等撞上 400 才知道落后，你也无需手动配任何东西）
 
 ## 这个包里还有什么（一起拉）
@@ -254,6 +255,29 @@ POST /api/tasks/<id>/cancel | /close              → 都返回 status；close �
 - 按主管筛任务：`GET /api/tasks?lead=me`（按自己令牌绑的主管筛，没绑 400）
   或 `?lead=<主管id>`；主管被停用时建任务 403，已有任务的读/续聊/审批/关闭照常。
 
+## 工作项（派开发类活：实施 → 验收 → 返工 → 集成）
+
+开发类工作（改代码、跑门禁、合并）**必须**派成工作项，不许直接建任务——
+平台会自动建 worktree/分支、派实施、派验收、把返工发回同一实施会话、
+主仓跑门禁+全量后合并，主管只在需要判断时被叫醒。【平台强制】
+
+```text
+python deskport.py wi new --project deskport --spec <规格文件>     --impl <实施模型> --verify <验收模型> --footprint <GLOB>... [--title "<标题>"]
+python deskport.py wi ls                                   # 一行一个：阶段/attempt/verdict/在等谁
+python deskport.py wi show <工作项id>                       # 详情（含名下任务与集成日志尾部）
+python deskport.py wi decide <工作项id> continue|rework|integrate|cancel [--text "<说明/返工要点>"]
+```
+
+- `--footprint` 必填：预计改动的文件/目录（glob）。同项目足迹相交的工作项
+  不并行实施——后来者排队，`wi ls` 显示在等谁、共享什么；要强行并行加
+  `--force-parallel`（记 history）。
+- `--verify` 必须与 `--impl` 不同（同一模型 = 同一种盲区，创建时校验）。
+- 实施交付走 `submit_result`（expects=impl）；验收结论 `pass/rework/
+  needs_judgment`。`needs_judgment` 会进主管收件箱（`workitem_judgment`），
+  用 `wi decide` 处理；`integrated` 即终态（上线部署不在本批）。
+- 项目清单：`GET /api/settings/projects`（网页会话）；缺省项目 `deskport`
+  指向本仓库副本，门禁/测试命令与 `.drive/merge_branch.py` 一致。
+
 ## 给平台提反馈（撞见 Deskport 自身的 bug 时）
 
 干活的途中撞上平台缺陷（审批失灵、会话暴死、driver 抽风、接口行为和手册不符……），
@@ -306,6 +330,8 @@ POST /api/feedback
 18. **有 expects 的任务：交付 = 调 `submit_result` 提交结构化结果**，一轮结束前必须交；
     自由文本报告只作补充，不算交付。没交就结束轮次会被平台追发一次，仍不交报主管
     `result_missing`。【平台强制】
+19. **派开发类工作必须用工作项**（`deskport.py wi new`）：平台自动建 worktree、派实施/验收、
+    返工回同一会话、门禁+全量后合并；直接建任务只用于调查类。【平台强制】
 
 ## 规矩
 

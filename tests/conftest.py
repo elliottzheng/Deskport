@@ -120,3 +120,18 @@ def idleTaskHealthLoop():
     taskHealth._loop = lambda: None
     yield
     taskHealth._loop = original
+
+
+@pytest.fixture(scope='session', autouse=True)
+def idleWorkitemWatchLoop():
+    """批次 G2：workitem_watch 的后台巡检在测试进程里空转。
+
+    app.py 模块级就 create_app()——巡检线程在收集期（任何 fixture 之前）
+    已经起来了，改 _loop 拦不住已经开跑的线程；把每跳前的开关关掉，线程
+    空转。线上 2s 一跳（起不来重试/卡死/提前收工/上下文换手）；测试里这些
+    状态由用例自搭、显式调 workitem_watch.sweep() 驱动（开关不影响直调）。
+    """
+    import modules.workitem_watch as workitemWatch
+    workitemWatch._enabled = False
+    yield
+    workitemWatch._enabled = True

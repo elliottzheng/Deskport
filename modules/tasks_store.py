@@ -403,6 +403,7 @@ class TaskRepository:
             'kimiSessionId': task.get('kimiSessionId') or '',
             'kimiSessionFork': bool(task.get('kimiSessionFork')),
             'workline': (task.get('workline') or {}).get('id') or '',
+            'workItemId': task.get('workItemId') or '',   # 批次 G2：所属工作项
             'createdAt': task.get('createdAt', 0), 'endedAt': task.get('endedAt', 0),
             'error': task.get('error', ''),
             'lastText': lastText[:200], 'lastTextTruncated': len(lastText) > 200,
