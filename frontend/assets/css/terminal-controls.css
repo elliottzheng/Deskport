@@ -11,7 +11,7 @@
 #control-keys.hidden { display: none; }
 .control-key {
     min-width: 44px;
-    height: 34px;
+    min-height: 44px;
     padding: 0 10px;
     background: var(--surface);
     color: var(--text-2);
@@ -32,7 +32,6 @@
     #connect { order: 10; margin-left: auto; }
     #status { order: 11; flex: 0 1 auto; }
     .preset-command { height: 34px; padding: 0 10px; }
-    .control-key { height: 40px; }   /* 触控目标加大 */
     #sidebar {
         position: fixed;
         left: 0;
@@ -71,8 +70,8 @@
 }
 .ssh-head-btns { display: flex; gap: 4px; }
 .ssh-mini-btn {
-    width: 22px;
-    height: 22px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border-radius: 6px;
     border: 1px solid var(--border-ctrl);
@@ -88,7 +87,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 8px;
+    padding: 7px 8px; min-height: 44px;
     border-radius: var(--radius-s);
     cursor: pointer;
     font-size: 13px;
@@ -227,7 +226,7 @@
 
 /* ====== 侧栏底部输入行 (snippet / multi-exec) ====== */
 .side-input-row { display: flex; gap: 4px; padding: 2px 4px 8px; align-items: center; min-width: 0; }
-.side-input { height: 28px; font-size: 13px; padding: 0 6px; background: var(--surface); color: var(--text-1); border: 1px solid var(--border-ctrl); border-radius: 6px; min-width: 0; }
+.side-input { height: 28px; font-size: 16px; padding: 0 6px; background: var(--surface); color: var(--text-1); border: 1px solid var(--border-ctrl); border-radius: 6px; min-width: 0; }
 .side-input-flex { flex: 1; }
 .side-input-name { width: 60px; flex-shrink: 0; }
 .side-input-mono { font-family: var(--mono); }

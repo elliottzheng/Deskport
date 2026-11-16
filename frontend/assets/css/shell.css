@@ -35,6 +35,7 @@ html, body.shell-body { height: 100%; margin: 0; }
 #session-switch button {
     border: 0; background: transparent; padding: 7px 14px; border-radius: 999px;
     font-family: inherit; font-size: 13px; color: var(--text-2); cursor: pointer;
+    min-height: 44px;
 }
 #session-switch button.is-active { background: var(--surface); color: var(--brand); font-weight: 600; box-shadow: var(--shadow-card); }
 #session-switch { background: var(--bg-2); border-radius: 999px; padding: 2px; }
@@ -54,7 +55,7 @@ html, body.shell-body { height: 100%; margin: 0; }
 .shell-tabs a, .shell-tabs button {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 2px; border: 0; background: transparent; color: var(--text-3);
-    font-family: inherit; font-size: 11px; text-decoration: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; text-decoration: none; cursor: pointer;
 }
 .shell-tabs svg { width: 22px; height: 22px; }
 .shell-tabs .is-active { color: var(--brand); font-weight: 600; }
@@ -137,6 +138,7 @@ html, body.shell-body { height: 100%; margin: 0; }
     appearance: none; border: 0; background: transparent; padding: 7px 14px;
     border-radius: 999px; font-family: inherit; font-size: 13px; line-height: 1.2;
     color: var(--text-2); cursor: pointer;
+    min-height: 44px;
 }
 .session-switch button:hover { color: var(--text-1); }
 .session-switch button.is-active {

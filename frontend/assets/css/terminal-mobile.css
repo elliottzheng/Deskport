@@ -62,7 +62,7 @@
 }
 
 @media (hover: none) and (pointer: coarse) {
-    #bar #session-switch a { padding: 8px 12px; font-size: 13px; }
+    #bar #session-switch a { padding: 8px 12px; font-size: 13px; min-height: 44px; }
 }
 
 /* 深色细滚动条：原生白条在深色终端里像一条"缝隙"，且会盖住内容 */
