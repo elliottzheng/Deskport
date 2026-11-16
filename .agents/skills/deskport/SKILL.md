@@ -328,7 +328,7 @@ GET /api/agent/registry
 # 我要起 Lightpanda CDP，默认 9222——先问主人
 POST /api/agent/message
 {"to": "中招系统主控",
- "text": "我要起 Lightpampa CDP，默认端口 9222；你的 Playwright 实例（pid 1741899）还在用吗？还要多久？不行我错峰到 9223。",
+ "text": "我要起 Lightpanda CDP，默认端口 9222；你的 Playwright 实例（pid 1741899）还在用吗？还要多久？不行我错峰到 9223。",
  "context": {"host": "ai-xmyz", "port": 9222, "want": "lightpanda-cdp"}}
 # 醒来后对方 inbox 里看到这条，回一条（互换 to）即完成协商
 ```
