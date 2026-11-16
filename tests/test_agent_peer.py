@@ -180,12 +180,36 @@ def test_peer_message_context_over_long_clipped(env, monkeypatch):
 
 def test_peer_message_retired_lead_receives(env):
     """停用 lead 按规格未禁：照旧可寻址、条目落箱（规格未定义，固化现状）。"""
-    lead = leads_store.get(env['leadB']['id'])
     leads_store.update(env['leadB']['id'], {'status': 'retired'})
     resp = _post(env['app'], '/api/agent/message',
                  {'to': env['leadB']['id'], 'text': '给停用的'}, env['tokA'])
     assert resp.status_code == 202
     assert leads_inbox.readAll(env['leadB']['id'])[0]['kind'] == 'peer'
+
+
+def test_peer_message_wakes_hosted_recipient(env, monkeypatch):
+    """端点级 wakeNow：hosted 收方（有 taskId）发消息即投递，不等 sweeper。"""
+    lead = leads_store.get(env['leadB']['id'])
+    lead['taskId'] = 'tk-hosted-wake'
+    lead['kind'] = 'hosted'      # wakeNow 只唤醒 hosted（external 自然跳过）
+    leads_store._save({lead['id']: lead})
+
+    class Repo:
+        def load(self):
+            pass
+
+        def get(self, taskId):
+            return {'id': taskId, 'status': 'running'}
+    monkeypatch.setattr(leads_inbox.store, 'repo', Repo())
+    delivered = []
+    import modules.tasks_api as tasks_api
+    monkeypatch.setattr(tasks_api, 'deliverMessage',
+                        lambda task, text, mode, by='': (
+                            delivered.append(text) or ({'ok': True}, 200)))
+    resp = _post(env['app'], '/api/agent/message',
+                 {'to': env['leadB']['id'], 'text': 'hosted 收方'}, env['tokA'])
+    assert resp.status_code == 202
+    assert len(delivered) == 1 and 'hosted 收方' in delivered[0]
 
 
 def test_registry_hosted_node_aggregated(env, monkeypatch):
