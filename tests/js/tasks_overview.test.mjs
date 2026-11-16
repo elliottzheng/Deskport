@@ -6,6 +6,7 @@ import overview from '../../frontend/assets/js/tasks-overview.js';
 const {
     taskStatusText, taskModeText, stateText, firstLine, countsText,
     taskRowView, pendingRows, mergeMoreTasks, newLeadKindChoices,
+    splitPermissionOptions, menuFlipUp,
 } = overview;
 
 test('taskStatusText: 九态映射，未知/空原样兜底', () => {
@@ -160,4 +161,57 @@ test('pendingRows: 审批行带上 purpose 与 owner（U3 人话字段）', () =
     const old = pendingRows([{kind: 'report', leadId: 'ld_1'}], {ld_1: {name: '甲'}}, {});
     assert.equal(old[0].purpose, '');
     assert.equal(old[0].owner, '');
+});
+
+test('splitPermissionOptions: allow_once 进主操作，其余进「更多」（M3 #4）', () => {
+    const opts = [
+        {optionId: 'o1', name: '允许一次', kind: 'allow_once'},
+        {optionId: 'o2', name: '总是允许', kind: 'allow_always'},
+    ];
+    const split = splitPermissionOptions(opts);
+    assert.deepEqual(split.primary.map(o => o.optionId), ['o1']);
+    assert.deepEqual(split.more.map(o => o.optionId), ['o2']);
+});
+
+test('splitPermissionOptions: 没有 allow_once 的老链路把第一个可允许选项提为主操作', () => {
+    const split = splitPermissionOptions([
+        {optionId: 'o1', name: '总是允许', kind: 'allow_always'},
+    ]);
+    assert.deepEqual(split.primary.map(o => o.optionId), ['o1']);
+    assert.deepEqual(split.more, []);
+    // 一个选项都没有（事件被挤掉）：两级都空，模板只留「更多」里的拒绝/查看
+    const empty = splitPermissionOptions([]);
+    assert.deepEqual(empty.primary, []);
+    assert.deepEqual(empty.more, []);
+    assert.deepEqual(splitPermissionOptions(null), {primary: [], more: []});
+});
+
+test('pendingRows: 审批行带 primaryOptions/moreOptions（M3 #4）', () => {
+    const rows = pendingRows([
+        {kind: 'permission', at: 100, taskId: 't1', requestId: 'rq-1',
+         options: [{optionId: 'o1', name: '允许一次', kind: 'allow_once'},
+                   {optionId: 'o2', name: '总是允许', kind: 'allow_always'}]},
+        {kind: 'report', at: 90, leadId: 'ld_1', seq: 1},
+    ], {}, {});
+    assert.deepEqual(rows[0].primaryOptions.map(o => o.optionId), ['o1']);
+    assert.deepEqual(rows[0].moreOptions.map(o => o.optionId), ['o2']);
+    // 非审批行也有这两个键（空数组），模板按 kind 分支不读它们
+    assert.deepEqual(rows[1].primaryOptions, []);
+    assert.deepEqual(rows[1].moreOptions, []);
+});
+
+test('menuFlipUp: 向下放越界（底栏顶/下一行 ··· 顶）才翻，向上不出顶栏（M3 返工 P1/P2）', () => {
+    // 390×640 实测几何：四项菜单向下放到 606；下一行 ··· 顶 540、底栏顶 580
+    // ——越过更紧的 540，翻转后顶 2*410-606=214 不出顶栏（56）→ 翻
+    assert.equal(menuFlipUp(410, 606, 540, 56), true);
+    // P1 末行：只有底栏一条线（606 > 580）→ 翻
+    assert.equal(menuFlipUp(500, 606, 580, 56), true);
+    // 向下放不越界（520 ≤ 540 / 570 ≤ 580）→ 不翻
+    assert.equal(menuFlipUp(410, 520, 540, 56), false);
+    assert.equal(menuFlipUp(500, 570, 580, 56), false);
+    // 向上翻会钻到顶栏上（翻转后顶 4 < 56）→ 不翻，保持向下（极限几何退让）
+    assert.equal(menuFlipUp(200, 396, 300, 56), false);
+    // 恰好贴线不翻（bottom == limit）
+    assert.equal(menuFlipUp(410, 540, 540, 56), false);
+    assert.equal(menuFlipUp(410, 606, 214, 56), true);
 });

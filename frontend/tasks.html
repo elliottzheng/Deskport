@@ -52,15 +52,42 @@
                     </div>
                     <div class="cmd-pending-actions">
                         <template v-if="p.kind === 'permission'">
-                            <button type="button" class="btn btn-secondary"
-                                    v-for="o in p.options" :key="o.optionId"
+                            <button type="button" class="btn btn-primary"
+                                    v-for="o in p.primaryOptions" :key="'pri-' + o.optionId"
                                     @click="resolvePendingPermission(p, o)">
                                 {{ o.name || o.kind }}
                             </button>
-                            <button type="button" class="btn btn-ghost"
-                                    @click="resolvePendingPermission(p, null)">拒绝</button>
-                            <button type="button" class="btn btn-ghost"
-                                    @click="openTask(p.taskId, p)">查看</button>
+                            <!-- S4：桌面宽屏（>640px）次级动作全部内联可见，不收进菜单
+                                ——修掉 M3 引入的「桌面需多点一次」行为退化；窄屏才收 -->
+                            <template v-if="!menuNarrow">
+                                <button type="button" class="btn btn-ghost"
+                                        v-for="o in p.moreOptions" :key="'dsk-' + o.optionId"
+                                        @click="resolvePendingPermission(p, o)">
+                                    {{ o.name || o.kind }}
+                                </button>
+                                <button type="button" class="btn btn-ghost"
+                                        @click="resolvePendingPermission(p, null)">拒绝</button>
+                                <button type="button" class="btn btn-ghost"
+                                        @click="openTask(p.taskId, p)">查看</button>
+                            </template>
+                            <span class="cmd-menu-wrap" v-else>
+                                <button type="button" class="btn btn-ghost"
+                                        :class="{open: rowMenus[p.key]}"
+                                        :title="rowMenus[p.key] ? '收起更多操作' : '更多操作'"
+                                        :aria-label="rowMenus[p.key] ? '收起更多操作' : '更多操作'"
+                                        @click.stop="toggleRowMenu(p, $event)">···</button>
+                                <span class="cmd-menu" v-if="rowMenus[p.key]">
+                                    <button type="button" class="btn btn-ghost"
+                                            v-for="o in p.moreOptions" :key="'more-' + o.optionId"
+                                            @click="resolvePendingPermission(p, o)">
+                                        {{ o.name || o.kind }}
+                                    </button>
+                                    <button type="button" class="btn btn-ghost"
+                                            @click="resolvePendingPermission(p, null)">拒绝</button>
+                                    <button type="button" class="btn btn-ghost"
+                                            @click="openTask(p.taskId, p)">查看</button>
+                                </span>
+                            </span>
                         </template>
                         <template v-else-if="p.kind === 'report'">
                             <button type="button" class="btn btn-secondary"
