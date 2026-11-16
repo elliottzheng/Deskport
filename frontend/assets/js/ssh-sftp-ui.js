@@ -245,7 +245,17 @@ window.SSHSftpUI = (function (ctx) {
             .catch(err => toastMsg('新建失败: ' + err.message));
     }
 
-    // ---- 文本编辑 ----
+    // ---- 文本编辑 / Markdown 预览 ----
+    function isMdPath(p) {
+        return /\.(md|markdown)$/i.test(p || '');
+    }
+    function renderMdHtml(content) {
+        // 与本地文件页 (files-methods-ui.js renderPreviewMd) 同一库同一配置:
+        // html:false 把源内 HTML 当文本转义防 XSS, linkify 自动识别链接 (反馈 acdfdaeb)
+        return window.markdownit
+            ? window.markdownit({ html: false, linkify: true }).render(content || '')
+            : '';
+    }
     async function editSelected() {
         const p = S.selectedPath();
         if (!p) { alert('请先选中文件'); return; }
@@ -258,6 +268,39 @@ window.SSHSftpUI = (function (ctx) {
         } catch (err) { alert('读取失败: ' + err.message); }
     }
 
+    // md 文件默认进渲染视图 (与本地文件页一致), 可切回源码编辑; 其余文件仍是纯文本编辑
+    function setEditMode(modal, mode) {
+        const view = modal.querySelector('#sftp-md-view');
+        const ta = modal.querySelector('#sftp-edit-content');
+        const toggleBtn = modal.querySelector('#sftp-md-toggle');
+        const saveBtn = modal.querySelector('#sftp-edit-save');
+        const canMd = isMdPath(editingFile && editingFile.path) && !!window.markdownit;
+        if (mode === 'render') {
+            view.style.display = '';
+            ta.style.display = 'none';
+            toggleBtn.textContent = '编辑源码';
+            toggleBtn.style.display = '';
+            saveBtn.style.display = 'none';
+        } else {
+            view.style.display = 'none';
+            ta.style.display = '';
+            toggleBtn.textContent = '渲染预览';
+            toggleBtn.style.display = canMd ? '' : 'none';
+            saveBtn.style.display = '';
+        }
+    }
+    function toggleEditMode() {
+        const modal = document.getElementById('sftp-edit-modal');
+        if (!modal) { return; }
+        if (modal.querySelector('#sftp-md-view').style.display === 'none') {
+            modal.querySelector('#sftp-md-view').innerHTML =
+                renderMdHtml(modal.querySelector('#sftp-edit-content').value);
+            setEditMode(modal, 'render');
+        } else {
+            setEditMode(modal, 'source');
+        }
+    }
+
     function openEditModal(path, content, mtime, encoding) {
         editingFile = { hostId: S.state.hostId, path: path, baseMtime: mtime,
                         encoding: encoding || 'utf-8' };
@@ -268,9 +311,11 @@ window.SSHSftpUI = (function (ctx) {
             modal.className = 'modal-mask';
             modal.innerHTML =
                 '<div class="modal"><div class="modal-title" id="sftp-edit-title"></div>' +
+                '<div class="preview-md" id="sftp-md-view" style="display:none"></div>' +
                 '<textarea id="sftp-edit-content" spellcheck="false"></textarea>' +
                 '<p class="load-error" id="sftp-edit-error" style="display:none;margin-top:8px"></p>' +
                 '<div class="modal-actions" style="margin-top:12px">' +
+                '<button class="btn btn-ghost" id="sftp-md-toggle" style="display:none"></button>' +
                 '<button class="btn btn-primary" id="sftp-edit-save">保存</button>' +
                 '<button class="btn btn-ghost" id="sftp-edit-cancel">取消</button></div></div>';
             document.body.appendChild(modal);
@@ -278,10 +323,18 @@ window.SSHSftpUI = (function (ctx) {
                 modal.style.display = 'none';
             });
             modal.querySelector('#sftp-edit-save').addEventListener('click', saveEdit);
+            modal.querySelector('#sftp-md-toggle').addEventListener('click', toggleEditMode);
         }
-        modal.querySelector('#sftp-edit-title').textContent = '编辑 — ' + path;
+        const isMd = isMdPath(path) && !!window.markdownit;
+        modal.querySelector('#sftp-edit-title').textContent = (isMd ? '预览 — ' : '编辑 — ') + path;
         modal.querySelector('#sftp-edit-content').value = content;
         modal.querySelector('#sftp-edit-error').style.display = 'none';
+        if (isMd) {
+            modal.querySelector('#sftp-md-view').innerHTML = renderMdHtml(content);
+            setEditMode(modal, 'render');
+        } else {
+            setEditMode(modal, 'source');
+        }
         modal.style.display = 'flex';
     }
 
