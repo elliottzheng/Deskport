@@ -21,7 +21,7 @@
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    padding: 6px var(--sp-2);
+    padding: 6px var(--sp-2); min-height: 44px;
     border-radius: var(--radius-s);
     color: var(--text-2);
     font-size: 13px;
@@ -66,8 +66,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     background: var(--surface);
     color: var(--text-2);
@@ -194,7 +194,7 @@
     word-break: break-all;   /* 长数字/下划线串强制断行, 不再横穿相邻瓦片 (FM-11) */
 }
 
-.search-input { width: 130px; height: 34px; font-size: 13px; padding: 0 10px; }
+.search-input { width: 130px; height: 34px; font-size: 16px; padding: 0 10px; }
 .fm-list.drop-hint { border-color: var(--brand); background: var(--brand-bg); }
 
 /* ====== 状态栏 ====== */
@@ -349,7 +349,7 @@
 /* 移动端: 快速访问抽屉 */
 .fm-nav-toggle { display: none; }
 @media (max-width: 640px) {
-    .fm-nav-toggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; }
+    .fm-nav-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; }
     .fm-nav {
         position: fixed; left: 0; top: var(--header-h); bottom: 0; width: 240px; z-index: 70;
         display: block !important;

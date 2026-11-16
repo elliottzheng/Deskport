@@ -48,7 +48,7 @@ body {
     padding: 0 14px;
     border: 1px solid var(--border-ctrl);
     border-radius: var(--radius-m);
-    font-size: 15px;
+    font-size: 16px;
     outline: none;
     margin-bottom: var(--sp-4);
     transition: border-color .15s ease;
