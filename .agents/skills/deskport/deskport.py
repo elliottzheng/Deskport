@@ -274,9 +274,7 @@ class Deskport:
 
     def inbox(self, after: int = 0, wait: int | None = None) -> tuple[list[dict], int]:
         """收件箱条目（GET /api/agent/leads/inbox）：返回 (entries, lastSeq)。
-
-        after=上次的 lastSeq（只取更新的）；wait=长轮询秒（1–600，语义同任务
-        wait）。没绑主管 → DeskportError(400)。
+        after=上次的 lastSeq（只取更新的）；wait=长轮询秒（1–600，语义同任务 wait）。没绑主管 → DeskportError(400)。
         """
         q = "?after=%d" % int(after or 0)
         if wait:
@@ -640,12 +638,13 @@ def connect(host: str | None = None, url: str | None = None, insecure: bool | No
     return h.cd(cwd) if cwd else h
 
 
-
 def _waitTask(task, seconds, allow, deny):
-    """等到本轮结束并打印最终回复。返回进程退出码。卡审批时不傻等：打印
-    PENDING + 怎么放行，以 4 结束（无人值守时唯一能看见"它在等人"的方式）。"""
+    """等到本轮结束并打印最终回复，返回进程退出码。卡审批时不傻等：打印 PENDING +
+    怎么放行，以 4 结束（无人值守时唯一能看见"它在等人"的方式）。seconds：None=缺省等 900s，0=建完即退，N=等 N 秒（封顶 900）。"""
     import sys, time
-    end = time.time() + (seconds or 900)
+    budget = 900 if seconds is None else max(0, min(int(seconds), 900))
+    if not budget: return 0
+    end = time.time() + budget
     while time.time() < end:
         try:
             info = task.wait(poll=3, timeout=max(5, end - time.time()))
@@ -668,7 +667,7 @@ def _waitTask(task, seconds, allow, deny):
             print(text)
         if info.get("status") not in ("running", "queued"):
             return 0 if info.get("status") == "waiting" else 1
-    print("TIMEOUT 任务 %s 未在 %ss 内结束（当前状态见 deskport.py tasks）" % (task.id, seconds),
+    print("TIMEOUT 任务 %s 未在 %ss 内结束（当前状态见 deskport.py tasks）" % (task.id, budget),
           file=sys.stderr)
     return 3
 
@@ -705,7 +704,8 @@ if __name__ == "__main__":
                    help="要求结构化交付（批次 G1）：impl=实施 / verify=验收；执行方须调 submit_result 提交")
     p.add_argument("--result", action="store_true", help="不建任务：把 positional 当任务 id，打印它的最新结构化结果 JSON")
     p.add_argument("--wait", nargs="?", const=900, type=int, default=None,
-                   metavar="秒", help="建完就等它结束并打印最终回复（缺省 900 秒）")
+                   metavar="秒", help="建完就等它结束并打印最终回复：不传=等 900 秒（封顶 900）；0=建完即退；N=等 N 秒")
+    p.add_argument("--no-wait", dest="wait", action="store_const", const=0, help="--wait 0 的别名：建完打印 id 即退，不等执行方")
     p.add_argument("--allow", action="store_true", help="卡在审批时按策略默认放行，继续等")
     p.add_argument("--deny", action="store_true", help="卡在审批时拒绝，继续等")
     p = sub.add_parser("tasks", help="列出任务（id / 状态 / 执行点 / 提示词首行）")
@@ -722,7 +722,7 @@ if __name__ == "__main__":
     p.add_argument("--deny", action="store_true", help="拒绝（缺省批准）")
     p = sub.add_parser("wait", help="等某个任务结束并打印最终回复")
     p.add_argument("tid")
-    p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--timeout", type=int, default=900, help="等它结束的秒数（封顶 900；0=立即返回）")
     p.add_argument("--allow", action="store_true")
     p.add_argument("--deny", action="store_true")
     p = sub.add_parser("result", help="提交结构化结果（POST /api/tasks/<id>/result）：无 MCP 工具时的退路")
@@ -827,8 +827,7 @@ if __name__ == "__main__":
                     info = dp.task(a.prompt).info()
                     print(json.dumps(info.get("result") or {}, ensure_ascii=False, indent=1))
                     sys.exit(0)
-                # --session：返工/复验接回原会话继续干活（复用执行方）——直接
-                # 接管不用副本（kimiSessionId + fork=false），被占用时 409
+                # --session：返工/复验接回原会话继续干活（复用执行方）：直接接管不用副本（kimiSessionId + fork=false），被占用时 409
                 task = dp.create_task(a.prompt, node=a.node or "local", mode=a.mode,
                                       cwd=_unmangle(a.cwd), model=a.model,
                                       title=a.title, kimi_session=a.session,
