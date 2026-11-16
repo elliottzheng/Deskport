@@ -62,7 +62,8 @@
     function inlineAll(srcDoc, cloneDoc, scrollX, scrollY) {
         var view = srcDoc.defaultView;
         if (!view || !view.getComputedStyle) { return; }
-        var stack = [[srcDoc.documentElement, cloneDoc.documentElement]];
+        // clone 是 documentElement 的克隆元素（非 Document），栈根就是它本身
+        var stack = [[srcDoc.documentElement, cloneDoc]];
         while (stack.length) {
             var pair = stack.pop();
             var a = pair[0], b = pair[1];
